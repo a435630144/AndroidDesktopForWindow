@@ -1,0 +1,6 @@
+# 运行依赖
+PySide6>=6.6,<6.11
+# 打包依赖（构建便携 exe / 安装包时安装）
+pyinstaller>=6.0
+# 图标生成工具依赖（tools/make_icon.py）
+pillow>=10.0
