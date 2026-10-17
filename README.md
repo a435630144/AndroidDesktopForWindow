@@ -34,8 +34,9 @@
 |---|---|---|
 | Windows | 10 / 11（开发目标 Win11 @125% DPI） | 目标系统，x64 |
 | Python | ≥ 3.12（开发用 3.13.12） | 运行时 |
-| PySide6 | **6.10.3**（`requirements.txt` 锁 `==6.10.*`） | 唯一第三方运行时依赖 |
-| PyInstaller | 6.x | 打包便携版（仅构建需要） |
+| PySide6 | `>=6.6, <6.11`（开发锁定 6.10.3） | 唯一第三方运行时依赖 |
+| PyInstaller | `>=6.0` | 打包便携版（仅构建需要） |
+| Pillow | `>=10.0` | 图标生成工具（tools/make_icon.py） |
 | Inno Setup | 6.7.3+ | 制作安装包（仅构建需要） |
 
 - **纯 Win32 API** 桌面层挂载（`SetWindowPos` + `WorkerW`/`Progman` 桌面带、逐像素 alpha 命中测试、分层窗口穿透）

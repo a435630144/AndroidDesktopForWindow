@@ -34,8 +34,9 @@ A third-party desktop organizer / beautifier for Windows (demo), in the spirit o
 |---|---|---|
 | Windows | 10 / 11 (developed on Win11 @125% DPI) | Target OS, x64 |
 | Python | ≥ 3.12 (developed on 3.13.12) | Runtime |
-| PySide6 | **6.10.3** (`requirements.txt` pins `==6.10.*`) | The only third-party runtime dependency |
-| PyInstaller | 6.x | Portable build (build-time only) |
+| PySide6 | `>=6.6, <6.11` (developed on 6.10.3) | The only third-party runtime dependency |
+| PyInstaller | `>=6.0` | Portable build (build-time only) |
+| Pillow | `>=10.0` | Icon generation tool (tools/make_icon.py) |
 | Inno Setup | 6.7.3+ | Installer build (build-time only) |
 
 - **Pure Win32 API** desktop-layer mounting (`SetWindowPos` + `WorkerW`/`Progman` desktop band, per-pixel alpha hit-testing, layered-window click-through)
