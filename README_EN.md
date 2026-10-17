@@ -1,6 +1,14 @@
-# DesktopOrganizer (AndroidDesktopForWindow)
+# DesktopOrganizer
 
-> Turn your Windows desktop into a **phone home screen** — Android-style icon grid, slide-to-rearrange animations, drag-to-merge folders, and desktop widgets. Pure Python + Win32, no runtime installation required.
+*A free, open-source Windows desktop organizer — Android-style icon grid, spring-physics animations and native-feeling desktop widgets that turn your Windows desktop into a phone home screen.*
+
+English | [简体中文](README.md)
+
+> 🚧 **Under active development** (v4 delivered; v5 plan signed off and in progress: adaptive grid / iOS-style local reflow / widget span model / folder popup redesign / paging). Bug reports, ideas and discussions are welcome via Issues. See the [v5 plan doc](指导文档_网格与交互_v5.md) (Chinese).
+
+![release](https://img.shields.io/badge/release-v4.0-blue) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-28%2B%20passing-brightgreen) ![license](https://img.shields.io/badge/license-GPLv3-blue)
+
+---
 
 A third-party desktop organizer / beautifier for Windows (demo), in the spirit of Tencent Desktop Manager. It mounts its own grid layer above the native desktop and replaces native icons with a fully controlled rendering layer: positions, animations, folders, and widgets are all yours to define.
 
@@ -20,9 +28,16 @@ A third-party desktop organizer / beautifier for Windows (demo), in the spirit o
 | 🛡️ BandGuard daemon | Survives Win+D (show desktop) and explorer restarts — automatically re-mounts |
 | ⏱️ System tray | Pause auto-creation / restore native, rescan, panel toggle, autostart, settings |
 
-## 🛠️ Tech Stack
+## 🛠️ Tech Stack & Dependency Versions
 
-- **Python 3.13** + **PySide6 6.10** (the only third-party dependency)
+| Dependency | Version | Purpose |
+|---|---|---|
+| Windows | 10 / 11 (developed on Win11 @125% DPI) | Target OS, x64 |
+| Python | ≥ 3.12 (developed on 3.13.12) | Runtime |
+| PySide6 | **6.10.3** (`requirements.txt` pins `==6.10.*`) | The only third-party runtime dependency |
+| PyInstaller | 6.x | Portable build (build-time only) |
+| Inno Setup | 6.7.3+ | Installer build (build-time only) |
+
 - **Pure Win32 API** desktop-layer mounting (`SetWindowPos` + `WorkerW`/`Progman` desktop band, per-pixel alpha hit-testing, layered-window click-through)
 - **Zero Qt Designer**: all UI is code-drawn, design tokens centralized in `src/theme.py`
 - Animation system: `effects.spring_curve()` custom easing (analytic damped-harmonic-oscillator solution) — not OutBack/OutCubic approximations
@@ -134,4 +149,4 @@ pwsh -File scripts/build_portable.ps1
 
 ## 📄 License
 
-Personal demo project — no license specified yet.
+This project is open-sourced under the **[GPL-3.0](LICENSE)** license — same as DeskBox: any derivative work must also be released under GPL-3.0, preventing closed-source forks.

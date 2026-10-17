@@ -1,6 +1,14 @@
-# DesktopOrganizer（AndroidDesktopForWindow）
+# DesktopOrganizer
 
-> 把 Windows 桌面变成**手机桌面**——安卓式图标网格、滑动让位、拖拽合并文件夹、桌面小组件，纯 Python + Win32 实现，无需安装即可接管桌面布局。
+*一款免费、开源的 Windows 桌面整理工具——安卓式图标网格、弹簧动效与原生质感的小组件，把你的 Windows 桌面变成手机桌面。*
+
+[English](README_EN.md) | 简体中文
+
+> 🚧 **项目处于活跃开发中**（v4 已交付，v5 方案已签收正在实施：网格自适应 / iOS 局部让位 / 小组件跨度化 / 文件夹弹窗重做 / 分页）。问题反馈与想法欢迎通过 Issues 讨论，实施计划见 [指导文档_网格与交互_v5.md](指导文档_网格与交互_v5.md)。
+
+![release](https://img.shields.io/badge/release-v4.0-blue) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-28%2B%20passing-brightgreen) ![license](https://img.shields.io/badge/license-GPLv3-blue)
+
+---
 
 一个类「腾讯桌面整理」的第三方桌面美化整理软件（Demo）。它在本机桌面之上挂载一层自有网格，把原生图标替换为完全可控的渲染层：位置、动效、文件夹、小组件，全部由你定义。
 
@@ -20,9 +28,16 @@
 | 🛡️ BandGuard 守护 | Win+D 显示桌面、explorer 崩溃重启后自动重挂 |
 | ⏱️ 托盘常驻 | 暂停自动创建/恢复原生、重新扫描、面板开关、开机自启、设置 |
 
-## 🛠️ 技术栈
+## 🛠️ 技术栈与依赖版本
 
-- **Python 3.13** + **PySide6 6.10**（唯一第三方依赖）
+| 依赖 | 版本 | 用途 |
+|---|---|---|
+| Windows | 10 / 11（开发目标 Win11 @125% DPI） | 目标系统，x64 |
+| Python | ≥ 3.12（开发用 3.13.12） | 运行时 |
+| PySide6 | **6.10.3**（`requirements.txt` 锁 `==6.10.*`） | 唯一第三方运行时依赖 |
+| PyInstaller | 6.x | 打包便携版（仅构建需要） |
+| Inno Setup | 6.7.3+ | 制作安装包（仅构建需要） |
+
 - **纯 Win32 API** 桌面层挂载（`SetWindowPos` + `WorkerW`/`Progman` 桌面带、逐像素 alpha 命中测试、分层窗口穿透）
 - **零 Qt Designer**：UI 全代码绘制，设计 tokens 集中在 `src/theme.py`
 - 动效体系：`effects.spring_curve()` 自定义缓动（阻尼谐振子解析解），非 OutBack/OutCubic 近似
@@ -134,4 +149,4 @@ pwsh -File scripts/build_portable.ps1
 
 ## 📄 许可证
 
-个人 Demo 项目，暂未指定许可证（No license specified yet）。
+本项目基于 **[GPL-3.0](LICENSE)** 许可证开源——与 DeskBox 同款：任何基于本项目的衍生作品必须同样以 GPL-3.0 开源，防止闭源套壳。
