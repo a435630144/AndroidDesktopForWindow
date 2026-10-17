@@ -574,12 +574,16 @@ class AppIcon(QWidget):
         self._finish_drag(None)
 
     def _after_drag(self):
-        """拖拽结束公共清理：撤拖影、发 dragFinished、落位回弹动画。"""
-        ghost, self._drag_ghost_w = self._drag_ghost_w, None
-        if ghost is not None:
-            ghost.close()
-        self._press_pos = None
+        """拖拽结束公共清理：撤拖影、发 dragFinished、落位回弹动画。
+
+        整体防御 RuntimeError：drop 触发 rebuild 后本部件可能已被
+        deleteLater（C++ 对象删除后任何触碰都抛 RuntimeError）。
+        """
         try:
+            ghost, self._drag_ghost_w = self._drag_ghost_w, None
+            if ghost is not None:
+                ghost.close()
+            self._press_pos = None
             self.dragFinished.emit()
             # 落位回弹：带动量的手势才配弹跳（苹果规范：动量弹簧 ~0.8，
             # 无动量点按用临界阻尼）。欠阻尼 0.62 ≈ 7% 一次衰减过冲，
