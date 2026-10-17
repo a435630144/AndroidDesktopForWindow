@@ -6,7 +6,7 @@ English | [简体中文](README.md)
 
 > 🚧 **Under active development** (v4 delivered; v5 plan signed off and in progress: adaptive grid / iOS-style local reflow / widget span model / folder popup redesign / paging). Bug reports, ideas and discussions are welcome via Issues. See the [v5 plan doc](指导文档_网格与交互_v5.md) (Chinese).
 
-![release](https://img.shields.io/badge/release-v4.0-blue) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-28%2B%20passing-brightgreen) ![license](https://img.shields.io/badge/license-GPLv3-blue)
+[![release](https://img.shields.io/badge/release-v0.1.4-blue)](https://github.com/a435630144/AndroidDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-28%2B%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 

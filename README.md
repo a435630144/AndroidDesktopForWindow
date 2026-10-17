@@ -6,7 +6,7 @@
 
 > 🚧 **项目处于活跃开发中**（v4 已交付，v5 方案已签收正在实施：网格自适应 / iOS 局部让位 / 小组件跨度化 / 文件夹弹窗重做 / 分页）。问题反馈与想法欢迎通过 Issues 讨论，实施计划见 [指导文档_网格与交互_v5.md](指导文档_网格与交互_v5.md)。
 
-![release](https://img.shields.io/badge/release-v4.0-blue) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-28%2B%20passing-brightgreen) ![license](https://img.shields.io/badge/license-GPLv3-blue)
+[![release](https://img.shields.io/badge/release-v0.1.4-blue)](https://github.com/a435630144/AndroidDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-28%2B%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
