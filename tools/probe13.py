@@ -312,32 +312,61 @@ def main():
                          "OK" if ok else "(被他窗占据?)"))
                 p("命中我方 %d/%d %s" % (hits, len(cands),
                                          "OK" if hits >= 1 else "FAIL"))
-            # ---------- B6: 拖拽源在 exec 期间被删除（Fix A 回归） ----------
+            # ---------- B6: 拖拽源在拖拽期间被删除（新引擎回归） ----------
             print("\n==== B6 拖拽源删除后 dragFinished.emit 不崩溃 ====", flush=True)
-            from PySide6.QtCore import QCoreApplication  # noqa: E402
-            from PySide6.QtGui import QDrag  # noqa: E402
-            icon = next(iter(window.icons.values()))
+            from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
+            # 两个确定的普通 app：悬停武装合并后，源被移除、目标变文件夹。
+            # 放 row 2（可见区内）——窗口仅屏幕高，row 6 会超出窗口、
+            # widgetAt 取不到目标（调试实证：B6 首版放 row 6 全无事件）。
+            storage.add_app({"id": "b6-a", "name": "B6甲", "target": "b6a"},
+                            col=0, row=2)
+            storage.add_app({"id": "b6-b", "name": "B6乙", "target": "b6b"},
+                            col=1, row=2)
+            storage.save()
+            window.rebuild()
+            icon = window.icons["b6-a"]
+            tgt = window.icons["b6-b"]
             icon._press_pos = QPoint(3, 3)
-            orig_exec = QDrag.exec
+            src_id = icon.entry.get("id")
 
-            def fake_exec(drag_self, *a, **k):
-                # 模拟真实场景：drop -> _drop_internal -> rebuild() 把拖拽源
-                # deleteLater；嵌套循环内立即执行 deferred delete
-                drag_self.setParent(None)
-                window.rebuild()
-                QCoreApplication.sendPostedEvents(None, 0)
-                return Qt.IgnoreAction
+            def flush_src_delete(*_a):
+                # rebuild() 刚把拖拽源安排进 deleteLater 队列：立即兑现，
+                # 构造「源部件 C++ 对象在 _after_drag 之前已消失」这一被
+                # 防御时序（旧引擎里该时序由 OLE 嵌套循环天然提供：嵌套
+                # 循环会及时处理 deferred delete，exec 返回时源已没了）。
+                # 只冲刷本对象的 DeferredDelete，不碰其它待删对象。
+                try:
+                    QCoreApplication.sendPostedEvents(icon, QEvent.DeferredDelete)
+                except Exception:
+                    pass
 
-            QDrag.exec = fake_exec
+            tgt.mergeRequested.connect(flush_src_delete)  # 排在 _on_merge 之后
             crashed = None
             try:
+                # 新引擎完整路径：_exec_drag(grabMouse+拖影) -> _drag_move
+                # 命中目标 -> 悬停武装合并 -> _finish_drag 合成 drop ->
+                # dropEvent -> mergeRequested -> _on_merge（移除源+rebuild）
+                # -> flush_src_delete 兑现删源 -> _after_drag 在已删源上收尾
                 icon._exec_drag()
+                tgt._arm_merge()   # 模拟 dwell 450ms 悬停武装
+                gp = tgt.mapToGlobal(QPoint(tgt.width() // 2, tgt.height() // 2))
+                icon._drag_move(gp)
+                p("悬停目标 %s 已武装合并（DragEnter 已派发）"
+                  % tgt.entry.get("id"))
+                icon._finish_drag(gp)
             except RuntimeError as e:
                 crashed = e
-            finally:
-                QDrag.exec = orig_exec
             p("emit on deleted source: %s" % ("OK 未崩溃" if crashed is None
                                               else "FAIL %s" % crashed))
+            p("拖拽源 %s 已从布局移除（rebuild 后 icons 无此项）: %s"
+              % (src_id, "OK" if src_id not in window.icons else "FAIL"))
+            p("drop 后 _drag_active=%s（应 False，rebuild 安全网复位）%s"
+              % (window._drag_active,
+                 "OK" if not window._drag_active else "FAIL"))
+            tgt_entry = window.storage.find_entry("b6-b")
+            is_folder = tgt_entry is not None and tgt_entry.get("type") == "folder" \
+                and len(tgt_entry.get("apps", [])) == 2
+            p("目标合并为文件夹（2 成员）: %s" % ("OK" if is_folder else "FAIL"))
             window.rebuild()
         except Exception:
             print("!! run() 异常：", flush=True)

@@ -344,6 +344,16 @@ class DesktopWindow(QWidget):
                 icon.appear_in(min(idx * 30, 600))
             icon.show()
             self.icons[entry["id"]] = icon
+        # 安全网：rebuild 销毁全部图标部件，飞行中的拖拽其源已不存在——
+        # dragFinished 可能永远送不达（源被 deleteLater 后 emit 抛
+        # RuntimeError，被 IconWidget._after_drag 吞掉）。与 dropEvent
+        # 末尾同理（无论 dragFinished 是否送达，drop 完成即复位），
+        # 这里无条件复位拖动状态；否则 _drag_active 卡死会让
+        # nativeEvent 保持全窗口 HTCLIENT，桌面点击全部失效。
+        self._drag_active = False
+        self._drag_entry_id = None
+        self._drag_multi = False
+        self._ole_active = False
         self.update()
 
     # ---------- 多选 ----------

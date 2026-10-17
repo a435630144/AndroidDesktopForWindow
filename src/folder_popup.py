@@ -70,6 +70,10 @@ class FolderPopup(QWidget):
     def _build(self, anchor_rect, keep_backdrop=False):
         for child in self.findChildren(AppIcon):
             child.deleteLater()
+        # 成员部件全部销毁：飞行中的成员拖拽已死亡，标志位一并复位。
+        # 否则 _dragging 卡死会让 focusOutEvent 再也无法自动收起弹窗
+        # （拖源被删 -> dragFinished 送不达 -> _on_drag_finish 不执行）。
+        self._dragging = False
         # DPI × 用户缩放感知：弹窗成员与桌面网格同大小（旧值 -18 显小，
         # 2026-10-18 用户反馈"展开 UI 完全不对"——iOS 文件夹成员图标
         # 占满格子，不做小一档处理）

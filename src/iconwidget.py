@@ -124,6 +124,11 @@ class AppIcon(QWidget):
                           icon_size + int(round(40 * self._m)))
         self.setAcceptDrops(True)
         self.setCursor(Qt.PointingHandCursor)
+        # ClickFocus：点击即获键盘焦点。自管理拖拽循环里 Esc 取消依赖
+        # 焦点投递（_exec_drag 中 setFocus）——默认 NoFocus 策略下
+        # keyPressEvent 永不触发，Esc 分支是死代码。ClickFocus 不加
+        # Tab 停靠点，不污染窗口 Tab 序。
+        self.setFocusPolicy(Qt.ClickFocus)
         self.setToolTip(self._tooltip())
 
     # ---------- 动效属性（QPropertyAnimation 直接驱动） ----------
@@ -506,6 +511,9 @@ class AppIcon(QWidget):
         self._drag_ghost_w.show()
         self._drag_target = None
         self._drag_loop = True
+        # 键盘焦点给拖拽源：Esc 取消（keyPressEvent）走焦点投递，
+        # grabMouse 只管鼠标。真实鼠标与注入按键共用同一路径。
+        self.setFocus()
         self.grabMouse()
 
     def _drag_move(self, gpos):
