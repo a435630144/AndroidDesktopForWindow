@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-"""视觉动效工具箱：液态玻璃背板、弹性缓动、玻璃表面绘制。
+"""视觉动效工具箱：液态玻璃背板、真弹簧曲线、玻璃表面绘制。
 
-设计参考（2025 苹果 Liquid Glass + 安卓/iOS 交互动效）：
+设计参考（2025 苹果 Liquid Glass + Fluid Interfaces）：
   - 液态玻璃：背后内容实时高斯模糊 + 半透明 tint + 边缘高光(specular)
-  - 弹性出场：OutBack 过冲（打开）/ InCubic 收起（关闭）
+  - 弹簧：全部动效用阻尼谐振子解析解（QEasingCurve 自定义缓动），
+    默认临界阻尼（damping 1.0，无过冲）；带动量的手势 / sheet 档
+    弹窗才用欠阻尼（0.7~0.85，一次衰减 wobble ≈ Motion bounce 0.2）
   - 控件按压回弹、错峰淡入（stagger）
 
 实现取舍（重要）：
@@ -15,6 +17,8 @@
 
 全部只用 Qt 自带模块，零第三方依赖，不影响打包体积。
 """
+import math
+
 from PySide6.QtCore import QEasingCurve, QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import (QBrush, QColor, QGuiApplication, QLinearGradient,
                            QPainter, QPainterPath, QPen, QPixmap)
@@ -50,19 +54,62 @@ def dur(ms: int) -> int:
 
 
 # ---------- 缓动曲线 ----------
+_SPRING_CACHE = {}
+
+
+def spring_curve(damping: float = 1.0, duration_ms: int = 320) -> QEasingCurve:
+    """真弹簧缓动：阻尼谐振子解析解（取代 OutBack 多项式近似）。
+
+    苹果 Fluid Interfaces 规范「动效全用弹簧」：
+      - 默认 UI 弹簧 = 临界阻尼（damping 1.0，无过冲，response 0.3~0.4s）
+      - 带动量的手势 / sheet 档弹窗 = 欠阻尼（0.7~0.85，一次衰减 wobble，
+        相当于 Motion bounce 0.2）；无动量的淡入禁用过冲
+      - duration_ms = 稳定时间：t=1 时已收敛 99.9%，尾部不可见——与 iOS
+        弹簧动画语义一致，可见运动集中在前期，这才是真弹簧的形态
+        （OutBack 的过冲量与时长无关且只有一次多项式拱，形状是错的）
+
+    实现：PySide6 QEasingCurve 自定义缓动（C++ 每帧回调），解析解几乎
+    零开销；按 (damping, duration) 缓存复用。任何时刻可打断——曲线只依赖
+    归一化进度，从当前值起播的新动画天然满足可打断性。
+
+    damping 钳制：>1 无意义（过阻尼只是更慢），<=0 不收敛。
+    """
+    key = (round(float(damping), 3), int(duration_ms))
+    cached = _SPRING_CACHE.get(key)
+    if cached is not None:
+        return cached
+    z = min(1.0, max(0.3, float(damping)))
+    w = 12.0 / z                      # 归一化角频率：t=1 时收敛到 99.9%
+    wd = w * math.sqrt(1.0 - z * z)   # 阻尼角频率（z<1 时为实数）
+    zw = z * w
+
+    def _spring(t: float) -> float:
+        if t <= 0.0:
+            return 0.0
+        if t >= 1.0:
+            return 1.0
+        if z >= 1.0:
+            # 临界阻尼：1 - (1+wt)e^{-wt}，不过冲
+            return 1.0 - (1.0 + w * t) * math.exp(-w * t)
+        # 欠阻尼：1 - e^{-zwt}(cos(wd·t) + zw/wd·sin(wd·t))，一次衰减振荡
+        return 1.0 - math.exp(-zw * t) * (math.cos(wd * t) + (zw / wd) * math.sin(wd * t))
+
+    curve = QEasingCurve(QEasingCurve.Type.Custom)
+    curve.setCustomType(_spring)
+    _SPRING_CACHE[key] = curve
+    return curve
+
+
 def spring_out(overshoot: float = 1.0) -> QEasingCurve:
-    """弹性出场：OutBack。仅用于带动量的交互（拖动落位）与 sheet 档
-    弹窗打开（苹果抽屉/sheet = damping 0.8 / response 0.3 ≈ overshoot 1.0）。
-    默认 overshoot 1.0 ≈ Motion 的 bounce 0.2；无动量淡入禁用过冲
-    （"淡入的菜单过冲是错的"）。"""
-    c = QEasingCurve(QEasingCurve.OutBack)
-    c.setOvershoot(overshoot)
-    return c
+    """[兼容保留] 弹性出场。旧签名（OutBack overshoot），新代码请用
+    spring_curve(0.8, ms)。映射：overshoot 1.0 ≈ damping 0.8。"""
+    z = 1.0 / (1.0 + 0.25 * float(overshoot))
+    return spring_curve(z, 340)
 
 
 def smooth_out() -> QEasingCurve:
-    """临界阻尼出场（苹果默认 UI 弹簧 damping 1.0 的曲线近似）。"""
-    return QEasingCurve(QEasingCurve.OutCubic)
+    """[兼容保留] 临界阻尼出场（苹果默认 UI 弹簧 damping 1.0）。"""
+    return spring_curve(1.0, 320)
 
 
 # ---------- 玻璃背板 ----------

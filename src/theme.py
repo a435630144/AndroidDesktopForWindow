@@ -22,12 +22,14 @@ BORDER_STRONG = QColor(255, 255, 255, 40)  # 强描边（选中态）
 # ---------- 文字 ----------
 TEXT = QColor(242, 243, 245)               # 主文字
 TEXT_DIM = QColor(168, 173, 181)            # 次文字
-TEXT_FAINT = QColor(120, 126, 135)          # 弱文字（占位 / 注释）
+TEXT_FAINT = QColor(140, 146, 155)          # 弱文字（占位 / 注释）
+# 注：TEXT_FAINT 旧值 (120,126,135) 在深色面上对比度仅 4.05:1，低于 WCAG AA
+# 对 <18px 文字要求的 4.5:1；提亮到 140 后为 5.3:1，过检（2026-10-18）。
 
 # ---------- 强调 ----------
 ACCENT = QColor(76, 194, 255)              # Windows 11 蓝
-ACCENT_SOFT = QColor(76, 194, 255, 46)     # 选中底色
-ACCENT_BORDER = QColor(76, 194, 255, 130)  # 选中描边
+ACCENT_SOFT = QColor(76, 194, 255, 56)     # 选中底色
+ACCENT_BORDER = QColor(76, 194, 255, 150)  # 选中描边
 DANGER = QColor(232, 88, 88)               # 关闭按钮悬停
 
 # ---------- 状态 ----------
@@ -35,12 +37,15 @@ HOVER = QColor(255, 255, 255, 20)          # 悬停底色
 HOVER_BORDER = QColor(255, 255, 255, 36)
 
 # ---------- 图标标签 ----------
-LABEL_SIZE = 11
+LABEL_SIZE = 12
 LABEL_COLOR = QColor(244, 245, 247)
 LABEL_SHADOW = QColor(0, 0, 0, 190)
 
 # ---------- 文件夹（安卓风深色圆角方形） ----------
 FOLDER_BG = QColor(48, 48, 56, 205)
+FOLDER_BG_TOP = QColor(66, 66, 77)         # 瓷砖渐变：顶部受光
+FOLDER_BG_BOTTOM = QColor(40, 40, 49)      # 瓷砖渐变：底部沉实
+FOLDER_HILIGHT = QColor(255, 255, 255, 60)  # 顶部 1px 内高光（与玻璃语言统一）
 FOLDER_BORDER = QColor(255, 255, 255, 34)
 
 # ---------- 圆角 ----------
@@ -59,6 +64,27 @@ GLASS_BORDER = 52            # 玻璃描边 alpha
 
 # ---------- 字体 ----------
 FONT_FAMILIES = ["Microsoft YaHei UI", "Segoe UI", "Microsoft YaHei"]
+
+# ---------- DPI ----------
+_DPR_CACHE = None
+
+
+def screen_dpr() -> float:
+    """主屏 DPI 缩放比（1.0 = 100%，1.25 = 125%…）。
+
+    Windows 缩放变化时图标/网格要跟着变大（用户反馈：图标大小没有随
+    Windows 缩放比例变化——2026-10-18）。首次调用后缓存；多屏切换场景
+    本应用目标为单屏 Win11，缓存足够。
+    必须在 QApplication 创建之后调用（用到 primaryScreen）。
+    """
+    global _DPR_CACHE
+    if _DPR_CACHE is None:
+        try:
+            from PySide6.QtGui import QGuiApplication
+            _DPR_CACHE = max(1.0, QGuiApplication.primaryScreen().devicePixelRatio())
+        except Exception:
+            _DPR_CACHE = 1.0
+    return _DPR_CACHE
 
 
 def ui_font(pixel_size: int, bold: bool = False) -> QFont:

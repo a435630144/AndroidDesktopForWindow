@@ -116,13 +116,30 @@ def main():
               % ("非空" if not bd.isNull() else "空",
                  bd.width(), bd.height(), dpr,
                  exp_w, exp_h, popup.width(), popup.height(),
-                 "OK" if not bd.isNull() and bd.width() == exp_w
-                 and bd.height() == exp_h else "FAIL"))
-            # G2 动画进行中（qWait 驱动事件循环；120ms 时 zoom 应在途中）
-            QTest.qWait(120)
-            z_mid = popup._zoom
-            p("G2 打开中 zoom=%.3f（应 <1 且 >0.62）%s"
-              % (z_mid, "OK" if 0.62 < z_mid < 1.0 else "FAIL"))
+                 # ±1px 容差：grabWindow 的物理像素取整方向与 round() 可能差 1
+                 "OK" if not bd.isNull()
+                 and abs(bd.width() - exp_w) <= 1
+                 and abs(bd.height() - exp_h) <= 1 else "FAIL"))
+            # G2 动画进行中。两个采样注意点（2026-10-18 随真弹簧曲线换代）：
+            #  1) 真弹簧曲线运动集中在前期（response≈总时长 8%），单次晚采样
+            #     会直接越过峰值；
+            #  2) 动画首帧有 ~40ms 启动延迟（show() 后事件循环忙于 expose/
+            #     paint，opacity 从 0 起所以用户无感），单次早采样会落在首帧前。
+            # 故改为 10ms 轮询：只要观测到 zoom 处于 (0.62, 0.995) 途中即证明
+            # 动画确实在跑；若 zoom 永不离开 0.62（动画死了）或一步跳到 1.0
+            # （曲线坏了）都会 FAIL。
+            z_mid = None
+            for _ in range(40):
+                QTest.qWait(10)
+                z = popup._zoom
+                if 0.62 < z < 0.995:
+                    z_mid = z
+                    break
+                if z >= 0.995:
+                    break  # 已过中点（没捕到途中值也算失败）
+            p("G2 打开中 zoom=%s（应观测到 <1 且 >0.62 的途中值）%s"
+              % ("%.3f" % z_mid if z_mid is not None else "未捕获",
+                 "OK" if z_mid is not None else "FAIL"))
             # G3 完成
             QTest.qWait(800)
             p("G3 完成 zoom=%.3f（应 ==1.0）%s"
@@ -144,7 +161,7 @@ def main():
                 QTest.mousePress(target, Qt.LeftButton, Qt.NoModifier, c)
                 QTest.qWait(150)
                 z_press = target._press_scale
-                p("G4 按压 press_scale=%.3f（应 ~0.96）%s"
+                p("G4 按压 press_scale=%.3f（应 ~0.97）%s"
                   % (z_press, "OK" if 0.90 <= z_press <= 0.99 else "FAIL"))
                 QTest.mouseRelease(target, Qt.LeftButton, Qt.NoModifier, c)
                 QTest.qWait(450)

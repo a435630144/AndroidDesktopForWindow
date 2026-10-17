@@ -18,12 +18,14 @@ if (-not (Test-Path $py)) { throw "找不到 venv python: $py" }
 Write-Host "==> PyInstaller 版本:" (& $py -m PyInstaller --version)
 
 $dist = Join-Path $root "dist\$OutName\DesktopOrganizerDemo"
-$work = Join-Path $root "build\$OutName\DesktopOrganizerDemo"
+$work = Join-Path $root "build\$OutName"
 
 Write-Host "==> 开始打包 (onedir) -> $dist"
+# 注意：PyInstaller 6 的 COLLECT 会把产物放到 $distpath\$name\，
+# 因此 --distpath 传 dist\$OutName（不含 name），最终 onedir 根即上面的 $dist。
 & $py -m PyInstaller --noconfirm --clean --windowed `
     --name DesktopOrganizerDemo `
-    --distpath $dist `
+    --distpath (Join-Path $root "dist\$OutName") `
     --workpath $work `
     --icon assets\app_icon.ico `
     --add-data "assets;assets" `

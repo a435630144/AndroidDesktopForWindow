@@ -76,24 +76,37 @@ def _expand(p: str) -> str:
 
 
 def _desktop_folders() -> list:
-    """用户桌面 + 公共桌面目录（Shell API 优先，中英文目录名兜底）。"""
-    dirs = []
-    for name in ("desktop", "public_desktop"):
-        p = shell_known_folder(name)
-        if p:
-            dirs.append(Path(p))
-    home = Path.home()
-    pub = os.environ.get("PUBLIC", r"C:\Users\Public")
-    for d in (home / "Desktop", home / "桌面", Path(pub) / "Desktop"):
-        if d.exists():
-            dirs.append(d)
-    out, seen = [], set()
-    for d in dirs:  # 去重（Shell API 与兜底可能指向同一目录）
+    """桌面目录：Shell 已知目录 API 优先（正确处理 OneDrive 重定向 / 本地化）。
+
+    Shell 解析成功时**不再**混入 home/Desktop 等兜底目录：OneDrive 接管桌面后
+    C:\\Users\\xxx\\Desktop 是残留空壳，原生桌面并不显示它——混入会产生重复
+    条目（2026-10-18 用户反馈"加载的文件不完整/有重复"）。仅当 Shell 整体
+    失败时才退回中英文目录名兜底。
+    """
+    dirs, seen = [], set()
+
+    def _add(p):
+        if not p:
+            return
+        try:
+            d = Path(p)
+            if not d.exists():
+                return
+        except Exception:
+            return
         k = str(d).lower()
         if k not in seen:
             seen.add(k)
-            out.append(d)
-    return out
+            dirs.append(d)
+
+    for name in ("desktop", "public_desktop"):
+        _add(shell_known_folder(name))
+    if not dirs:  # Shell 全失败才兜底
+        home = Path.home()
+        pub = os.environ.get("PUBLIC", r"C:\Users\Public")
+        for d in (home / "Desktop", home / "桌面", Path(pub) / "Desktop"):
+            _add(d)
+    return dirs
 
 
 def _file_id(path: str) -> str:
@@ -164,6 +177,48 @@ def reveal_in_explorer(path: str):
             os.startfile(path)
         except Exception:
             pass
+
+
+def create_on_desktop(name: str, is_dir: bool = False) -> str:
+    """在桌面目录创建文件夹 / 空文件（重名自动加序号），返回新路径。
+
+    路线A 桌面右键菜单的「新建文件夹 / 新建文本文档」后端：
+    原生右键被我们接管后，这两项必须真实可用（真创建 + 通知 shell
+    刷新），否则用户会以为功能坏了。
+    """
+    folders = _desktop_folders()
+    if not folders:
+        raise RuntimeError("找不到桌面目录")
+    dest_dir = folders[0]
+    target = dest_dir / name
+    n = 2
+    while target.exists():
+        if is_dir:
+            target = dest_dir / "%s (%d)" % (name, n)
+        else:
+            target = dest_dir / "%s (%d)%s" % (Path(name).stem, n, Path(name).suffix)
+        n += 1
+    if is_dir:
+        target.mkdir(parents=True)
+    else:
+        target.write_text("", encoding="utf-8")
+    _notify_shell_change(str(target))
+    return str(target)
+
+
+def _notify_shell_change(path: str):
+    """SHChangeNotify 通知 shell 刷新（原生图标层还可见时立即生效）。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        shell32 = ctypes.windll.shell32
+        SHCNE_CREATE = 0x00000002
+        SHCNF_PATHW = 0x0005
+        shell32.SHChangeNotify.argtypes = [wintypes.LONG, wintypes.UINT,
+                                            wintypes.LPCWSTR, wintypes.LPCWSTR]
+        shell32.SHChangeNotify(SHCNE_CREATE, SHCNF_PATHW, path, None)
+    except Exception:
+        pass
 
 
 def _start_menu_dirs():

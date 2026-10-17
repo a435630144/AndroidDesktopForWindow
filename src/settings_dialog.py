@@ -47,6 +47,21 @@ class SettingsDialog(QDialog):
         icon_row.addWidget(self.lbl_icon)
         form.addRow("图标大小：", icon_row)
 
+        # 图标缩放比例：DPI 感知之上的用户微调（2026-10-18 用户要求）
+        self.sld_scale = QSlider(Qt.Horizontal)
+        self.sld_scale.setRange(60, 200)
+        self.sld_scale.setSingleStep(5)
+        self.sld_scale.setPageStep(10)
+        self.sld_scale.setValue(int(round(float(self.storage.get_setting("icon_scale")) * 100)))
+        self.lbl_scale = QLabel()
+        self.lbl_scale.setStyleSheet(lbl_style)
+        self.sld_scale.valueChanged.connect(self._apply_icon_scale)
+        scale_row = QHBoxLayout()
+        scale_row.addWidget(self.sld_scale)
+        scale_row.addWidget(self.lbl_scale)
+        form.addRow("图标缩放比例：", scale_row)
+        self._refresh_icon_labels()
+
         self.spin_cols = QSpinBox()
         self.spin_cols.setRange(3, 12)
         self.spin_cols.setValue(int(self.storage.get_setting("columns")))
@@ -106,9 +121,24 @@ class SettingsDialog(QDialog):
         autostart.set_enabled(checked)
         self.storage.set_setting("autostart", bool(checked))
 
+    def _refresh_icon_labels(self):
+        """图标大小 / 缩放标签：显示 基准 × 系统DPI × 用户缩放 = 实际像素。"""
+        from . import theme
+        base = int(self.storage.get_setting("icon_size"))
+        scale = int(round(float(self.storage.get_setting("icon_scale")) * 100))
+        self.lbl_icon.setText("%d px" % base)
+        self.lbl_scale.setText("%d%%（系统 %d%% × %d%% = 实际 %d px）"
+                               % (scale, round(theme.screen_dpr() * 100),
+                                  scale, self.storage.icon_metric()))
+
     def _apply_icon_size(self, value):
-        self.lbl_icon.setText("%d px" % value)
         self.storage.set_setting("icon_size", int(value))
+        self._refresh_icon_labels()
+        self.window.rebuild()
+
+    def _apply_icon_scale(self, value):
+        self.storage.set_setting("icon_scale", value / 100.0)
+        self._refresh_icon_labels()
         self.window.rebuild()
 
     def _apply_columns(self, value):
@@ -135,9 +165,11 @@ class SettingsDialog(QDialog):
         """切换桌面整理模式：开=隐藏原生图标全盘接管；关=恢复原生桌面。"""
         self.storage.set_setting("hide_native_icons", bool(checked))
         self.window.apply_native_icons_setting()
-        if checked and not self.storage.layout:
-            # 刚开启整理模式且网格为空：播种一次桌面文件克隆
-            self.storage.ensure_desktop_clone()
+        if checked:
+            # 开启整理模式 = 原生图标被隐藏、网格全盘接管：必须保证桌面文件
+            # 已播种，否则用户面对的是空桌面（旧逻辑受 auto_clone 开关与
+            # "布局为空"双重门槛限制，是 2026-10-18 反馈"文件缺少很多"的根因）
+            self.storage.ensure_desktop_clone(force=True)
             self.window.rebuild()
 
     def _apply_auto_clone(self, checked):

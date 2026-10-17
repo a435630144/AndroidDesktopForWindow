@@ -7,31 +7,62 @@
   - 文件夹：深色半透明圆角方形 + 2x2 迷你图标（1/2/3/4 成员自适应布局）
 
 交互：
-  - 左键按下移动超过系统拖拽阈值 -> 系统级拖拽（QDrag）
+  - 左键按下移动超过系统拖拽阈值 -> 自管理拖拽循环（grabMouse + 合成拖放事件）
   - 拖到另一个图标上            -> mergeRequested（创建 / 合并文件夹）
   - 拖到窗口空白处              -> 由主窗口移动到目标网格
   - 文件夹内图标拖出            -> payload 形如 "M:fid:idx"
   - 单击        -> 选中（clicked）；双击 -> 打开
   - 右键        -> 打开 / 在文件夹中显示 / 移出文件夹 / 解散 / 移除
 
-动效（苹果 HIG / Fluid Interfaces 规范，见 src/effects.py）：
-  - 按下 scale(0.96) 100ms ease-out（pointer-down 即反馈，不等松手）
-  - 松开临界阻尼回弹（无动量不过冲；带动量的拖动落位才配 OutBack 弹跳）
+动效（苹果 HIG / Fluid Interfaces 规范，真弹簧见 src/effects.py）：
+  - 按下 scale(0.97) 100ms ease-out（pointer-down 即反馈，不等松手）
+  - 松开 / 悬停归位：临界阻尼弹簧（damping 1.0，无动量不过冲）
+  - 拖动落位：欠阻尼弹簧 0.62（带动量才有 ~7% 一次衰减过冲）
   - 悬停 1.04 轻放大；拖动提拉 1.06
-  - 双击/打开文件夹脉冲（1.12 放大回落）
-  - rebuild 错峰淡入（stagger，每个间隔 30ms）
+  - 双击/打开文件夹脉冲：峰值 1.08 上冲 90ms + 临界阻尼回落
+  - rebuild 错峰淡入（stagger 30ms/个，欠阻尼 0.72 落位微弹）
   - 系统关闭动画效果时（prefers-reduced-motion 等价）自动降级为短淡入
 """
-from PySide6.QtCore import (QEasingCurve, QMimeData, QPoint, QPropertyAnimation,
-                            QRect, QRectF, QSize, Qt, Signal, Property, QTimer)
-from PySide6.QtGui import QColor, QDrag, QFontMetrics, QPen, QPixmap, QPainter
-from PySide6.QtWidgets import QApplication, QMenu, QWidget
+from PySide6.QtCore import (QEasingCurve, QMimeData, QPoint, QPointF,
+                            QPropertyAnimation, QRect, QRectF, QSize, Qt,
+                            Signal, Property, QTimer)
+from PySide6.QtGui import (QBrush, QColor, QDragEnterEvent, QDragLeaveEvent,
+                           QDragMoveEvent, QDropEvent, QFontMetrics,
+                           QLinearGradient, QPen, QPixmap, QPainter)
+from PySide6.QtWidgets import QApplication, QMenu, QToolTip, QWidget
 
 from . import appsource
 from . import effects
 from . import theme
 
 MIME_TYPE = "application/x-desktoporg-item"
+
+# 拖到图标上后进入「合并文件夹」武装状态所需的悬停时长（ms）。
+# 未满即松手 -> 走网格让位置换（安卓 launcher 默认语义）；
+# 悬停足够久图标高亮后松手 -> 合并文件夹。两套手势由此分流。
+DWELL_MERGE_MS = 450
+
+
+class _DragGhost(QWidget):
+    """浮动拖影：frameless + 半透明背景 + 对鼠标事件透明。
+
+    替代 QDrag 的拖拽图像。QDrag.exec() 在 Windows 上走 OLE DoDragDrop
+    模态循环，注入（合成）鼠标输入会被该循环吞掉释放事件导致拖拽永不
+    成落（DEVLOG Day4 实证：17ms 内取消、零 DragEnter），故改自管理
+    拖拽循环 + 本拖影。Qt.ToolTip 标志：无任务栏按钮、不抢焦点、
+    在桌面层应用窗口之上可见。
+    """
+
+    def __init__(self, pixmap: QPixmap):
+        super().__init__(None, Qt.ToolTip | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._pm = pixmap
+        self.setFixedSize(pixmap.size())
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.drawPixmap(0, 0, self._pm)
 
 
 class AppIcon(QWidget):
@@ -45,8 +76,11 @@ class AppIcon(QWidget):
     openLocation = Signal(dict)         # 在资源管理器中定位（桌面文件）
     dragStarted = Signal()
     dragFinished = Signal()
+    reflowHover = Signal(str, int, int)  # 拖动悬停：payload, 本图标所在 col, row
+    reflowDrop = Signal(str, int, int)   # 悬停未满即松手：payload, 本图标所在 col, row
 
-    def __init__(self, entry: dict, icon_size: int, in_folder: bool = False, parent=None):
+    def __init__(self, entry: dict, icon_size: int, in_folder: bool = False,
+                 parent=None, chrome_scale: float = 1.0):
         super().__init__(parent)
         self.entry = entry
         self.icon_size = icon_size
@@ -56,14 +90,38 @@ class AppIcon(QWidget):
         self.payload_provider = None  # 多选拖拽时由主窗口注入，返回逗号分隔的 id 列表
         self._press_pos = None
         self._dragged = False
+        # 自管理拖拽循环状态（替代 QDrag.exec 的 OLE DoDragDrop，见 _exec_drag）：
+        #   _drag_loop     拖动进行中（grabMouse 已捕获全部鼠标事件）
+        #   _drag_target   当前悬停目标（本应用部件；应用外/无目标为 None）
+        #   _drag_ghost_w  浮动拖影部件
+        #   _drag_mime     本次拖拽的 MIME 数据（payload 协议不变）
+        self._drag_loop = False
+        self._drag_target = None
+        self._drag_ghost_w = None
+        self._drag_mime = None
         self._hover = False
         self._merge_target = False
+        # 拖动虚影：拖动期间本图标不绘制（格子在视觉上被让出），但不 hide()——
+        # hide 会牵动显隐生命周期与命中测试，纯绘制跳过零风险
+        self._drag_ghost = False
+        # dwell 合并：悬停 450ms 才武装「合并文件夹」（未满即松手 = 让位置换）
+        self._merge_armed = False
+        self._dwell = QTimer(self)
+        self._dwell.setSingleShot(True)
+        self._dwell.setInterval(DWELL_MERGE_MS)
+        self._dwell.timeout.connect(self._arm_merge)
+        # 外围 chrome 缩放（留白 / 标签字号 / 行高随 DPI×用户缩放同比放大，
+        # 图标本身由 icon_size 已经放大——2026-10-18 DPI 感知）
+        self._m = max(0.5, float(chrome_scale))
         # 动效状态（三个独立属性，动画互不冲突；paintEvent 相乘）
         self._hover_scale = 1.0    # 悬停轻放大
         self._press_scale = 1.0    # 按压 / 拖动提拉 / 脉冲
         self._appear = 1.0         # 错峰淡入进度（rebuild stagger）
         self._anims = []           # 持有动画引用，防 GC
-        self.setFixedSize(icon_size + 28, icon_size + 46)
+        # chrome 精修（2026-10-18 用户反馈"图标大小不对"）：旧值 28/46 的
+        # 留白占比过大，图标显小。收紧到 24/40，标签贴近图标 6px。
+        self.setFixedSize(icon_size + int(round(24 * self._m)),
+                          icon_size + int(round(40 * self._m)))
         self.setAcceptDrops(True)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip(self._tooltip())
@@ -114,26 +172,42 @@ class AppIcon(QWidget):
         anim.start()
         return anim
 
-    def pulse(self, scale=1.12, duration=320):
-        """启动 / 打开反馈脉冲：放大后回落（关键帧动画）。"""
+    def pulse(self, scale=1.08, up_ms=90):
+        """启动 / 打开反馈脉冲：快速放大到峰值后弹簧回落。
+
+        苹果规范：峰值克制（1.06~1.08——1.12+ 显廉价）；上冲 OutCubic 90ms，
+        回落用临界阻尼弹簧（无动量不过冲）。旧实现峰值 1.12/1.14 且回落是
+        OutCubic，已按规范下调。
+
+        注意：pulse 自带回落动画，调用方不得再叠加同属性归位动画
+        （_animate 会按属性名停掉旧动画，曾导致 pulse 上冲被立即杀掉、
+        从未完整播放——2026-10-18 修复）。
+        """
         for a in list(self._anims):
             if a.propertyName() == b"press_scale":
                 a.stop()
                 self._anims.remove(a)
-        anim = QPropertyAnimation(self, b"press_scale", self)
-        anim.setDuration(effects.dur(duration))
-        anim.setKeyValueAt(0.0, self._press_scale)
-        anim.setKeyValueAt(0.35, scale)
-        anim.setKeyValueAt(1.0, 1.0)
-        anim.setEasingCurve(QEasingCurve.OutCubic)
-        anim.finished.connect(lambda: self._anims.remove(anim)
-                              if anim in self._anims else None)
-        self._anims.append(anim)
-        anim.start()
+        up = QPropertyAnimation(self, b"press_scale", self)
+        up.setDuration(effects.dur(up_ms))
+        up.setStartValue(float(self._press_scale))
+        up.setEndValue(float(scale))
+        up.setEasingCurve(QEasingCurve.OutCubic)
+        self._anims.append(up)
+
+        def _back():
+            if up in self._anims:
+                self._anims.remove(up)
+            # 回落：临界阻尼弹簧（点按反馈无动量，不过冲）
+            self._animate(b"press_scale", float(self._press_scale), 1.0, 240,
+                          effects.spring_curve(1.0, 240))
+
+        up.finished.connect(_back)
+        up.start()
 
     def appear_in(self, delay_ms=0):
         """错峰淡入（rebuild 后 iOS 风依次落位）：缩放 0.7->1 + 渐显。
-        系统关闭动画效果时退化为立即显示（不占 30ms/个的节奏）。"""
+        欠阻尼弹簧（damping 0.72，约 2% 过冲）——落位带一点活力，
+        但不过 3%（过大显廉价）。系统关闭动画效果时退化为立即显示。"""
         self._appear = 0.0
         self.update()
         delay = 0 if effects.reduced_motion() else max(0, delay_ms)
@@ -142,7 +216,57 @@ class AppIcon(QWidget):
     def _play_appear(self):
         if self._appear >= 1.0:
             return
-        self._animate(b"appear", 0.0, 1.0, 220)
+        self._animate(b"appear", 0.0, 1.0, 260, effects.spring_curve(0.72, 260))
+
+    # ---------- 位置动画（网格实时让位） ----------
+    def animate_to(self, x: int, y: int, duration: int = 280, damping: float = 0.78):
+        """弹簧滑行到目标格（安卓 launcher 的让位语言）。
+
+        与 press_scale / hover_scale / appear 是不同 property，可并行不冲突。
+        曲线：欠阻尼 0.78 ≈ 2% 一次微弹——有生命但不廉价；
+        落位（带动量）才用 0.62 ≈ 7% 过冲。
+        reduced-motion 时直接跳到位（保留结果、去掉位移）。
+        """
+        tx, ty = int(x), int(y)
+        if effects.reduced_motion() or (self.pos().x(), self.pos().y()) == (tx, ty):
+            if (self.pos().x(), self.pos().y()) != (tx, ty):
+                self.move(tx, ty)
+            return
+        for a in list(self._anims):
+            if a.propertyName() == b"pos":
+                a.stop()
+                self._anims.remove(a)
+        anim = QPropertyAnimation(self, b"pos", self)
+        anim.setDuration(effects.dur(duration))
+        anim.setStartValue(self.pos())
+        anim.setEndValue(QPoint(tx, ty))
+        anim.setEasingCurve(effects.spring_curve(damping, duration))
+        anim.finished.connect(lambda: self._anims.remove(anim)
+                              if anim in self._anims else None)
+        self._anims.append(anim)
+        anim.start()
+        return anim
+
+    def set_drag_ghost(self, on: bool):
+        """拖动期间本图标停止绘制（视觉上让出格子），不改变 geometry 与命中测试。"""
+        if self._drag_ghost != on:
+            self._drag_ghost = on
+            self.update()
+
+    # ---------- dwell 合并 ----------
+    def _arm_merge(self):
+        self._merge_armed = True
+        self._merge_target = True
+        self.update()
+        QToolTip.showText(self.mapToGlobal(QPoint(self.width() // 2, 8)),
+                          "松手合并为文件夹")
+
+    def _disarm_merge(self):
+        self._dwell.stop()
+        self._merge_armed = False
+        if self._merge_target:
+            self._merge_target = False
+            self.update()
 
     # ---------- 属性 ----------
     @property
@@ -173,6 +297,8 @@ class AppIcon(QWidget):
 
     # ---------- 绘制 ----------
     def paintEvent(self, event):
+        if self._drag_ghost:
+            return  # 拖动中：本格子已让出，由其他图标滑入填充
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         w = self.width()
@@ -195,7 +321,8 @@ class AppIcon(QWidget):
             p.setBrush(theme.ACCENT_SOFT)
             p.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), theme.RADIUS_ITEM, theme.RADIUS_ITEM)
         elif self.selected:
-            p.setPen(QPen(theme.ACCENT_BORDER, 1))
+            # 选中态加强：1.5px 描边 + 56% tint（多选/框选后一眼可辨）
+            p.setPen(QPen(theme.ACCENT_BORDER, 1.5))
             p.setBrush(theme.ACCENT_SOFT)
             p.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), theme.RADIUS_ITEM, theme.RADIUS_ITEM)
         elif self._hover:
@@ -215,12 +342,26 @@ class AppIcon(QWidget):
         self._paint_label(p)
 
     def _paint_folder(self, p: QPainter, dpr: float = 1.0):
-        """深色圆角方形 + 迷你图标矩阵（安卓风，按成员数 1/2/3/4 自适应）。"""
+        """深色圆角方形 + 迷你图标矩阵（安卓风，按成员数 1/2/3/4 自适应）。
+
+        瓷砖材质（2026-10-18 升级）：垂直渐变（顶亮底沉，受光方向与液态
+        玻璃一致）+ 顶部 1px 内高光 + 细描边——替代原来的纯色平底。"""
         s = self.icon_size
         box = QRectF(3, 3, s - 6, s - 6)
+        grad = QLinearGradient(0, box.top(), 0, box.bottom())
+        grad.setColorAt(0.0, theme.FOLDER_BG_TOP)
+        grad.setColorAt(1.0, theme.FOLDER_BG_BOTTOM)
         p.setPen(QPen(theme.FOLDER_BORDER, 1))
-        p.setBrush(theme.FOLDER_BG)
+        p.setBrush(QBrush(grad))
         p.drawRoundedRect(box, s * 0.24, s * 0.24)
+        # 顶部内高光（光线打在瓷砖上沿，与玻璃 specular 同语言）
+        hl = QLinearGradient(box.left() + s * 0.18, 0, box.right() - s * 0.18, 0)
+        hl.setColorAt(0.0, QColor(255, 255, 255, 0))
+        hl.setColorAt(0.5, theme.FOLDER_HILIGHT)
+        hl.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.setPen(QPen(QBrush(hl), 1.0))
+        p.drawLine(QPointF(box.left() + s * 0.16, box.top() + 1.2),
+                   QPointF(box.right() - s * 0.16, box.top() + 1.2))
         members = self.entry.get("apps", [])
         n = len(members)
         if n <= 1:
@@ -242,9 +383,11 @@ class AppIcon(QWidget):
         name = self._display_name()
         if not name:
             return
-        font = theme.ui_font(11)
+        # 标签字号随 chrome 缩放（DPI×用户缩放）：100% 时 12px，125% 时 15px
+        font = theme.ui_font(max(11, int(round(theme.LABEL_SIZE * self._m))))
         p.setFont(font)
-        rect = QRect(2, self.icon_size + 8, self.width() - 4, 34)
+        rect = QRect(2, self.icon_size + int(round(6 * self._m)),
+                     self.width() - 4, int(round(34 * self._m)))
         fm = QFontMetrics(font)
         lines = self._wrap_elide(name, fm, rect.width(), 2)
         lh = fm.height() + 1
@@ -283,10 +426,18 @@ class AppIcon(QWidget):
             self._dragged = False
             # 苹果 HIG 按压反馈：scale(0.97) 100ms ease-out，pointer-down
             # 即触发不等松手（按下即反馈，消灭延迟）
-            self._animate(b"press_scale", self._press_scale, 0.96, 100,
+            self._animate(b"press_scale", self._press_scale, 0.97, 100,
                           QEasingCurve.OutCubic)
+        elif e.button() == Qt.RightButton and self._drag_loop:
+            # 拖动中按右键 = 取消（与 OLE 拖拽语义一致）
+            self._cancel_drag()
 
     def mouseMoveEvent(self, e):
+        if self._drag_loop:
+            # 拖动进行中：grabMouse 保证移动事件全部送到本部件，
+            # 由拖拽循环驱动拖影 / 命中测试 / 合成拖放事件
+            self._drag_move(e.globalPos())
+            return
         if self._press_pos is None or not (e.buttons() & Qt.LeftButton):
             return
         if (e.pos() - self._press_pos).manhattanLength() < QApplication.startDragDistance():
@@ -295,59 +446,167 @@ class AppIcon(QWidget):
         self.dragStarted.emit()
         self._exec_drag()
 
+    def mouseReleaseEvent(self, e):
+        if self._drag_loop and e.button() == Qt.LeftButton:
+            self._finish_drag(e.globalPos())
+            return
+        if e.button() == Qt.LeftButton and self._press_pos is not None and not self._dragged:
+            if self.is_folder:
+                # 打开文件夹：脉冲反馈（自带弹簧回落，不再叠加归位动画）
+                self.pulse()
+                self.folderClicked.emit(self.entry["id"])
+            else:
+                self.clicked.emit(self.entry["id"])
+                # 松开回弹：点按无动量，按苹果规范用临界阻尼弹簧（无过冲）
+                self._animate(b"press_scale", self._press_scale, 1.0, 220,
+                              effects.spring_curve(1.0, 220))
+        elif e.button() == Qt.LeftButton and self._press_pos is not None:
+            # 未形成点击的抬起（如拖拽被取消）：临界阻尼平滑归位
+            self._animate(b"press_scale", self._press_scale, 1.0, 180,
+                          effects.spring_curve(1.0, 180))
+        self._press_pos = None
+
+    def keyPressEvent(self, e):
+        if self._drag_loop and e.key() == Qt.Key_Escape:
+            # Esc 取消拖拽（与 OLE 拖拽语义一致）
+            self._cancel_drag()
+            e.accept()
+            return
+        super().keyPressEvent(e)
+
+    # ---------- 自管理拖拽循环（替代 QDrag.exec 的 OLE DoDragDrop） ----------
     def _exec_drag(self):
+        """启动拖拽：grabMouse + 浮动拖影 + 合成 Qt 拖放事件。
+
+        不再走 QDrag.exec()/OLE DoDragDrop——该模态循环会吞掉注入的
+        鼠标释放事件，合成输入下端到端拖拽永不落位（DEVLOG Day4 实证：
+        17ms 内即取消返回、零个 DragEnter；真实鼠标下 OLE 虽可用，
+        但两条输入路径行为不一致）。grabMouse 让真实鼠标与合成输入
+        走同一条代码路径，drop 侧（dragEnter/dragMove/drop 事件处理器）
+        完全不变，只是改由本循环派发合成事件驱动。
+        """
         payload = self.drag_payload
         if self.payload_provider is not None:
             try:
                 payload = self.payload_provider(self.drag_payload) or payload
             except Exception:
                 pass
-        # 提拉感：拖动源放大 1.06。QDrag.exec() 是嵌套事件循环且阻塞
-        # Qt 定时器，动画不驱动，直接置位 + update。
+        # 提拉感：拖动源放大 1.06。自管理循环不阻塞 Qt 定时器，
+        # 动画照常驱动，这里仍直接置位保证即时反馈。
         self._set_press_scale(1.06)
-        drag = QDrag(self)
-        mime = QMimeData()
-        mime.setData(MIME_TYPE, payload.encode())
-        drag.setMimeData(mime)
+        # 虚影：本格子在拖动期间视觉让出（其他图标滑入填充），
+        # 不 hide()——不动 geometry 与命中测试，撤销只翻一个标志位
+        self.set_drag_ghost(True)
+        self._drag_mime = QMimeData()
+        self._drag_mime.setData(MIME_TYPE, payload.encode())
         pm = QPixmap(self.size())
         pm.fill(Qt.transparent)
         self.render(pm)
-        drag.setPixmap(pm)
-        drag.setHotSpot(self._press_pos or QPoint(1, 1))
-        drag.exec(Qt.MoveAction)
+        self._drag_ghost_w = _DragGhost(pm)
+        self._drag_ghost_w.show()
+        self._drag_target = None
+        self._drag_loop = True
+        self.grabMouse()
+
+    def _drag_move(self, gpos):
+        """拖动中：拖影跟随光标 + 命中测试 + 合成 dragEnter/dragMove/dragLeave。"""
+        ghost = self._drag_ghost_w
+        if ghost is not None and self._press_pos is not None:
+            ghost.move(int(gpos.x() - self._press_pos.x()),
+                       int(gpos.y() - self._press_pos.y()))
+        target = self._hit_target(gpos)
+        if target is not self._drag_target:
+            prev, self._drag_target = self._drag_target, target
+            if prev is not None:
+                self._send_drag_event(prev, QDragLeaveEvent())
+            if target is not None:
+                self._send_drag_event(target, QDragEnterEvent(
+                    target.mapFromGlobal(gpos), Qt.MoveAction,
+                    self._drag_mime, Qt.LeftButton, Qt.NoModifier))
+        elif target is not None:
+            self._send_drag_event(target, QDragMoveEvent(
+                target.mapFromGlobal(gpos), Qt.MoveAction,
+                self._drag_mime, Qt.LeftButton, Qt.NoModifier))
+
+    def _hit_target(self, gpos):
+        """光标下的本应用部件；排除拖影与拖动源自身。
+
+        光标落在拖影上时（拖影热点即光标），退化为用拖影中心
+        （图标的视觉中心）找目标——用户感知的落点是图标位置而非热点。
+        """
+        target = QApplication.widgetAt(gpos)
+        ghost = self._drag_ghost_w
+        if target is ghost or target is self:
+            if ghost is not None:
+                gc = ghost.mapToGlobal(QPoint(ghost.width() // 2,
+                                             ghost.height() // 2))
+                t2 = QApplication.widgetAt(gc)
+                if t2 is not ghost and t2 is not self:
+                    return t2
+            return None
+        return target
+
+    def _send_drag_event(self, widget, event):
+        """派发合成拖放事件；目标已被销毁（rebuild/deleteLater）时静默跳过。"""
         try:
-            self.dragFinished.emit()
-            self._press_pos = None
-            # 落位回弹（弹簧过冲）
-            self._animate(b"press_scale", 1.06, 1.0, 240,
-                          QEasingCurve.OutBack)
+            QApplication.sendEvent(widget, event)
         except RuntimeError:
-            # 拖动嵌套循环期间本部件已被删除/重建（drop -> rebuild() 的
-            # deleteLater、FolderPopup 关闭等），信号源 C++ 对象已不存在。
-            # 必须吞掉：异常会冲掉 dragFinished 信号 -> DesktopWindow
-            # _on_drag_finished 不执行 -> _drag_active 永久卡死 ->
-            # nativeEvent 全窗口 HTCLIENT，桌面点击全部失效。
             pass
 
-    def mouseReleaseEvent(self, e):
-        if e.button() == Qt.LeftButton and self._press_pos is not None and not self._dragged:
-            if self.is_folder:
-                self.pulse(1.14, 340)   # 打开文件夹：脉冲反馈
-                self.folderClicked.emit(self.entry["id"])
+    def _finish_drag(self, gpos):
+        """松手：落点有效 -> 合成 drop；gpos 为 None（取消）-> dragLeave。"""
+        self._drag_loop = False
+        try:
+            self.releaseMouse()
+        except RuntimeError:
+            pass
+        target, self._drag_target = self._drag_target, None
+        if target is not None:
+            if gpos is not None:
+                self._send_drag_event(target, QDropEvent(
+                    target.mapFromGlobal(gpos), Qt.MoveAction,
+                    self._drag_mime, Qt.LeftButton, Qt.NoModifier))
             else:
-                self.clicked.emit(self.entry["id"])
-            # 松开回弹：点按无动量，按苹果规范用临界阻尼（无过冲）；
-            # 只有带动量的手势（拖动落位）才配弹跳
-            self._animate(b"press_scale", self._press_scale, 1.0, 200,
-                          QEasingCurve.OutCubic)
-        elif e.button() == Qt.LeftButton and self._press_pos is not None:
-            # 未形成点击的抬起（如拖拽被取消）：平滑归位
-            self._animate(b"press_scale", self._press_scale, 1.0, 160)
+                self._send_drag_event(target, QDragLeaveEvent())
+        self._after_drag()
+
+    def _cancel_drag(self):
+        self._finish_drag(None)
+
+    def _after_drag(self):
+        """拖拽结束公共清理：撤拖影、发 dragFinished、落位回弹动画。"""
+        ghost, self._drag_ghost_w = self._drag_ghost_w, None
+        if ghost is not None:
+            ghost.close()
         self._press_pos = None
+        try:
+            self.dragFinished.emit()
+            # 落位回弹：带动量的手势才配弹跳（苹果规范：动量弹簧 ~0.8，
+            # 无动量点按用临界阻尼）。欠阻尼 0.62 ≈ 7% 一次衰减过冲，
+            # 替代旧 OutBack（过冲量与时长无关的多项式拱，形状不对）。
+            self._animate(b"press_scale", 1.06, 1.0, 300,
+                          effects.spring_curve(0.62, 300))
+        except RuntimeError:
+            # 拖动期间本部件已被删除/重建（drop -> rebuild() 的 deleteLater、
+            # FolderPopup 关闭等），信号源 C++ 对象已不存在。必须吞掉：
+            # 异常会冲掉 dragFinished 信号 -> DesktopWindow _on_drag_finished
+            # 不执行 -> _drag_active 永久卡死 -> nativeEvent 全窗口
+            # HTCLIENT，桌面点击全部失效。
+            pass
+        # 安全网：dragFinished 信号万一丢失，也要把虚影撤掉，
+        # 否则图标会永久不可见（DEVLOG 4.3 同源风险的绘制版）
+        QTimer.singleShot(0, self._safe_unghost)
+
+    def _safe_unghost(self):
+        try:
+            if self._drag_ghost:
+                self.set_drag_ghost(False)
+        except RuntimeError:
+            pass
 
     def mouseDoubleClickEvent(self, e):
         if self.is_folder:
-            self.pulse(1.14, 340)
+            self.pulse()
             self.folderClicked.emit(self.entry["id"])
         else:
             self.pulse()   # 启动反馈脉冲
@@ -355,13 +614,15 @@ class AppIcon(QWidget):
 
     def enterEvent(self, e):
         self._hover = True
-        # 悬停轻放大 1.04
-        self._animate(b"hover_scale", self._hover_scale, 1.04, 120)
+        # 悬停轻放大 1.04：临界阻尼弹簧，可打断（快速划过时从当前值起播）
+        self._animate(b"hover_scale", self._hover_scale, 1.04, 140,
+                      effects.spring_curve(1.0, 140))
         self.update()
 
     def leaveEvent(self, e):
         self._hover = False
-        self._animate(b"hover_scale", self._hover_scale, 1.0, 140)
+        self._animate(b"hover_scale", self._hover_scale, 1.0, 160,
+                      effects.spring_curve(1.0, 160))
         self.update()
 
     # ---------- 拖放接收 ----------
@@ -370,23 +631,47 @@ class AppIcon(QWidget):
             dragged = e.mimeData().data(MIME_TYPE).data().decode()
             if dragged not in (self.drag_payload, self.entry.get("id")):
                 e.acceptProposedAction()
-                self._merge_target = True
-                self.update()
+                # 悬停计时：够久才武装合并；未满即松手 = 让位置换
+                self._dwell.start()
 
-    def dragLeaveEvent(self, e):
-        if self._merge_target:
-            self._merge_target = False
-            self.update()
-
-    def dropEvent(self, e):
-        if self._merge_target:
-            self._merge_target = False
-            self.update()
+    def dragMoveEvent(self, e):
+        if not e.mimeData().hasFormat(MIME_TYPE):
+            return
         dragged = e.mimeData().data(MIME_TYPE).data().decode()
         if dragged in (self.drag_payload, self.entry.get("id")):
             return
         if self.in_folder:
+            return  # 文件夹内部不互相合并 / 不让位
+        if self._merge_armed:
+            return  # 已进入合并分支，不再驱动让位预览
+        # 未武装：把悬停目标格上报主窗口做实时让位（安卓默认语义）
+        e.acceptProposedAction()
+        self.reflowHover.emit(dragged, int(self.entry.get("col", 0)),
+                              int(self.entry.get("row", 0)))
+
+    def dragLeaveEvent(self, e):
+        self._disarm_merge()
+        e.accept()
+
+    def dropEvent(self, e):
+        dragged = e.mimeData().data(MIME_TYPE).data().decode()
+        armed = self._merge_armed          # 必须先取，_disarm_merge 会清掉它
+        self._disarm_merge()
+        if dragged in (self.drag_payload, self.entry.get("id")):
+            return
+        if self.in_folder:
             return  # 文件夹内部不互相合并
+        if not armed:
+            # 悬停未满 450ms：不合并，走网格让位。
+            # 必须直连上报主窗口，不能靠 e.ignore() 冒泡——实测（probe15 G11a）
+            # drop 事件不会从图标传播到父窗口（propagated=0），冒泡丢失会让
+            # 预览永不提交、最终被 _cancel_preview 回退，表现为"拖了却没动"。
+            e.acceptProposedAction()
+            self.reflowDrop.emit(dragged, int(self.entry.get("col", 0)),
+                                 int(self.entry.get("row", 0)))
+            return
+        self._merge_target = False
+        self.update()
         e.acceptProposedAction()
         self.mergeRequested.emit(dragged, self.entry["id"])
 

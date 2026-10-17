@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """小组件管理层：统一创建 / 显隐 / 关闭桌面小组件。"""
+from PySide6.QtCore import QObject, QPoint, Signal
 from PySide6.QtWidgets import QApplication
 
+from . import grid_flow
 from .band_guard import BandGuard
 from .widget_base import FloatingWidget
 from .widgets_clock import ClockWidget
@@ -13,8 +15,13 @@ WIDGET_TYPES = {"clock": ClockWidget, "notes": NotesWidget, "panel": DesktopPane
 WIDGET_NAMES = {"clock": "时钟", "notes": "便签", "panel": "桌面面板"}
 
 
-class WidgetLayer:
+class WidgetLayer(QObject):
+    # 锚定小组件占位变化（落定 / 移动 / 尺寸变化）时发出，
+    # 由 main.py 连到 DesktopWindow.on_widget_grid_changed 挤走图标。
+    gridChanged = Signal()
+
     def __init__(self, storage):
+        super().__init__()
         self.storage = storage
         self.widgets = {}  # entry_id -> FloatingWidget
         self._band_guard = BandGuard()
@@ -26,7 +33,14 @@ class WidgetLayer:
 
     # ---------- 默认落位 ----------
     def _place_default(self, entry):
-        """首次创建（没有保存过位置）时按类型放到合适位置，避免互相遮挡。"""
+        """首次创建（没有保存过位置）时按类型放到合适位置，避免互相遮挡。
+
+        锚定（非悬浮）组件不在这里定位：由 _spawn 走 find_widget_slot
+        分配网格占位（col/row），再换算成像素坐标——它占据格子，
+        不是"浮在某个角落"。
+        """
+        if entry.get("anchored") and "col" not in entry:
+            return
         if "x" in entry:
             return
         screen = QApplication.primaryScreen().availableGeometry()
@@ -56,8 +70,21 @@ class WidgetLayer:
         cls = WIDGET_TYPES.get(entry.get("type"))
         if cls is None:
             return
+        if entry.get("anchored"):
+            # 锚定组件：分配网格占位（排除已有组件与图标），按格点定位
+            if "col" not in entry:
+                col, row = grid_flow.find_widget_slot(self.storage, entry)
+                entry["col"], entry["row"] = col, row
+            cs, rs = grid_flow.widget_span(self.storage, entry)
+            entry["colspan"], entry["rowspan"] = cs, rs
+            ox, oy = grid_flow.origin()
+            cw, ch = grid_flow.cell_size(self.storage)
+            entry["x"] = ox + int(entry["col"]) * cw
+            entry["y"] = oy + int(entry["row"]) * ch
+            self.storage.save()
         w = cls(self.storage, entry)
         w.closed.connect(self._on_closed)
+        w.gridChanged.connect(self.gridChanged.emit)
         self.widgets[entry["id"]] = w
         w.show()
         # 小组件同样纳入桌面带守护（防 Win+D 等场景漂移后盖住应用窗口）
@@ -67,6 +94,24 @@ class WidgetLayer:
         w = self.widgets.pop(widget_id, None)
         if w is not None:
             self._band_guard.untrack(w)
+        # 形态切换（锚定 <-> 悬浮）会关闭旧窗口再重建：entry 未 hidden
+        # 就必须补一个，否则右键切一次组件就少一个
+        entry = next((e for e in self.storage.widgets if e.get("id") == widget_id), None)
+        if entry is not None and not entry.get("hidden") and widget_id not in self.widgets:
+            self._spawn(entry)
+
+    def set_anchored(self, entry_id: str, on: bool):
+        """切换小组件的锚定（非悬浮）形态：改 entry 后重建该组件。"""
+        entry = next((e for e in self.storage.widgets if e.get("id") == entry_id), None)
+        if not entry or bool(entry.get("anchored")) == bool(on):
+            return
+        entry["anchored"] = bool(on)
+        self.storage.save()
+        w = self.widgets.pop(entry_id, None)
+        if w is not None:
+            self._band_guard.untrack(w)
+            w.close()
+        self._spawn(entry)
 
     def set_visible(self, on: bool):
         for w in self.widgets.values():

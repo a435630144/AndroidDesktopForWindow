@@ -127,10 +127,37 @@ def _has_noactivate(hwnd) -> bool:
 
 
 def _insert_above(hwnd: int, above_of: int) -> bool:
-    """把 hwnd 插到 above_of 正上方一位（不移动、不改大小、不激活）。"""
+    """把 hwnd 插到 above_of 正上方一位（不移动、不改大小、不激活）。
+
+    注意 Win32 语义：SetWindowPos(h, insertAfter) 标准语义是把 h 放到
+    insertAfter **下方**（hWndInsertAfter 是"前驱"）。Progman 是例外——
+    实测 SetWindowPos(h, Progman) 会把 h 插到 Progman 正上方一位
+    （attach_to_desktop 依赖该行为，见模块头注释 4）。
+    对普通窗口要用 insert_above_window()。
+    """
     return bool(_user32.SetWindowPos(
         hwnd, above_of, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE))
+
+
+GW_HWNDPREV = 3
+HWND_TOP = 0
+
+
+def insert_above_window(hwnd: int, above_of: int) -> bool:
+    """把 hwnd 插到普通窗口 above_of 的正上方一位。
+
+    实现：先取 above_of 的前驱（z-order 中位于其上的窗口），再把 hwnd
+    插到该前驱下方（标准 SetWindowPos 语义）= above_of 上方。
+    above_of 已是 z-order 最顶时退化为 HWND_TOP。
+    用于 FolderPopup 插到整理窗口之上（2026-10-18：弹窗在整理窗口之下
+    会被全窗口 HTCLIENT 的命中测试挡住，点不到）。
+    """
+    prev = int(_user32.GetWindow(above_of, GW_HWNDPREV) or 0)
+    if prev:
+        return _insert_above(hwnd, prev)
+    return bool(_user32.SetWindowPos(
+        hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE))
 
 
 def is_in_desktop_band(hwnd: int, progman: int = 0) -> bool:

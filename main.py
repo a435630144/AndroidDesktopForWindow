@@ -57,16 +57,21 @@ def main() -> int:
 
     storage = Storage()
 
-    # 旧版（自动克隆 + 隐藏原生图标）一次性迁移为原生模式：
-    # 清空自动生成的图标网格、恢复系统原生桌面（文件不动，可手动重新扫描找回）
-    storage.migrate_to_native_mode()
-    # 仅当用户在设置里开启「自动克隆桌面文件」时才播种，不自行创建图标
+    # 路线A（2026-10-18 用户拍板）：默认进入桌面整理模式——隐藏原生图标、
+    # 桌面文件全部映射进网格。启动即无条件补扫一次（幂等，只增不减），
+    # 保证升级/重装后网格不空（旧版 migrate_to_native_mode 会清空网格并
+    # 关闭整理模式，已废弃为 no-op）。
     storage.ensure_desktop_clone()
 
     window = DesktopWindow(storage)
     window.show_desktop()
 
     layer = WidgetLayer(storage)
+    # 锚定小组件是网格一等公民：占位变化（落定/移动）时挤走被压住的图标
+    layer.gridChanged.connect(window.on_widget_grid_changed)
+    # 启动兜底：小组件 spawn 时分配的占位可能压住已有图标（旧 state 升级），
+    # 此时信号还未连上，手动触发一次 displace
+    window.on_widget_grid_changed()
 
     tray = SystemTray(window, storage, layer)
     tray.openSettings = lambda: SettingsDialog(window, storage, layer).exec()

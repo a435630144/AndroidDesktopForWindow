@@ -30,7 +30,7 @@ _ICON_PROVIDER = QFileIconProvider()
 
 TOOLBUTTON_QSS = (
     "QToolButton{background: transparent; color: rgb(216,220,226); border: none;"
-    " border-radius: 10px; padding: 4px; font-family: %s; font-size: 11px;}"
+    " border-radius: 10px; padding: 4px; font-family: %s; font-size: 12px;}"
     "QToolButton:hover{background: rgba(255,255,255,22);}"
     "QToolButton:pressed{background: rgba(255,255,255,34);}"
 ) % _FONT_CSS
@@ -90,14 +90,14 @@ class DiskCard(QWidget):
         p.drawRoundedRect(self.rect(), theme.RADIUS_CARD, theme.RADIUS_CARD)
         pad = 14
         p.setPen(theme.TEXT)
-        p.setFont(theme.ui_font(13))
+        p.setFont(theme.ui_font(14, bold=True))
         drive = (os.environ.get("SystemDrive", "C:") or "C:")
         p.drawText(QRect(pad, 12, 200, 22), Qt.AlignLeft | Qt.AlignVCenter,
                    "本地磁盘（%s:）" % drive)
         if self.total > 0:
             free = self.total - self.used
             p.setPen(theme.TEXT_DIM)
-            p.setFont(theme.ui_font(11))
+            p.setFont(theme.ui_font(12))
             p.drawText(QRect(self.width() - pad - 200, 12, 200, 22),
                        Qt.AlignRight | Qt.AlignVCenter, "%s 可用" % self._gb(free))
             # 占用条
@@ -108,8 +108,8 @@ class DiskCard(QWidget):
             fw = int(bar.width() * self.used / self.total)
             p.setBrush(QColor(theme.ACCENT.red(), theme.ACCENT.green(), theme.ACCENT.blue(), 235))
             p.drawRoundedRect(QRect(bar.left(), bar.top(), max(8, fw), bar.height()), 4, 4)
-            p.setPen(theme.TEXT_FAINT)
-            p.setFont(theme.ui_font(11))
+            p.setPen(theme.TEXT_DIM)
+            p.setFont(theme.ui_font(12))
             pct = self.used * 100.0 / self.total
             p.drawText(QRect(pad, 62, self.width() - pad * 2, 20),
                        Qt.AlignLeft | Qt.AlignVCenter,
@@ -155,7 +155,7 @@ class WeatherCard(QWidget):
         p.setFont(theme.ui_font(13))
         p.drawText(QRect(cx + 24, 26, 160, 40), Qt.AlignRight | Qt.AlignVCenter, "晴")
         p.setPen(theme.TEXT_FAINT)
-        p.setFont(theme.ui_font(11))
+        p.setFont(theme.ui_font(12))
         p.drawText(QRect(self.width() - pad - 220, 62, 220, 20),
                    Qt.AlignRight | Qt.AlignVCenter, "北京 · 示例数据")
 
@@ -171,7 +171,7 @@ class RecentCard(QWidget):
         lay.setSpacing(6)
         head = QHBoxLayout()
         title = QLabel("最近下载")
-        title.setStyleSheet("color: rgb(168,173,181); font-size: 12px; background: transparent;")
+        title.setStyleSheet("color: rgb(168,173,181); font-size: 13px; background: transparent;")
         head.addWidget(title)
         head.addStretch(1)
         self.btn_open = QToolButton()
@@ -179,7 +179,7 @@ class RecentCard(QWidget):
         self.btn_open.setCursor(Qt.PointingHandCursor)
         self.btn_open.setStyleSheet(
             "QToolButton{background: transparent; color: rgb(76,194,255); border: none;"
-            " font-size: 11px; padding: 2px 4px;}")
+            " font-size: 12px; padding: 2px 4px;}")
         self.btn_open.clicked.connect(self._open_folder)
         head.addWidget(self.btn_open)
         lay.addLayout(head)
@@ -225,7 +225,7 @@ class RecentCard(QWidget):
             dt = datetime.datetime.fromtimestamp(f.stat().st_mtime)
             when = "今天" if dt.date() == now.date() else dt.strftime("%m-%d")
             when_lbl = QLabel(when)
-            when_lbl.setStyleSheet("color: rgb(120,126,135); font-size: 11px; background: transparent;")
+            when_lbl.setStyleSheet("color: rgb(140,146,155); font-size: 12px; background: transparent;")
             hl.addWidget(icon)
             hl.addWidget(name, 1)
             hl.addWidget(when_lbl)
@@ -234,7 +234,7 @@ class RecentCard(QWidget):
             self.rows.append((str(f), row))
         if not self.rows:
             empty = QLabel("下载文件夹为空")
-            empty.setStyleSheet("color: rgb(120,126,135); font-size: 11px; background: transparent;")
+            empty.setStyleSheet("color: rgb(140,146,155); font-size: 12px; background: transparent;")
             self.list_lay.addWidget(empty)
             self.rows.append(("", empty))
 

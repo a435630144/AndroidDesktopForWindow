@@ -6,8 +6,9 @@ import subprocess
 import sys
 import time
 from ctypes import wintypes
+from pathlib import Path
 
-sys.path.insert(0, "C:/Users/43563/WorkBuddy/2026-10-16-01-23-19/desktop-organizer")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import win32_layer
 

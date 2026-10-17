@@ -41,9 +41,10 @@ def main():
         # 1. 存储默认值与持久化
         st = Storage(path=tmp / "state.json")
         check("存储默认设置", st.get_setting("icon_size") == 72)
-        check("默认恢复原生桌面（不自行创建图标）",
-              st.get_setting("hide_native_icons") is False
-              and st.get_setting("auto_clone_desktop") is False)
+        # 2026-10-18 路线A：默认进入整理模式 + 自动播种
+        check("默认进入桌面整理模式（路线A）",
+              st.get_setting("hide_native_icons") is True
+              and st.get_setting("auto_clone_desktop") is True)
         check("默认组件含桌面面板", any(w.get("type") == "panel" for w in st.widgets))
         st.set_setting("icon_size", 96)
         st2 = Storage(path=tmp / "state.json")
@@ -61,10 +62,16 @@ def main():
         w._on_dissolve(st.layout[0]["id"])
         check("解散文件夹", len(st.layout) == 2 and all(e["type"] == "app" for e in st.layout))
 
-        # 3. 移除 + 规整
+        # 3. 移除 + 稀疏保留（自由排布：compact 只修越界/重叠，不重排顺序）
+        keep_pos = (st.layout[1]["col"], st.layout[1]["row"])
         st.remove_entry(st.layout[0]["id"])
         st.compact_layout()
-        check("移除后规整", len(st.layout) == 1 and st.layout[0]["col"] == 0 and st.layout[0]["row"] == 0)
+        check("移除后保留稀疏布局（其余图标不动）",
+              len(st.layout) == 1
+              and (st.layout[0]["col"], st.layout[0]["row"]) == keep_pos)
+        st.tidy_layout()
+        check("显式整理布局后顺序铺满",
+              (st.layout[0]["col"], st.layout[0]["row"]) == (0, 0))
 
         # 4. 文件夹成员拖出（payload: "fid:idx"）：拖出一个仍保留，拖空才溶解
         st.add_app({"name": "画图", "target": "mspaint"})
@@ -129,26 +136,32 @@ def main():
         check("应用扫描非空", len(apps) > 0)
         check("内置系统入口", any(a["id"] == "sys-notepad" for a in apps))
 
-        # 8. 新默认行为：不自动克隆；显式开启后才播种；旧状态一次性迁移
+        # 8. 路线A 默认行为：整理模式开启即自动播种；旧版迁移已废弃（不再清空/关闭）
         orig_dirs2 = appsource._desktop_folders
         appsource._desktop_folders = lambda: [fake_desktop]
         try:
             st4 = Storage(path=tmp / "state3.json")
             st4.ensure_desktop_clone()
-            check("默认不自动克隆", len(st4.layout) == 0)
-            st4.set_setting("auto_clone_desktop", True)
-            st4.ensure_desktop_clone()
-            check("开启后自动播种", len(st4.layout) == 3)
+            check("整理模式默认自动播种", len(st4.layout) == 3)
+            st4.set_setting("hide_native_icons", False)
+            st4.set_setting("auto_clone_desktop", False)
+            st4b = Storage(path=tmp / "state3b.json")
+            st4b.set_setting("hide_native_icons", False)
+            st4b.set_setting("auto_clone_desktop", False)
+            st4b.ensure_desktop_clone()
+            check("退回原生模式后不自动播种", len(st4b.layout) == 0)
+            st4b.set_setting("hide_native_icons", True)
+            st4b.ensure_desktop_clone(force=True)
+            check("重新开启整理模式即补播", len(st4b.layout) == 3)
 
-            # 模拟旧版状态（自动播种过 + 隐藏原生图标）-> 迁移为原生模式
+            # 旧版状态（播种过 + 整理模式）：迁移不再清空布局、不再关闭整理模式
             st5 = Storage(path=tmp / "state4.json")
             st5.seed_desktop_clone()
             st5.set_setting("hide_native_icons", True)
             st5.set_setting("desktop_clone_v2", True)
-            check("迁移清空自动克隆", st5.migrate_to_native_mode() is True
-                  and len(st5.layout) == 0
-                  and st5.get_setting("hide_native_icons") is False)
-            check("迁移只执行一次", st5.migrate_to_native_mode() is False)
+            check("旧版迁移不再清空/关闭（路线A）", st5.migrate_to_native_mode() is False
+                  and len(st5.layout) == 3
+                  and st5.get_setting("hide_native_icons") is True)
         finally:
             appsource._desktop_folders = orig_dirs2
 
