@@ -67,6 +67,8 @@ def main() -> int:
     window.show_desktop()
 
     layer = WidgetLayer(storage)
+    # M6：翻页时组件与图标联动滑动（sync_page）
+    window.set_widget_layer(layer)
     # 锚定小组件是网格一等公民：占位变化（落定/移动）时挤走被压住的图标
     layer.gridChanged.connect(window.on_widget_grid_changed)
     # M4：组件拖动实时预览（hover 按新占位矩形实时挤走图标，松手回退）

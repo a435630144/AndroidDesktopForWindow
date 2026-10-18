@@ -154,6 +154,10 @@ def main():
         def get_setting(self, k):
             return self._s.get(k)
 
+        @property
+        def columns(self):
+            return self._s["columns"]
+
         def icon_metric(self):
             return int(self._s["icon_size"] * 1.25)
 

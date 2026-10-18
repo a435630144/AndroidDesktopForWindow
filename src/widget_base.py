@@ -105,22 +105,54 @@ class FloatingWidget(QWidget):
         col 并夹紧到 [0, cols-cs]，必要时把窗口移回夹紧后的格点——
         entry 与视觉保持一致；再走一次占位写入，占位变了会发
         gridChanged，DesktopWindow 把新旧占位差区域的图标挤走。
+
+        M6：col/row 反算走 grid_flow.pos_cell（含当前页偏移），row 再
+        夹到本页行范围（组件不越页底）。
         """
         if not self.anchored or cs < 1 or rs < 1:
             return
         cw, ch = grid_flow.cell_size(self.storage)
         self.resize(cs * cw, rs * ch)
         self.entry["w"], self.entry["h"] = cs * cw, rs * ch
-        ox, oy = grid_flow.origin()
-        col = max(0, min(int(round((self.x() - ox) / max(1, cw))),
-                         max(0, self.storage.columns - cs)))
-        row = max(0, int(round((self.y() - oy) / max(1, ch))))
-        self.move(ox + col * cw, oy + row * ch)
+        col, row = grid_flow.pos_cell(self.storage, self.x(), self.y())
+        col = max(0, min(col, max(0, self.storage.columns - cs)))
+        rpp = grid_flow.rows_per_page()
+        lo, hi = grid_flow.page_row_range(grid_flow.page_of(row, rpp), rpp, rs)
+        row = max(lo, min(row, hi))
+        self.move(*grid_flow.cell_pos(self.storage, col, row))
         self._save_geom()
         # 不能预写 entry["colspan"] 再调 _sync_grid_occupancy——那会让
         # 后者的变化检测失效（span 已写，changed=False，gridChanged 不发，
         # 放大后压住的图标不让位）。span 显式传给唯一写入口。
         self._write_occupancy(col, row, cs, rs)
+
+    def animate_to(self, x: int, y: int, duration: int = 280,
+                   damping: float = 0.78):
+        """弹簧滑行到目标像素位置（M6 翻页联动：与 AppIcon.animate_to
+        同一套位移语言——图标与组件翻页时同向滑动）。
+
+        先停掉飞行中的旧 pos 动画（M2 竞态修复的同款防御）。
+        """
+        tx, ty = int(x), int(y)
+        for a in list(self._anims):
+            if a.propertyName() == b"pos":
+                a.stop()
+                self._anims.remove(a)
+        if (self.pos().x(), self.pos().y()) == (tx, ty):
+            return
+        if effects.reduced_motion():
+            self.move(tx, ty)
+            return
+        anim = QPropertyAnimation(self, b"pos", self)
+        anim.setDuration(effects.dur(duration))
+        anim.setStartValue(self.pos())
+        anim.setEndValue(QPoint(tx, ty))
+        anim.setEasingCurve(effects.spring_curve(damping, duration))
+        anim.finished.connect(lambda: self._anims.remove(anim)
+                              if anim in self._anims else None)
+        self._anims.append(anim)
+        anim.start()
+        return anim
 
     # ---------- 形态 ----------
     @property
@@ -287,15 +319,20 @@ class FloatingWidget(QWidget):
         小组件由此成为网格一等公民：DesktopWindow 读 storage.widgets
         计算占位格，图标让位/新增都避开这些格；本 widget 移动后
         gridChanged 触发一次 displace，把被占区域的图标挤走。
+
+        M6：col/row 反算走 grid_flow.pos_cell（含当前页偏移）；row 夹
+        到本页行范围——拖到页底松手时组件底边不越出当前页（夹紧后
+        顺手把窗口移回夹紧格点，entry 与视觉保持一致，同 col 语义）。
         """
-        cw, ch = grid_flow.cell_size(self.storage)
-        ox, oy = grid_flow.origin()
         cs, rs = grid_flow.widget_span(self.storage, self.entry)
-        # col 夹到 [0, cols-cs]：跨度变大（右键尺寸切换）或吸附到右边缘时，
-        # 位置反算的 col 可能让组件右溢出网格（snap_point 只管左上角）
-        col = max(0, min(int(round((self.x() - ox) / max(1, cw))),
-                         max(0, self.storage.columns - cs)))
-        row = max(0, int(round((self.y() - oy) / max(1, ch))))
+        col, row = grid_flow.pos_cell(self.storage, self.x(), self.y())
+        col = max(0, min(col, max(0, self.storage.columns - cs)))
+        rpp = grid_flow.rows_per_page()
+        lo, hi = grid_flow.page_row_range(grid_flow.page_of(row, rpp), rpp, rs)
+        clamped = max(lo, min(row, hi))
+        if clamped != row:
+            row = clamped
+            self.move(*grid_flow.cell_pos(self.storage, col, row))
         self._write_occupancy(col, row, cs, rs)
 
     # ---------- 鼠标 ----------

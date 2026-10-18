@@ -75,16 +75,16 @@ class WidgetLayer(QObject):
         if cls is None:
             return
         if entry.get("anchored"):
-            # 锚定组件：分配网格占位（排除已有组件与图标），按格点定位
+            # 锚定组件：分配网格占位（排除已有组件与图标），按格点定位。
+            # M6：find_widget_slot 默认限运行时当前页行范围（组件不越页底）
             if "col" not in entry:
                 col, row = grid_flow.find_widget_slot(self.storage, entry)
                 entry["col"], entry["row"] = col, row
             cs, rs = grid_flow.widget_span(self.storage, entry)
             entry["colspan"], entry["rowspan"] = cs, rs
-            ox, oy = grid_flow.origin()
-            cw, ch = grid_flow.cell_size(self.storage)
-            entry["x"] = ox + int(entry["col"]) * cw
-            entry["y"] = oy + int(entry["row"]) * ch
+            # M6：位置统一走 cell_pos（页内局部行映射）
+            entry["x"], entry["y"] = grid_flow.cell_pos(
+                self.storage, int(entry["col"]), int(entry["row"]))
             self.storage.save()
         w = cls(self.storage, entry)
         w.closed.connect(self._on_closed)
@@ -105,6 +105,19 @@ class WidgetLayer(QObject):
         entry = next((e for e in self.storage.widgets if e.get("id") == widget_id), None)
         if entry is not None and not entry.get("hidden") and widget_id not in self.widgets:
             self._spawn(entry)
+
+    def sync_page(self, page: int):
+        """M6 翻页联动：把所有锚定组件滑到新页位置（与图标同向）。
+
+        只改视觉位置——entry 的 col/row 是全局行，不随页变化（零迁移）。
+        非锚定（悬浮）组件不参与翻页：它们靠屏幕角落自由定位。
+        """
+        for w in self.widgets.values():
+            if not getattr(w, "anchored", False):
+                continue
+            col = int(w.entry.get("col", 0))
+            row = int(w.entry.get("row", 0))
+            w.animate_to(*grid_flow.cell_pos(self.storage, col, row))
 
     def set_anchored(self, entry_id: str, on: bool):
         """切换小组件的锚定（非悬浮）形态：改 entry 后重建该组件。"""

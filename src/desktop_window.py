@@ -40,6 +40,12 @@ class DesktopWindow(QWidget):
         self._popup = None
         self._scrim = None             # M5：文件夹幕布（弹窗下一层）
         self._folder_open_icon = None  # M5：处于打开态的源图标（AppIcon）
+        # M6 分页：存储里的 row 始终是全局行（零迁移），页是纯视图概念。
+        # _page 是 grid_flow 运行时页的委托 property（单一状态源——所有
+        # 位置换算 cell_pos/pos_cell/snap_point/widget 都读它）；
+        # 持久化在 settings["current_page"]。
+        self._page = max(0, int(storage.get_setting("current_page") or 0))
+        self._widget_layer = None      # main.py 装配时注入（翻页联动组件）
         self._selected = set()      # 多选：entry id 集合（单击/Ctrl/框选）
         self._drag_active = False   # QDrag 进行中：命中测试临时全窗口接收
         self._drag_entry_id = None  # 当前正在拖的条目（多选拖动时判成员）
@@ -203,6 +209,8 @@ class DesktopWindow(QWidget):
                 self._paint_empty_hint(event)
             if self._band_rect is not None:
                 self._paint_band(event)
+            if self._organize_mode():
+                self._paint_dots()
             return  # 除上述元素外全透明，融入壁纸
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -212,6 +220,8 @@ class DesktopWindow(QWidget):
         p.setPen(theme.TEXT)
         p.setFont(theme.ui_font(13))
         p.drawText(24, 30, "桌面整理 Demo · 悬浮模式（未能挂载桌面层，功能不受影响）")
+        if self._organize_mode():
+            self._paint_dots()
 
     def _paint_hit_fill(self):
         """全窗 alpha=2 命中填充（视觉不可见，使透明像素也可被系统命中测试选中）。"""
@@ -240,6 +250,18 @@ class DesktopWindow(QWidget):
         if self._popup is not None and e.button() == Qt.LeftButton:
             self._close_popup()
             return
+        # M6：页点点击翻页（整理模式可点；原生模式 dots 不画也不命中——
+        # 空白区事件穿透真实桌面，翻页交给用户切模式后使用）
+        if e.button() == Qt.LeftButton and self._organize_mode():
+            pts = self._dot_centers()
+            if pts:
+                dr = self._dots_rect()
+                if dr is not None and dr.contains(e.pos()):
+                    # 就近页点：圆心水平距离最小者
+                    best = min(range(len(pts)),
+                               key=lambda i: abs(pts[i].x() - e.pos().x()))
+                    self.goto_page(best)
+                    return
         if e.button() == Qt.LeftButton and self._organize_mode():
             self._band_start = e.pos()
             self._band_rect = None
@@ -265,6 +287,22 @@ class DesktopWindow(QWidget):
         self._band_rect = None
         self._band_moved = False
         self.update()
+
+    def wheelEvent(self, e):
+        """M6：整理模式下滚轮翻页（与页点互补的快捷路径）。
+
+        阈值 15（1/8 度）= 普通滚轮一格的 1/8：高精度滚轮单次增量小
+        也能翻页，又不至于被触摸板微抖误触。已到首/末页时消费事件
+        不再传递（没有上层需要）。原生模式不拦——滚轮还给真实桌面。
+        """
+        if self._organize_mode():
+            dy = e.angleDelta().y()
+            if abs(dy) >= 15:
+                # 上滚（负 delta）= 上一页；下滚（正 delta）= 下一页
+                self.goto_page(self._page + (-1 if dy < 0 else 1))
+            e.accept()
+            return
+        super().wheelEvent(e)
 
     def _paint_empty_hint(self, event):
         p = QPainter(self)
@@ -319,16 +357,23 @@ class DesktopWindow(QWidget):
         """M1（指导文档 §1）：按当前窗口尺寸重算 GridMetrics 写入
         grid_flow——origin()/columns 等共享几何随之更新为按工作区
         四边等距铺满。已有图标只 move 到新格点（不 rebuild：保留
-        动效状态与选中态，也避免闪烁）。"""
+        动效状态与选中态，也避免闪烁）。
+
+        M6：rows_per_page 随几何变化（DPI/分辨率/任务栏）后，总页数
+        可能变少——越界的当前页夹紧回末页。
+        """
         before = grid_flow.current_metrics()
         grid_flow.set_grid(self.storage, (self.width(), self.height()))
         after = grid_flow.current_metrics()
+        self._clamp_page()
         if before is not None and before == after:
             return
         for eid, icon in self.icons.items():
             entry = self.storage.find_entry(eid)
             if entry is not None:
                 icon.move(*self._entry_pos(entry))
+        if self._widget_layer is not None:
+            self._widget_layer.sync_page(self._page)
         self.update()
 
     def resizeEvent(self, event):
@@ -339,20 +384,106 @@ class DesktopWindow(QWidget):
             self._update_grid_metrics()
 
     def _entry_pos(self, entry):
-        cw, ch = self._cell()
-        ox, oy = self._origin()
-        cols = self.storage.columns
-        col = min(max(0, int(entry.get("col", 0))), cols - 1)
-        row = max(0, int(entry.get("row", 0)))
-        return ox + col * cw, oy + row * ch
+        # M6：列夹紧 + 页内局部行映射统一在 grid_flow.cell_pos（DRY）
+        return grid_flow.cell_pos(self.storage,
+                                  int(entry.get("col", 0)),
+                                  int(entry.get("row", 0)))
 
     def _cell_at(self, pos):
-        cw, ch = self._cell()
-        ox, oy = self._origin()
-        cols = self.storage.columns
-        col = int(round((pos.x() - ox) / cw))
-        row = int(round((pos.y() - oy) / ch))
-        return max(0, min(col, cols - 1)), max(0, row)
+        # M6：反算含当前页偏移（页内 y -> 全局 row），委托 grid_flow
+        return grid_flow.pos_cell(self.storage, pos.x(), pos.y())
+
+    # ---------- 分页（M6，指导文档 §7-M6） ----------
+    # _page 委托 grid_flow 运行时页（单一状态源）：所有位置换算
+    # （cell_pos/pos_cell/snap_point/widget_base/widget_layer）都经
+    # grid_flow.current_page() 读同一份，杜绝双源漂移。
+    @property
+    def _page(self):
+        return grid_flow.current_page()
+
+    @_page.setter
+    def _page(self, value):
+        grid_flow.set_page(value)
+
+    def set_widget_layer(self, layer):
+        """注入 WidgetLayer（main.py 装配）：翻页时组件与图标联动滑动。"""
+        self._widget_layer = layer
+
+    def _clamp_page(self):
+        """总页数变少（DPI/分辨率变化、条目减少）后把越界当前页夹回。"""
+        total = grid_flow.page_count(self.storage)
+        if self._page > total - 1:
+            self.goto_page(total - 1, animate=False)
+
+    def goto_page(self, page, animate=True):
+        """翻到指定页：运行时页同步 + 持久化 + 全体弹簧滑到新页位置。
+
+        翻页动画 = M4 位移引擎复用：图标 animate_to 新位置（实例不变），
+        组件经 WidgetLayer.sync_page 同向滑动——当前页内容滑出屏、
+        邻页内容滑入屏（iOS launcher 语言）。animate=False 用于启动
+        夹紧等无仪式场景（直接 move，不播动画）。
+        """
+        page = max(0, int(page))
+        page = min(page, grid_flow.page_count(self.storage) - 1)
+        if page == self._page:
+            return
+        self._page = page
+        grid_flow.set_page(page)
+        self.storage.set_setting("current_page", page)
+        if animate:
+            for eid, icon in self.icons.items():
+                entry = self.storage.find_entry(eid)
+                if entry is not None:
+                    icon.animate_to(*self._entry_pos(entry))
+        else:
+            for eid, icon in self.icons.items():
+                entry = self.storage.find_entry(eid)
+                if entry is not None:
+                    icon.move(*self._entry_pos(entry))
+        if self._widget_layer is not None:
+            self._widget_layer.sync_page(page)
+        self.update()
+
+    def _dot_centers(self):
+        """页点圆心列表（底部居中；只有 1 页时返回空——不画点）。"""
+        total = grid_flow.page_count(self.storage)
+        if total <= 1:
+            return []
+        r, gap = 4, 14
+        total_w = total * 2 * r + (total - 1) * gap
+        x0 = (self.width() - total_w) // 2
+        y = self.height() - 26
+        return [QPoint(x0 + i * (2 * r + gap) + r, y) for i in range(total)]
+
+    def _dots_rect(self):
+        """页点命中区（含 6px 热区）。无页点时 None。"""
+        pts = self._dot_centers()
+        if not pts:
+            return None
+        return QRect(pts[0].x() - 6, pts[0].y() - 6,
+                     pts[-1].x() - pts[0].x() + 12, 12)
+
+    def _paint_dots(self):
+        """页点（page dots）：当前页 ACCENT 实心，其余 TEXT_DIM 半透明。
+        只在整理模式画+可点——原生模式空白区事件穿透真实桌面，画了
+        也点不到（与橡皮筋/空态提示同策略）。"""
+        pts = self._dot_centers()
+        if not pts:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        cur = self._page
+        for i, c in enumerate(pts):
+            if i == cur:
+                p.setPen(Qt.NoPen)
+                p.setBrush(theme.ACCENT)
+                p.drawEllipse(c, 5, 5)
+            else:
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(theme.TEXT_DIM.red(), theme.TEXT_DIM.green(),
+                                  theme.TEXT_DIM.blue(), 110))
+                p.drawEllipse(c, 4, 4)
+        p.end()
 
     # ---------- 重建 ----------
     def _wire_icon(self, icon):
@@ -669,10 +800,12 @@ class DesktopWindow(QWidget):
         if dragged_id not in self.icons:
             return
         cols = self.storage.columns
-        m = grid_flow.current_metrics()
-        rows = m.rows if m is not None else None
+        # M6：不再传 rows=GridMetrics.rows——那是单屏行数，分页后目标行
+        # 是全局行（可到 page*rpp + rpp-1），传了会把落点错夹回第 0 页
+        # （probe21 S4 抓到：拖到 page1 底行落回 row 7）。落点限页由
+        # pos_cell 的局部行夹紧保证，reflow 层不做行夹紧。
         moves = grid_flow.reflow_moves(self.storage.layout, cols, dragged_id, cell,
-                                       rows=rows,
+                                       rows=None,
                                        extra_occupied=self._widget_cells())
         if moves is None:
             return
@@ -818,7 +951,14 @@ class DesktopWindow(QWidget):
             appsource.reveal_in_explorer(target)
 
     def add_app(self, app: dict):
-        entry = self.storage.add_app(app)
+        # M6：新条目落到用户当前这一页的第一个空格（当前页满才回退
+        # 全局第一个空格——否则用户在第 2 页点添加、图标加到第 0 页
+        # 会"消失"）
+        slot = grid_flow.first_free_cell_in_page(self.storage, self._page)
+        if slot is not None:
+            self.storage.add_app(app, *slot)
+        else:
+            self.storage.add_app(app)
         self.storage.save()
         # M4：增量新增（新图标淡入；指定格被占时的挤走位移走动画）
         self._sync_structure()

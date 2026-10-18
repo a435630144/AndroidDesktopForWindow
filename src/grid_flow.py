@@ -272,17 +272,138 @@ def cell_size(storage) -> Cell:
 
 
 def snap_point(storage, x: int, y: int, screen_size: Tuple[int, int]) -> Cell:
-    """把任意坐标吸附到最近的网格格点，并夹紧在屏幕内。"""
-    ox, oy = origin()
+    """把任意坐标吸附到最近的网格格点（当前页内），并夹紧在屏幕内。
+
+    2026-10-18 M6：改走 pos_cell/cell_pos——页内局部行 + 列夹紧 +
+    当前页偏移全在一处完成（此前这里的 round + clamp 与 DesktopWindow
+    _cell_at 各写一份，分页后必然漂移）。
+    """
+    col, row = pos_cell(storage, x, y)
+    return cell_pos(storage, col, row)
+
+
+# ---------- 分页（2026-10-18 M6，指导文档 §7-M6） ----------
+# 语义：存储里的 row 始终是**全局行**（零迁移——旧布局无需换算）；
+# 页是纯视图概念：page = row // rows_per_page，像素 y 用页内局部行
+# local_row = row % rows_per_page。翻页 = 改运行时当前页，全体位置
+# 换算（cell_pos/pos_cell/snap_point/_entry_pos/_cell_at/widget）随之
+# 整体偏移——当前页内容滑出屏、邻页内容滑入屏（iOS launcher 语言）。
+_current_page = 0
+
+
+def rows_per_page() -> int:
+    """单屏行数 = GridMetrics.rows（M1 已按工作区算好，clamp 1..12）。
+
+    快照未就绪（挂载前 / 无头测试）时回退历史默认 8（与 origin 时代
+    的单屏行数同量级，保证 clamp 不会把 page 0 的条目算到屏外）。
+    """
+    m = _current_metrics
+    if m is not None:
+        return max(1, int(m.rows))
+    return 8
+
+
+def page_of(row: int, rpp: int = 0) -> int:
+    """全局行 -> 页号（负行回退第 0 页）。"""
+    rpp = max(1, int(rpp) or rows_per_page())
+    return max(0, int(row)) // rpp
+
+
+def local_row(row: int, rpp: int = 0) -> int:
+    """全局行 -> 页内局部行（0..rpp-1）。"""
+    rpp = max(1, int(rpp) or rows_per_page())
+    return max(0, int(row)) % rpp
+
+
+def page_row_range(page: int, rpp: int, rs: int = 1) -> Tuple[int, int]:
+    """某页可容纳 rs 行跨度组件的全局行范围 [lo, hi]（组件不越页底）。"""
+    rpp = max(1, int(rpp))
+    lo = max(0, int(page)) * rpp
+    hi = lo + rpp - max(1, int(rs))
+    return lo, max(lo, hi)
+
+
+def current_page() -> int:
+    """运行时当前页（DesktopWindow 翻页时经 set_page 同步）。"""
+    return _current_page
+
+
+def set_page(page: int) -> int:
+    """设置运行时当前页（夹到 >=0）。返回生效值。"""
+    global _current_page
+    _current_page = max(0, int(page))
+    return _current_page
+
+
+def page_number(max_row: int, rpp: int) -> int:
+    """最大全局行号 -> 总页数（至少 1 页）。纯函数。"""
+    return max(1, max(0, int(max_row)) // max(1, int(rpp)) + 1)
+
+
+def page_count(storage, rpp: int = 0) -> int:
+    """总页数：布局条目与锚定组件占位（含跨度）的最大全局行决定，
+    至少 1 页。"""
+    rpp = max(1, int(rpp) or rows_per_page())
+    max_row = 0
+    for e in getattr(storage, "layout", []):
+        max_row = max(max_row, int(e.get("row", 0) or 0))
+    for w in getattr(storage, "widgets", []):
+        if not w.get("anchored") or w.get("hidden"):
+            continue
+        _cs, rs = widget_span(storage, w)
+        max_row = max(max_row, int(w.get("row", 0) or 0) + rs - 1)
+    return page_number(max_row, rpp)
+
+
+def cell_pos(storage, col: int, row: int) -> Cell:
+    """(col, 全局 row) -> 窗口控件坐标像素（列夹紧 + **相对当前页**行偏移）。
+
+    所有「条目/组件 -> 像素」的换算统一走这里（DRY：DesktopWindow
+    _entry_pos、widget_base、widget_layer._spawn 都是它的调用方）。
+
+    M6：y = oy + (row - page*rpp) * ch——rel 可为负（上一页条目滑出
+    屏顶）或 >= rpp（次页条目在屏下方），翻页时全体沿此式整体平移，
+    天然形成「当前页滑出、邻页滑入」的 iOS launcher 动画。
+    """
     cw, ch = cell_size(storage)
-    if cw <= 0 or ch <= 0:
-        return max(0, int(x)), max(0, int(y))
-    col = int(round((x - ox) / cw))
-    row = int(round((y - oy) / ch))
-    sx = ox + col * cw
-    sy = oy + row * ch
-    sw, sh = int(screen_size[0]), int(screen_size[1])
-    return max(0, min(sx, max(0, sw - 40))), max(0, min(sy, max(0, sh - 40)))
+    ox, oy = origin()
+    cols = storage.columns
+    col = max(0, min(int(col), cols - 1))
+    rel = max(0, int(row)) - current_page() * rows_per_page()
+    return ox + col * cw, oy + rel * ch
+
+
+def pos_cell(storage, x: int, y: int) -> Cell:
+    """像素坐标 -> (col, 全局 row)：列夹紧 [0, cols-1] + 当前页偏移。
+
+    与 cell_pos 互逆（当前页内 round-trip）。局部行夹 [0, rpp-1]：
+    落点限当前页（指导文档 §2.3「target 行夹紧在当前页，reflow 不
+    跨页」）——拖到屏幕上/下边缘不会把目标落到邻页。
+    """
+    cw, ch = cell_size(storage)
+    ox, oy = origin()
+    cols = storage.columns
+    col = int(round((x - ox) / max(1, cw)))
+    local = int(round((y - oy) / max(1, ch)))
+    local = max(0, min(local, rows_per_page() - 1))
+    col = max(0, min(col, cols - 1))
+    return col, current_page() * rows_per_page() + local
+
+
+def first_free_cell_in_page(storage, page: int):
+    """当前页内第一个空格（列优先扫描；占用 = 图标 + 组件占位）。
+
+    当前页满返回 None（调用方回退全局第一个空格）。供「添加应用」
+    类操作把新条目放进用户眼前这一页（指导文档 §7-M6 落点限页）。
+    """
+    cols = storage.columns
+    lo, hi = page_row_range(page, rows_per_page(), 1)
+    blocked = set(occupied_cells(storage.layout, cols)) | widget_cells(storage)
+    for row in range(lo, hi + 1):
+        for col in range(cols):
+            if (col, row) not in blocked:
+                return col, row
+    return None
 
 
 # ---------- 锚定小组件占位（widget 作为网格一等公民） ----------
@@ -328,15 +449,21 @@ def widget_cells(storage) -> set:
     return cells
 
 
-def find_widget_slot(storage, widget: dict) -> Cell:
+def find_widget_slot(storage, widget: dict, page: int = None) -> Cell:
     """为锚定 widget 找第一个容得下它的左上空格（排除已有 widget 占位
-    与图标占位）。找不到时退回 (0, 0)（极端拥挤场景， displace 会兜底）。"""
+    与图标占位）。找不到时退回 (0, 0)（极端拥挤场景， displace 会兜底）。
+
+    M6：page 指定时行扫描限制在该页行范围内（page_row_range，组件
+    不越页底）；缺省用运行时当前页。
+    """
     cs, rs = widget_span(storage, widget)
     blocked = widget_cells(storage)
     for e in storage.layout:
         blocked.add((int(e.get("col", 0)), int(e.get("row", 0))))
     cols = storage.columns
-    for row in range(0, 64):
+    lo, hi = page_row_range(current_page() if page is None else page,
+                            rows_per_page(), rs)
+    for row in range(lo, hi + 1):
         for col in range(0, cols - cs + 1):
             rect = {(col + dc, row + dr) for dc in range(cs) for dr in range(rs)}
             if not (rect & blocked):
