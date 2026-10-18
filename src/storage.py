@@ -25,6 +25,15 @@ DEFAULT_SETTINGS = {
     "autostart": False,        # 开机自启动
     "icon_size": 72,           # 图标边长基准（像素，100% 缩放下的逻辑值）
     "icon_scale": 1.0,         # 用户自定义图标缩放（在 DPI 感知之上再乘，0.6~2.0）
+    # ---- v6 批次 A（指导文档_网格与无界双模式_v6.md §8）----
+    "icon_tier": "medium",     # 图标三档（网格模式）：small .58 / medium .74 / large 1.0
+    "layout_mode": "grid",     # 布局模式：grid 网格（默认）| free 无界
+    "icon_px": 96,             # 无界模式图标像素（网格模式置灰，由档位决定）
+    "auto_arrange": False,     # 自动排序：False=自由移动（落 target 原位留空），
+                               # True=拖动后 reflow 递进（旧 M2 行为）
+    "extra_pages": [],         # 无界模式空白页页码列表（如 [3,5]）
+    "takeover_desktop": True,  # 「接管系统桌面」合并开关（替代 hide_native_icons
+                               # 语义入口；旧键仍兼容读取）
     "columns": "auto",         # 每行图标数："auto"=按工作区尺寸自动计算（M1 GridMetrics，
                                # 指导文档 §1：四边等距铺满）；或整数（>=2）手动覆盖列数
                                # （设置高级选项，rows 始终自动）
@@ -179,6 +188,15 @@ class Storage:
         """图标外围 chrome（留白/标签字号/行高）的缩放系数 = DPI × 用户缩放。"""
         from . import theme
         return theme.screen_dpr() * self.user_icon_scale()
+
+    def icon_tier(self) -> str:
+        """图标三档（v6 A2，指导文档 §2.2）：small/medium/large，归一化。
+
+        网格模式下 widget 整体 = 档位比例 × cell（grid_sizing.icon_layout），
+        与 icon_size/icon_scale 解钩；无界模式不用此档位。
+        """
+        from . import grid_sizing  # 延迟导入：grid_sizing 零 Qt 依赖
+        return grid_sizing.parse_tier(self.get_setting("icon_tier"))
 
     # ---------- 布局辅助 ----------
     def find_entry(self, entry_id):

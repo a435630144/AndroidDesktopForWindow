@@ -571,8 +571,10 @@ class DesktopWindow(QWidget):
                           if self.storage.find_entry(eid) is not None}
         size = self.storage.icon_metric()          # DPI × 缩放感知
         chrome = self.storage.icon_chrome_scale()
+        layout = self._icon_layout()               # v6 A2：三档 × 当前 cell
         for idx, entry in enumerate(self.storage.layout):
-            icon = AppIcon(entry, size, parent=self, chrome_scale=chrome)
+            icon = AppIcon(entry, size, parent=self, chrome_scale=chrome,
+                           layout=layout)
             self._wire_icon(icon)
             icon.set_selected(entry["id"] in self._selected)
             icon.move(*self._entry_pos(entry))
@@ -595,6 +597,18 @@ class DesktopWindow(QWidget):
         self.update()
 
     # ---------- 增量更新（2026-10-18 M4：去 rebuild 化） ----------
+    def _icon_layout(self):
+        """网格模式图标 layout（v6 A2，指导文档 §2.2）。
+
+        档位（storage.icon_tier）× 当前 cell（GridMetrics 快照，屏幕驱动）
+        -> grid_sizing.IconLayout；快照未就绪返回 None（回退旧 chrome 路径）。
+        """
+        from . import grid_sizing
+        m = grid_flow.current_metrics()
+        if m is None:
+            return None
+        return grid_sizing.icon_layout(m.cw, m.ch, self.storage.icon_tier())
+
     def _add_icon(self, entry):
         """增量新增一个图标（add_app / rescan / 文件夹提取等）。
         已在位返回原实例；新图标淡入出场（appear_in(0)）。"""
@@ -602,7 +616,9 @@ class DesktopWindow(QWidget):
             return self.icons[entry["id"]]
         size = self.storage.icon_metric()
         chrome = self.storage.icon_chrome_scale()
-        icon = AppIcon(entry, size, parent=self, chrome_scale=chrome)
+        layout = self._icon_layout()               # v6 A2：三档 × 当前 cell
+        icon = AppIcon(entry, size, parent=self, chrome_scale=chrome,
+                       layout=layout)
         self._wire_icon(icon)
         icon.set_selected(entry["id"] in self._selected)
         icon.move(*self._entry_pos(entry))

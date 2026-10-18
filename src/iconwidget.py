@@ -81,12 +81,36 @@ class AppIcon(QWidget):
     reflowDrop = Signal(str, int, int)   # 悬停未满即松手：payload, 指针全局 x, y
 
     def __init__(self, entry: dict, icon_size: int, in_folder: bool = False,
-                 parent=None, chrome_scale: float = 1.0):
+                 parent=None, chrome_scale: float = 1.0, layout=None):
         super().__init__(parent)
         self.entry = entry
-        self.icon_size = icon_size
         self.in_folder = in_folder
         self.selected = False
+        # 外围 chrome 缩放（留白 / 标签字号 / 行高随 DPI×用户缩放同比放大，
+        # 图标本身由 icon_size 已经放大——2026-10-18 DPI 感知）
+        self._m = max(0.5, float(chrome_scale))
+        # v6 批次 A2（指导文档 §2.2）：grid_sizing.IconLayout 三档方案。
+        # 传入时 chrome 全部按 cell/widget 比例派生（标签单行小字 elide，
+        # 密度加密后瘦身——旧绝对值 24m/40m 在 cell 变小后会把图标挤成小点）；
+        # 不传（folder 成员 / 探针 / 旧调用）保持 2026-10-18 旧行为。
+        self._layout = layout
+        if layout is not None:
+            self.icon_size = int(layout.icon_box)      # 绘制区（pixmap 边长）
+            self._box_x = int(layout.chrome_x)         # 绘制区左侧留白（居中）
+            self._label_h = int(layout.label_h)
+            self._label_font_px = int(layout.font_px)
+            self.setFixedSize(int(layout.widget_w), int(layout.widget_h))
+        else:
+            self.icon_size = icon_size
+            self._box_x = None
+            self._label_h = int(round(34 * self._m))
+            # 旧路径标签字号也按 chrome 现算存档（12px @100%，15px @125%），
+            # 属性语义统一：_label_font_px 始终有值
+            self._label_font_px = max(11, int(round(theme.LABEL_SIZE * self._m)))
+            # chrome 精修（2026-10-18 用户反馈"图标大小不对"）：旧值 28/46 的
+            # 留白占比过大，图标显小。收紧到 24/40，标签贴近图标 6px。
+            self.setFixedSize(icon_size + int(round(24 * self._m)),
+                              icon_size + int(round(40 * self._m)))
         self.drag_payload = entry.get("id", "")
         self.payload_provider = None  # 多选拖拽时由主窗口注入，返回逗号分隔的 id 列表
         self._press_pos = None
@@ -121,10 +145,6 @@ class AppIcon(QWidget):
         self._press_scale = 1.0    # 按压 / 拖动提拉 / 脉冲
         self._appear = 1.0         # 错峰淡入进度（rebuild stagger）
         self._anims = []           # 持有动画引用，防 GC
-        # chrome 精修（2026-10-18 用户反馈"图标大小不对"）：旧值 28/46 的
-        # 留白占比过大，图标显小。收紧到 24/40，标签贴近图标 6px。
-        self.setFixedSize(icon_size + int(round(24 * self._m)),
-                          icon_size + int(round(40 * self._m)))
         self.setAcceptDrops(True)
         self.setCursor(Qt.PointingHandCursor)
         # ClickFocus：点击即获键盘焦点。自管理拖拽循环里 Esc 取消依赖
@@ -369,9 +389,12 @@ class AppIcon(QWidget):
         else:
             app = self.entry.get("app", {})
             # 高清 pixmap：逻辑尺寸=icon_size（DPR 感知），按逻辑宽度居中，
-            # 绝不能用 pm.width()（物理像素）算偏移——那是图标错位/变虚的根因
+            # 绝不能用 pm.width()（物理像素）算偏移——那是图标错位/变虚的根因。
+            # v6 A2：有 layout 时绘制区左侧留白由 chrome_x 精确给出
+            #（cell 变小后按比例派生，不再 (w-icon_size)//2 近似）。
             pm = appsource.icon_pixmap(app, self.icon_size, dpr)
-            p.drawPixmap((w - self.icon_size) // 2, 2, pm)
+            px = self._box_x if self._box_x is not None else (w - self.icon_size) // 2
+            p.drawPixmap(px, 2, pm)
 
         self._paint_label(p)
 
@@ -384,7 +407,11 @@ class AppIcon(QWidget):
         缺省回退 theme 深灰瓷砖（iOS 文件夹语言：图标与弹窗同色）。
         """
         s = self.icon_size
-        box = QRectF(3, 3, s - 6, s - 6)
+        if self._box_x is not None:
+            # v6 A2：layout 模式——瓷砖贴满绘制区（左右各 1px 呼吸）
+            box = QRectF(self._box_x + 1, 3, s - 2, s - 2)
+        else:
+            box = QRectF(3, 3, s - 6, s - 6)
         tint = folder_tint(self.entry)
         grad = QLinearGradient(0, box.top(), 0, box.bottom())
         grad.setColorAt(0.0, tint.lighter(135))
@@ -413,16 +440,33 @@ class AppIcon(QWidget):
         for (fx, fy, fr), app in zip(slots, members[:4]):
             cs = max(8, int(s * fr))
             pm = appsource.icon_pixmap(app, cs, dpr)
-            cx = 3 + fx * (s - 6) - cs / 2
-            cy = 3 + fy * (s - 6) - cs / 2
+            cx = box.left() + fx * box.width() - cs / 2
+            cy = box.top() + fy * box.height() - cs / 2
             p.drawPixmap(int(cx), int(cy), pm)
 
     def _paint_label(self, p: QPainter):
         name = self._display_name()
         if not name:
             return
-        # 标签字号随 chrome 缩放（DPI×用户缩放）：100% 时 12px，125% 时 15px
-        font = theme.ui_font(max(11, int(round(theme.LABEL_SIZE * self._m))))
+        if self._layout is not None:
+            # v6 A2：单行小字 elide（手机 launcher 语言——密度加密后旧两行
+            # 标签 chrome 占比超 40%，必须瘦身）；字号由 layout.font_px
+            font = theme.ui_font(self._label_font_px)
+            p.setFont(font)
+            rect = QRect(2, self.icon_size + 2,
+                         self.width() - 4, self._label_h)
+            fm = QFontMetrics(font)
+            line = fm.elidedText(name, Qt.ElideRight, rect.width())
+            if line:
+                # 阴影一层 + 白字，保证任意壁纸下可读
+                p.setPen(theme.LABEL_SHADOW)
+                p.drawText(rect.adjusted(1, 1, 0, 0), Qt.AlignCenter, line)
+                p.setPen(theme.LABEL_COLOR)
+                p.drawText(rect, Qt.AlignCenter, line)
+            return
+        # 旧路径（无 layout）：标签字号随 chrome 缩放（DPI×用户缩放）：
+        # 100% 时 12px，125% 时 15px；最多两行折行 + 末行省略号
+        font = theme.ui_font(self._label_font_px)
         p.setFont(font)
         rect = QRect(2, self.icon_size + int(round(6 * self._m)),
                      self.width() - 4, int(round(34 * self._m)))

@@ -64,7 +64,15 @@ class FloatingWidget(QWidget):
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMouseTracking(True)
-        self.setMinimumSize(180, 120)
+        # 最小 1 格 = cell（v6 A2，指导文档 §2.2 连带修复）：旧硬编码
+        # 180x120 在 cell 变小后会把 1 格组件顶宽到跨 2.4 列（Qt
+        # minimumSize 兜底）；快照未就绪时回退旧值保持无头测试行为
+        from . import grid_flow as _gf
+        _m = _gf.current_metrics()
+        if _m is not None:
+            self.setMinimumSize(_m.cw, _m.ch)
+        else:
+            self.setMinimumSize(180, 120)
         # 锚定组件尺寸 = span × cell（M3：catalog 一等公民，碰撞 = 视觉边界）；
         # 悬浮组件沿用 entry 里保存的像素尺寸
         gw, gh = self._anchored_pixel_size()
