@@ -471,6 +471,21 @@ def page_row_range(page: int, rpp: int, rs: int = 1) -> Tuple[int, int]:
     return lo, max(lo, hi)
 
 
+def clamp_widget_cell(storage, col: int, row: int, cs: int, rs: int) -> Cell:
+    """把组件占位夹紧到网格与页内（v6 §4，组件不越页底、不跨页半截）。
+
+    列夹到 [0, columns-cs]；行夹到所属页（page_of(row)）的
+    [page*rpp, page*rpp + rpp - rs]——便签 2×2 拖到页底最后一行时整块
+    上移一行，底边不越出当前页可见区（span 夹紧的唯一实现，spawn /
+    吸附落定 / 尺寸切换 / hover 预览共用，杜绝各写一份漂移）。
+    """
+    cols = storage.columns
+    rpp = rows_per_page()
+    col = max(0, min(int(col), max(0, int(cols) - int(cs))))
+    lo, hi = page_row_range(page_of(int(row), rpp), rpp, rs)
+    return col, max(lo, min(int(row), hi))
+
+
 def current_page() -> int:
     """运行时当前页（DesktopWindow 翻页时经 set_page 同步）。"""
     return _current_page

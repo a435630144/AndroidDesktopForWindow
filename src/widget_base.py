@@ -114,8 +114,9 @@ class FloatingWidget(QWidget):
         entry 与视觉保持一致；再走一次占位写入，占位变了会发
         gridChanged，DesktopWindow 把新旧占位差区域的图标挤走。
 
-        M6：col/row 反算走 grid_flow.pos_cell（含当前页偏移），row 再
-        夹到本页行范围（组件不越页底）。
+        M6：col/row 反算走 grid_flow.pos_cell（含当前页偏移），再走
+        clamp_widget_cell 夹到本页行范围（组件不越页底）——span 夹紧
+        的唯一实现（v6 §4，与 spawn/hover/吸附共用）。
         """
         if not self.anchored or cs < 1 or rs < 1:
             return
@@ -123,10 +124,7 @@ class FloatingWidget(QWidget):
         self.resize(cs * cw, rs * ch)
         self.entry["w"], self.entry["h"] = cs * cw, rs * ch
         col, row = grid_flow.pos_cell(self.storage, self.x(), self.y())
-        col = max(0, min(col, max(0, self.storage.columns - cs)))
-        rpp = grid_flow.rows_per_page()
-        lo, hi = grid_flow.page_row_range(grid_flow.page_of(row, rpp), rpp, rs)
-        row = max(lo, min(row, hi))
+        col, row = grid_flow.clamp_widget_cell(self.storage, col, row, cs, rs)
         self.move(*grid_flow.cell_pos(self.storage, col, row))
         self._save_geom()
         # 不能预写 entry["colspan"] 再调 _sync_grid_occupancy——那会让
@@ -267,12 +265,19 @@ class FloatingWidget(QWidget):
 
     # ---------- 锚定吸附 ----------
     def _snap_to_grid(self):
-        """松手后弹簧吸附到图标网格格点（与整理窗口同一套几何定义）。"""
+        """松手后弹簧吸附到图标网格格点（与整理窗口同一套几何定义）。
+
+        v6 §4：落点按 span 夹紧（clamp_widget_cell）——旧实现走
+        snap_point（只夹 1 格行范围），2×2 组件拖到页底会先吸附到越页
+        位置、_on_snapped 再夹紧跳回，视觉上是"先越界再弹回"；现在一
+        次夹到底，entry 与视觉全程一致。
+        """
         if not self.anchored or self._snapping:
             return
-        screen = QApplication.primaryScreen().availableGeometry()
-        tx, ty = grid_flow.snap_point(self.storage, self.x(), self.y(),
-                                      (screen.width(), screen.height()))
+        cs, rs = grid_flow.widget_span(self.storage, self.entry)
+        col, row = grid_flow.pos_cell(self.storage, self.x(), self.y())
+        col, row = grid_flow.clamp_widget_cell(self.storage, col, row, cs, rs)
+        tx, ty = grid_flow.cell_pos(self.storage, col, row)
         if (tx, ty) == (self.x(), self.y()):
             # 已在格点上：没有吸附动画，_on_snapped 永远不会来——直接同步
             # 占位。否则「拖到格点上松手」时 entry col/row 不更新、
@@ -328,19 +333,14 @@ class FloatingWidget(QWidget):
         计算占位格，图标让位/新增都避开这些格；本 widget 移动后
         gridChanged 触发一次 displace，把被占区域的图标挤走。
 
-        M6：col/row 反算走 grid_flow.pos_cell（含当前页偏移）；row 夹
-        到本页行范围——拖到页底松手时组件底边不越出当前页（夹紧后
-        顺手把窗口移回夹紧格点，entry 与视觉保持一致，同 col 语义）。
+        M6：col/row 反算走 grid_flow.pos_cell（含当前页偏移）；span 夹紧
+        走 clamp_widget_cell（v6 §4 唯一实现）——拖到页底松手时组件底边
+        不越出当前页（夹紧后顺手把窗口移回夹紧格点，entry 与视觉保持
+        一致，同 col 语义）。
         """
         cs, rs = grid_flow.widget_span(self.storage, self.entry)
         col, row = grid_flow.pos_cell(self.storage, self.x(), self.y())
-        col = max(0, min(col, max(0, self.storage.columns - cs)))
-        rpp = grid_flow.rows_per_page()
-        lo, hi = grid_flow.page_row_range(grid_flow.page_of(row, rpp), rpp, rs)
-        clamped = max(lo, min(row, hi))
-        if clamped != row:
-            row = clamped
-            self.move(*grid_flow.cell_pos(self.storage, col, row))
+        col, row = grid_flow.clamp_widget_cell(self.storage, col, row, cs, rs)
         self._write_occupancy(col, row, cs, rs)
 
     # ---------- 鼠标 ----------

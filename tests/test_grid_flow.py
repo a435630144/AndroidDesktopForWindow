@@ -344,6 +344,36 @@ def main():
                 ok = False
     check("300 轮随机拖动：精确落点 / 最小位移 / 无重叠 / 占用集合合规", ok)
 
+    # ---------- §14 clamp_widget_cell（v6 §4 组件 span 夹紧） ----------
+    # 无 GridMetrics 快照（本文件不 set_grid）：columns 走 fake=10、
+    # rows_per_page 走历史回退 8——与 clamp_widget_cell 的纯逻辑无关
+    class _St:
+        def __init__(self, cols):
+            self._cols = cols
+
+        @property
+        def columns(self):
+            return self._cols
+
+    st = _St(10)
+    rpp = grid_flow.rows_per_page()
+    # 列夹紧：cs=3 时 col 不得越界
+    check("C1 列夹紧到 [0, columns-cs]",
+          grid_flow.clamp_widget_cell(st, 99, 0, 3, 2) == (7, 0)
+          and grid_flow.clamp_widget_cell(st, -5, 0, 2, 2) == (0, 0))
+    # 行夹紧：rs=2 贴页底最后一行 -> 整块上移一行（底边不越页）
+    check("C2 行夹紧到页内（rs=2 贴底行上移一格）",
+          grid_flow.clamp_widget_cell(st, 0, rpp - 1, 2, 2) == (0, rpp - 2))
+    # 合法数据不动
+    check("C3 合法占位原样返回",
+          grid_flow.clamp_widget_cell(st, 2, 3, 2, 2) == (2, 3))
+    # 次页组件：按所属页夹紧（不拽回第 0 页）
+    check("C4 次页组件按所属页夹紧",
+          grid_flow.clamp_widget_cell(st, 0, 2 * rpp - 1, 2, 2) == (0, 2 * rpp - 2))
+    # 负行防御
+    check("C5 负行夹到页首",
+          grid_flow.clamp_widget_cell(st, 0, -3, 2, 2) == (0, 0))
+
     print("-" * 56)
     if failures:
         print("FAILED %d: %s" % (len(failures), failures))

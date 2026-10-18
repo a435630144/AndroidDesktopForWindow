@@ -54,6 +54,10 @@ class DesktopWindow(QWidget):
         self._band_rect = None
         self._band_moved = False
         self.icons = {}
+        # v6 §4：图标当前构建所用的 IconLayout 签名（快照就绪前后 cell
+        # 变化时检测到即重建——启动时 rebuild 早于 GridMetrics，旧 chrome
+        # 路径尺寸 96×112 会大于 cell 75×92 互相重叠）
+        self._icon_layout_sig = None
         # 实时让位（Live Reflow）状态（2026-10-18 M2 起用位移清单）：
         #   _preview_moves  拖动期间算出的位移清单 {id: (col,row)}（只改内存）
         #   _preview_drag   正在被拖的条目 id
@@ -373,17 +377,31 @@ class DesktopWindow(QWidget):
 
         M6：rows_per_page 随几何变化（DPI/分辨率/任务栏）后，总页数
         可能变少——越界的当前页夹紧回末页。
+
+        v6 §4/A2 连带（probe23 S0 抓到的真 bug）：启动时 __init__ 的
+        rebuild 早于快照就绪，图标走旧 chrome 路径（96×112 > cell
+        75×92，同列图标互相重叠）；快照就绪后 cell 变 -> 三档 layout
+        也变，只 move 不重建尺寸永远是旧的。快照就绪且 layout 签名
+        变化时整体重建一次（仅发生在启动 / DPI 变化，日常拖拽位移
+        不走本路径，实例保留语义不受影响）。
         """
         before = grid_flow.current_metrics()
         grid_flow.set_grid(self.storage, (self.width(), self.height()))
         after = grid_flow.current_metrics()
         self._clamp_page()
+        layout = self._icon_layout()
+        if layout != self._icon_layout_sig:
+            self._icon_layout_sig = layout
+            if self.icons:
+                self.rebuild()
+            return
         if before is not None and before == after:
             return
         for eid, icon in self.icons.items():
             entry = self.storage.find_entry(eid)
             if entry is not None:
                 icon.move(*self._entry_pos(entry))
+        self._cull_page_icons()
         if self._widget_layer is not None:
             self._widget_layer.sync_page(self._page)
         self.update()
@@ -434,6 +452,12 @@ class DesktopWindow(QWidget):
         组件经 WidgetLayer.sync_page 同向滑动——当前页内容滑出屏、
         邻页内容滑入屏（iOS launcher 语言）。animate=False 用于启动
         夹紧等无仪式场景（直接 move，不播动画）。
+
+        v6 §4 分页禁半截：桌面窗口 = 工作区大小，网格四边等距铺满，
+        上下边距（约半格）放不下一整格图标——邻页图标静止态会从屏底/
+        屏顶露半截（子控件只被裁到窗口边缘，裁不到网格带）。因此：
+        滑入页图标先显示（隐藏窗口的动画不可见），滑出页图标动画结束
+        后隐藏（_hide_if_offpage 以**当前页**复核，防连翻中页号已变）。
         """
         page = max(0, int(page))
         page = min(page, grid_flow.page_count(self.storage) - 1)
@@ -442,19 +466,77 @@ class DesktopWindow(QWidget):
         self._page = page
         grid_flow.set_page(page)
         self.storage.set_setting("current_page", page)
-        if animate:
-            for eid, icon in self.icons.items():
-                entry = self.storage.find_entry(eid)
-                if entry is not None:
-                    icon.animate_to(*self._entry_pos(entry))
-        else:
-            for eid, icon in self.icons.items():
-                entry = self.storage.find_entry(eid)
-                if entry is not None:
-                    icon.move(*self._entry_pos(entry))
+        rpp = grid_flow.rows_per_page()
+        lo = self._page * rpp
+        hi = lo + rpp - 1
+        hide_after = []
+        for eid, icon in self.icons.items():
+            entry = self.storage.find_entry(eid)
+            if entry is None:
+                continue
+            row = int(entry.get("row", 0) or 0)
+            on_page = lo <= row <= hi
+            if animate:
+                if on_page and icon.isHidden():
+                    icon.show()          # 滑入前先显示（否则滑入不可见）
+                anim = icon.animate_to(*self._entry_pos(entry))
+                if not on_page and not icon.isHidden():
+                    if anim is not None:
+                        hide_after.append((icon, row, anim))
+                    else:
+                        icon.hide()      # 无动画（已在位/reduced-motion）
+            else:
+                icon.move(*self._entry_pos(entry))
+                icon.setVisible(on_page)
+        for icon, row, anim in hide_after:
+            anim.finished.connect(lambda icon=icon, row=row:
+                                  self._hide_if_offpage(icon, row))
         if self._widget_layer is not None:
             self._widget_layer.sync_page(page)
         self.update()
+
+    def _hide_if_offpage(self, icon, row: int):
+        """翻页滑行结束：该图标若仍不在当前页则隐藏（v6 §4）。
+
+        连翻（滑行中再次翻页）时页号可能已变——以当前页为准复核，
+        避免把新页图标误隐藏。
+        """
+        rpp = grid_flow.rows_per_page()
+        if grid_flow.page_of(int(row), rpp) != grid_flow.current_page():
+            icon.hide()
+
+    def _cull_page_icons(self):
+        """v6 §4 分页禁半截：只显示当前页图标，其余页隐藏。
+
+        桌面窗口 = 工作区大小，网格四边等距铺满后上下边距（约半格）
+        放不下一整格图标——邻页首/末行图标静止态会从屏底/屏顶露半截。
+        rebuild / 新增 / rescan / DPI 变化后复核；翻页滑行期间可见
+        （动画语言），滑停由 goto_page/_hide_if_offpage 收编。
+        """
+        rpp = grid_flow.rows_per_page()
+        page = grid_flow.current_page()
+        for eid, icon in self.icons.items():
+            entry = self.storage.find_entry(eid)
+            if entry is None:
+                continue
+            row = int(entry.get("row", 0) or 0)
+            icon.setVisible(grid_flow.page_of(row, rpp) == page)
+
+    def _cull_moved_icons(self, moves: dict):
+        """按位移清单复核可见性（v6 §4）：落到当前页的显示、别页的隐藏。
+
+        拖动预览路径用（O(位移数)）：多选块跨页拖动时，成员落到当前页
+        要立即可见，落到别页立即收编——只动 moves 里的图标，不跑全量。
+        """
+        rpp = grid_flow.rows_per_page()
+        page = grid_flow.current_page()
+        for eid in moves:
+            entry = self.storage.find_entry(eid)
+            icon = self.icons.get(eid)
+            if entry is None or icon is None:
+                continue
+            row = int(entry.get("row", 0) or 0)
+            icon.setVisible(grid_flow.page_of(row, rpp) == page)
 
     def _dot_centers(self):
         """页点圆心列表（底部居中；只有 1 页时返回空——不画点）。"""
@@ -594,6 +676,7 @@ class DesktopWindow(QWidget):
         self._drag_entry_id = None
         self._drag_multi = False
         self._ole_active = False
+        self._cull_page_icons()      # v6 §4：只显示当前页（禁半截）
         self.update()
 
     # ---------- 增量更新（2026-10-18 M4：去 rebuild 化） ----------
@@ -625,6 +708,7 @@ class DesktopWindow(QWidget):
         icon.appear_in(0)
         icon.show()
         self.icons[entry["id"]] = icon
+        self._cull_page_icons()      # v6 §4：新增图标可能落在别页
         return icon
 
     def _remove_icon(self, entry_id):
@@ -658,6 +742,7 @@ class DesktopWindow(QWidget):
             if entry is None:
                 continue
             icon.animate_to(*self._entry_pos(entry))
+        self._cull_page_icons()      # v6 §4：rescan 等重排后按页显隐
 
     def _sync_structure(self):
         """结构同步：storage.layout 与 self.icons 对齐（移除多余、补上
@@ -837,7 +922,10 @@ class DesktopWindow(QWidget):
             return
         cs, rs = grid_flow.widget_span(self.storage, entry)
         col, row = self._cell_at(self.mapFromGlobal(QPoint(gx, gy)))
-        col = max(0, min(col, self.storage.columns - cs))
+        # v6 §4：预览矩形按 span 夹紧（clamp_widget_cell）——旧实现只夹
+        # 列不夹行，2×2 组件拖到页底最后一行时矩形含页外行，图标被挤到
+        # 视野外、组件松手吸附时还会跳一格
+        col, row = grid_flow.clamp_widget_cell(self.storage, col, row, cs, rs)
         rect = {(col + dc, row + dr) for dc in range(cs) for dr in range(rs)}
         if self._widget_preview_rect == rect:
             return
@@ -984,6 +1072,7 @@ class DesktopWindow(QWidget):
             if e is not None:
                 e["col"], e["row"] = c, r
         self._animate_icons_to_layout(moves, skip=dragged_id)
+        self._cull_moved_icons(moves)   # v6 §4：跨页位移按落点页显隐
 
     def _animate_icons_to_layout(self, moves: dict, skip=None):
         """把发生位移的图标弹簧滑到新格（reduced-motion 时直接跳位）。
@@ -1018,6 +1107,7 @@ class DesktopWindow(QWidget):
         self._preview_moves = None
         self._preview_drag = None
         self._layout_snap = None
+        self._cull_page_icons()      # v6 §4：提交后按落点页显隐
 
     def _push_undo(self, snap):
         """把改动前的布局快照压入撤销栈（Ctrl+Z 回退用，最多 20 步）。
@@ -1049,6 +1139,7 @@ class DesktopWindow(QWidget):
             if entry is None:
                 continue
             icon.animate_to(*self._entry_pos(entry), duration=220, damping=1.0)
+        self._cull_page_icons()      # v6 §4：撤销回退后按当前页显隐
         self.update()
 
     def _reflow_commit_or_compute(self, dragged_id: str, cell):
@@ -1070,8 +1161,13 @@ class DesktopWindow(QWidget):
         else:
             moves = self._free_moves(dragged_id, cell)
         if not moves:
+            # 预览在飞但落点无效（如陈旧 payload：drop 携带的 id 已不在
+            # 布局）——必须先回退快照再落盘。旧代码只 _clear_preview()，
+            # 预览已改写的内存布局被留下：图标停在原位、storage 却是
+            # 预览态（probe15 G11c 败因：半截预览态）。反过来先 save 会把
+            # 半截状态写进 disk，顺序不能倒。
+            self._cancel_preview()
             self.storage.save()
-            self._clear_preview()
             return
         by_id = {e.get("id"): e for e in self.storage.layout}
         for eid, (c, r) in moves.items():
@@ -1101,6 +1197,7 @@ class DesktopWindow(QWidget):
                 continue
             icon.animate_to(*self._entry_pos(entry), duration=220, damping=1.0)
             icon.set_drag_ghost(False)
+        self._cull_page_icons()      # v6 §4：回退后按当前页显隐
         self.update()
 
     def _clear_preview(self):
@@ -1133,9 +1230,16 @@ class DesktopWindow(QWidget):
 
     def rescan_desktop(self):
         """重新扫描桌面文件：补新增、清丢失（仅布局，不动文件）。
-        M4：增量同步——新增淡入 / 丢失移除 / compact 移位走弹簧动画。"""
+        M4：增量同步——新增淡入 / 丢失移除 / compact 移位走弹簧动画。
+
+        v6 §4：rescan 末尾 pack_layout 把全体图标铺回第 0 页（§3.1
+        播种语义）——若当前页 >0，不停在已被清空的旧页（那会看到空
+        桌面），显式回到第 0 页展示重扫结果。
+        """
         added, removed = self.storage.rescan_desktop()
         self._sync_structure()
+        if self._page != 0:
+            self.goto_page(0, animate=False)
         return added, removed
 
     def _on_remove_entry(self, entry_id):
@@ -1420,7 +1524,9 @@ class DesktopWindow(QWidget):
         ids = [p for p in payload.split(",") if p]
         entries = [e for e in (self.storage.find_entry(i) for i in ids) if e is not None]
         if not entries:
-            self._clear_preview()
+            # payload 全是不在布局的 id（条目被并发移除等）：有预览在飞
+            # 就回退快照，别留半截预览态（同 _reflow_commit_or_compute）
+            self._cancel_preview()
             return
 
         if len(entries) == 1 and not self._drag_multi:
@@ -1456,8 +1562,7 @@ class DesktopWindow(QWidget):
                 self._commit_preview()
             else:
                 # 脏布局等无效输入：不动布局，仅收尾（与单选无位移同策）
-                self.storage.save()
-                self._clear_preview()
+                self._cancel_preview()
                 return
         # M4：多选平移是位置类变化——动画到位，不 rebuild。
         # 逐个复位拖拽幽灵态：增量路径不再销毁图标实例，

@@ -13,6 +13,7 @@
   T5c 多选贴右边缘整块左移不叠格（v6 §5.0 反馈病根）
   T5d 多选目标占据者交换到源格
   T5e 多选实时预览（_reflow_preview multi）+ 取消回退
+  T5f 陈旧 payload drop 回退在飞预览（probe15 G11c 病根：半截预览态）
   T6  merge 结构同步：条目与 icons 对齐，类型变化的图标不重建（is_folder 动态）
   T7  widget 拖动实时预览：hover 按新占位矩形挤走图标，drop 回退
   T8  _sync_structure 幂等：无变化时不动任何实例
@@ -237,6 +238,33 @@ def main(app):
     b5e2 = cells_of(st5e)
     check("T5e 取消后布局回退（a=(0,0)、b=(1,0)）",
           b5e2["a"] == (0, 0) and b5e2["b"] == (1, 0), "%s" % b5e2)
+
+    # ---------- T5f：陈旧 payload drop 必须回退在飞预览 ----------
+    # probe15 G11 曾复用合并前构造的 mime（payload=e0，而 e0 已被 G5
+    # 合并消失）：drop 携带死 id -> _reflow_commit_or_compute 的
+    # not moves 分支只 _clear_preview()——预览已改写的内存布局被留下，
+    # dragged 图标停在原位、storage 却已是目标格（G11c 败因：半截
+    # 预览态）。病根约定：预览在飞 + 落点无效 -> 回退快照，绝不留下
+    # 「内存是预览态、图标是原位」的不一致。
+    st5f = make_state([("a", 0, 0), ("b", 1, 0), ("c", 2, 0)])
+    w5f = new_window(app, st5f)
+    w5f._drag_multi = False
+    w5f._on_drag_started()
+    w5f._reflow_preview("a", (2, 0))          # 预览：a→(2,0)、c 交换到 (0,0)
+    b5f_mid = cells_of(st5f)
+    check("T5f 预览已生效（a=(2,0)、c=(0,0)）",
+          b5f_mid["a"] == (2, 0) and b5f_mid["c"] == (0, 0), "%s" % b5f_mid)
+    pos5f = {eid: w5f.icons[eid].pos() for eid in w5f.icons}
+    w5f._reflow_commit_or_compute("ghost", (1, 1))   # 陈旧 payload：ghost 不在布局
+    b5f = cells_of(st5f)
+    check("T5f 陈旧 payload drop 回退到快照（a=(0,0)、b=(1,0)、c=(2,0)）",
+          b5f == {"a": (0, 0), "b": (1, 0), "c": (2, 0)}, "%s" % b5f)
+    check("T5f 回退后预览已清空", w5f._preview_moves is None)
+    settle(app, 500)
+    ok5f = all(w5f.icons[eid].pos() == pos5f[eid] for eid in pos5f)
+    check("T5f 图标控件回到拖动前位置", ok5f,
+          "%s" % {eid: (w5f.icons[eid].pos(), pos5f[eid])
+                  for eid in pos5f if w5f.icons[eid].pos() != pos5f[eid]})
 
     # ---------- T6：merge 结构同步 ----------
     st6 = make_state([("a", 0, 0), ("b", 1, 0), ("c", 2, 0)])

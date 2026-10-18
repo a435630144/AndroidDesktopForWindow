@@ -282,6 +282,12 @@ def main():
     # e.ignore() 不会冒泡到父窗口（propagated=0）——现改为 reflowDrop 直连。
     live2 = [eid for eid in ids if eid in w.icons]
     if len(live2) >= 2:
+        # mime payload 必须在 drop 前刷新：G5 合并后 e0（ids[0]）已不在
+        # 布局，复用旧 mime 会让 drop 携带死 id——_reflow_commit_or_compute
+        # 走 not moves 分支把在飞预览清掉（不提交也不回退），dragged 图标
+        # 停在原位而 storage 已是目标格（G11c 曾经的败因形态；src 侧现已
+        # 约定为回退快照，见 test_layout_anim T5f）
+        mime.setData(MIME_TYPE, live2[0].encode())
         w._on_drag_started()
         w._drag_multi = False
         src_icon = w.icons[live2[0]]
@@ -293,8 +299,11 @@ def main():
         tgt_icon.dropEvent(_mk_drop(mime))
         settle(app, 300)
         e = st.find_entry(live2[0])
+        # 2026-10-19：_preview_order 随 M2 reflow_moves 换代已不存在，
+        # 等价断言改为 _preview_moves（提交后必须清空，否则会被
+        # _cancel_preview 回退——G11 的病根断言）
         check("G11a 图标上松手后预览已提交（不再待回退）",
-              w._preview_order is None, "preview=%s" % (w._preview_order,))
+              w._preview_moves is None, "preview=%s" % (w._preview_moves,))
         check("G11b dragged 落到目标格",
               (e.get("col"), e.get("row")) == tgt_cell,
               "now=%s target=%s" % ((e.get("col"), e.get("row")), tgt_cell))
