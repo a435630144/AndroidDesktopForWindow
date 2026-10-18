@@ -15,7 +15,8 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QFileInfo, QSize, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtGui import (QBrush, QColor, QFont, QIcon, QPainter, QPainterPath,
+                           QPen, QPixmap)
 from PySide6.QtWidgets import QFileIconProvider
 
 # Shell 已知目录 GUID（SHGetKnownFolderPath，正确处理 OneDrive 重定向 / 本地化）
@@ -290,13 +291,109 @@ _ICON_PROVIDER = QFileIconProvider()
 _ICON_CACHE = {}
 _PIXMAP_CACHE = {}
 
+# ---------- 快捷方式徽标（v6 §7.1，反馈 10） ----------
+# 壳层把快捷方式箭头 overlay 直接烘焙进 .lnk 图标 pixmap：图标放大后
+# 箭头占到边长 ~35% 且带柔和阴影发虚（原生只是左下小角标，见 DEVLOG
+# §7.1 规格）。本项目改为：取**目标**的干净图标 + 自绘 25% 锐利徽章。
+SHORTCUT_SUFFIXES = (".lnk", ".url")
+
+
+def is_shortcut(app: dict) -> bool:
+    """条目是否是快捷方式（桌面 .lnk/.url，或开始菜单 .lnk）。"""
+    p = (app.get("icon_path") or app.get("target") or "").lower()
+    return p.endswith(SHORTCUT_SUFFIXES)
+
+
+def _path_exists(p: str) -> bool:
+    try:
+        return os.path.exists(p)
+    except Exception:
+        return False
+
+
+def shortcut_target_path(app: dict):
+    """解析快捷方式的目标路径（目标存在才返回，否则 None）。
+
+    .lnk 走 QFileInfo.symLinkTarget()——Qt 内部即 IShellLink 解析，
+    零新增依赖（本机实测 6/6 全部解析到存在的 exe）。失败（坏链接 /
+    .url 非 COM 结构 / 目标已删）返回 None，调用方回退壳层 overlay
+    图标保持现状。
+    """
+    p = app.get("icon_path") or app.get("target") or ""
+    if not p.lower().endswith(".lnk"):
+        return None
+    try:
+        tgt = QFileInfo(p).symLinkTarget()
+    except Exception:
+        return None
+    if tgt and _path_exists(tgt):
+        return tgt
+    return None
+
+
+def shortcut_badge_size(icon_size: int) -> int:
+    """徽标边长 = 图标边长的 25%（规格：原生只是小角标；壳层 overlay
+    在大图标上占到 ~35% 且发虚）。最小 6px 保证小尺寸可辨。"""
+    return max(6, int(round(icon_size * 0.25)))
+
+
+def _paint_shortcut_badge(pm: QPixmap, logical_size: int, dpr: float):
+    """在图标 pixmap 左下角逐绘 25% 锐利箭头徽标（§7.1 反馈 10）。
+
+    crisp 三原则（对应规格"锐利渲染，去模糊"）：实心亮白填充 + 1.2px
+    深色硬描边，**无阴影无高斯**；Antialiasing 只走边缘抗锯齿。形状取
+    经典弯箭头（左下起杆 → 90° 折向右 → 右指箭头），任意壁纸/图标底色
+    上都可辨。单位盒 0.06..0.94 留描边余量，不越徽标盒。
+    """
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    s = shortcut_badge_size(logical_size) * dpr       # 物理像素
+    inset = max(1.0, logical_size * 0.02 * dpr)
+    x0 = inset
+    y0 = pm.height() - inset - s
+    stem_w = 0.30 * s
+    outline = max(1.0, 1.2 * dpr)
+    dark = QColor(22, 24, 30, 240)
+    white = QColor(245, 247, 252, 255)
+    # 弯箭头中心线（单位盒，y 向下）：左下起向上，90° 折向右
+    path = QPainterPath()
+    path.moveTo(x0 + 0.32 * s, y0 + 0.80 * s)
+    path.lineTo(x0 + 0.32 * s, y0 + 0.42 * s)
+    path.lineTo(x0 + 0.56 * s, y0 + 0.42 * s)
+    p.setPen(QPen(dark, stem_w + outline * 2, Qt.SolidLine,
+                  Qt.RoundCap, Qt.RoundJoin))
+    p.drawPath(path)
+    p.setPen(QPen(white, stem_w, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    p.drawPath(path)
+    # 箭头头部：右指三角（先深色描边底，再白填充）
+    head = QPainterPath()
+    head.moveTo(x0 + 0.54 * s, y0 + 0.14 * s)
+    head.lineTo(x0 + 0.93 * s, y0 + 0.42 * s)
+    head.lineTo(x0 + 0.54 * s, y0 + 0.70 * s)
+    head.closeSubpath()
+    p.setPen(QPen(dark, outline * 2))
+    p.setBrush(QBrush(dark))
+    p.drawPath(head)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QBrush(white))
+    p.drawPath(head)
+    p.end()
+
 
 def _qicon_for(app: dict) -> QIcon:
     """取应用图标 QIcon：shell 路径（含 CLSID）直接交给 QFileIconProvider，
-    失败才生成字母占位图标。"""
+    失败才生成字母占位图标。
+
+    v6 §7.1：快捷方式取**目标**的图标——壳层 .lnk 图标烘焙了超大软箭头
+    overlay（见 is_shortcut 注释）；目标解析失败才用 .lnk 本身。
+    """
     path = _expand(app.get("icon_path") or app.get("target", ""))
     if not path:
         return QIcon()
+    if is_shortcut(app):
+        tgt = shortcut_target_path(app)
+        if tgt:
+            path = _expand(tgt)
     key = (path,)
     if key in _ICON_CACHE:
         return _ICON_CACHE[key]
@@ -312,7 +409,13 @@ def _qicon_for(app: dict) -> QIcon:
 
 
 def icon_for(app: dict, size: int = 48) -> QIcon:
-    """取应用图标（QIcon）。优先系统图标，失败时字母占位。"""
+    """取应用图标（QIcon）。优先系统图标，失败时字母占位。
+
+    v6 §7.1：可解析快捷方式走 pixmap 通道带回自绘徽标（QIcon 通道带
+    不上徽章）——挑选列表（添加应用 / 面板文件夹行）与桌面视觉一致。
+    """
+    if is_shortcut(app) and shortcut_target_path(app):
+        return QIcon(icon_pixmap(app, size))
     icon = _qicon_for(app)
     if not icon.isNull():
         return icon
@@ -351,6 +454,10 @@ def icon_pixmap(app: dict, logical_size: int, dpr: float = 1.0) -> QPixmap:
     if pm.isNull():
         pm = _letter_pixmap(app.get("name", "?")[:1], target_px)
         pm.setDevicePixelRatio(dpr)
+    if is_shortcut(app) and shortcut_target_path(app):
+        # §7.1：拿到了干净目标图标才自绘徽标——壳层 overlay 图标上再画
+        # 会成双箭头（解析失败的回退路径见 shortcut_target_path）
+        _paint_shortcut_badge(pm, logical_size, dpr)
     _PIXMAP_CACHE[key] = pm
     return pm
 
