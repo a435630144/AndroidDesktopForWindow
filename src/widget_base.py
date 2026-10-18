@@ -32,6 +32,11 @@ from .win32_layer import attach_to_desktop
 class FloatingWidget(QWidget):
     closed = Signal(str)  # widget id
     gridChanged = Signal()  # 锚定占位变化（落定 / 尺寸变化）：通知 DesktopWindow 挤走图标
+    # 锚定组件拖动实时预览（2026-10-18 M4）：参数 = widget id + 指针全局坐标。
+    # DesktopWindow 按全局坐标反算组件新占位矩形，实时挤走图标（与图标
+    # 拖动的 reflowHover 同一套语义）；松手发射 anchorDrop 回退预览态。
+    anchorHover = Signal(str, int, int)
+    anchorDrop = Signal(str, int, int)
 
     def __init__(self, storage, entry, interactive: bool = False):
         super().__init__()
@@ -60,6 +65,11 @@ class FloatingWidget(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMouseTracking(True)
         self.setMinimumSize(180, 120)
+        # 锚定组件尺寸 = span × cell（M3：catalog 一等公民，碰撞 = 视觉边界）；
+        # 悬浮组件沿用 entry 里保存的像素尺寸
+        gw, gh = self._anchored_pixel_size()
+        if gw is not None:
+            entry["w"], entry["h"] = gw, gh
         # 首次创建（没有保存过位置）时放到屏幕右侧，避免遮挡左上角的图标网格
         if "x" not in entry:
             screen = QApplication.primaryScreen().availableGeometry()
@@ -73,6 +83,44 @@ class FloatingWidget(QWidget):
         )
         # 挂载在 showEvent 里做：窗口显示后才谈得上 z-order 插入桌面带
         self.show()
+
+    # ---------- 跨度尺寸（M3） ----------
+    def _anchored_pixel_size(self):
+        """锚定且跨度已知（saved colspan 或 catalog）时的像素尺寸；
+        否则返回 (None, None)——调用方回退 entry 的 w/h。"""
+        if not self.anchored:
+            return None, None
+        from . import widget_catalog
+        wtype = self.entry.get("type")
+        if not self.entry.get("colspan") and widget_catalog.default_span(wtype) is None:
+            return None, None    # 未登记类型：legacy 像素尺寸，不强行推导
+        span = grid_flow.widget_span(self.storage, self.entry)
+        cw, ch = grid_flow.cell_size(self.storage)
+        return span[0] * cw, span[1] * ch
+
+    def _set_span(self, cs: int, rs: int):
+        """右键「组件尺寸」切换跨度：写 entry → 原地 resize → 重算占位。
+
+        只对锚定组件有意义。变大后窗口可能右溢出网格：按当前位置反算
+        col 并夹紧到 [0, cols-cs]，必要时把窗口移回夹紧后的格点——
+        entry 与视觉保持一致；再走一次占位写入，占位变了会发
+        gridChanged，DesktopWindow 把新旧占位差区域的图标挤走。
+        """
+        if not self.anchored or cs < 1 or rs < 1:
+            return
+        cw, ch = grid_flow.cell_size(self.storage)
+        self.resize(cs * cw, rs * ch)
+        self.entry["w"], self.entry["h"] = cs * cw, rs * ch
+        ox, oy = grid_flow.origin()
+        col = max(0, min(int(round((self.x() - ox) / max(1, cw))),
+                         max(0, self.storage.columns - cs)))
+        row = max(0, int(round((self.y() - oy) / max(1, ch))))
+        self.move(ox + col * cw, oy + row * ch)
+        self._save_geom()
+        # 不能预写 entry["colspan"] 再调 _sync_grid_occupancy——那会让
+        # 后者的变化检测失效（span 已写，changed=False，gridChanged 不发，
+        # 放大后压住的图标不让位）。span 显式传给唯一写入口。
+        self._write_occupancy(col, row, cs, rs)
 
     # ---------- 形态 ----------
     @property
@@ -186,6 +234,10 @@ class FloatingWidget(QWidget):
         tx, ty = grid_flow.snap_point(self.storage, self.x(), self.y(),
                                       (screen.width(), screen.height()))
         if (tx, ty) == (self.x(), self.y()):
+            # 已在格点上：没有吸附动画，_on_snapped 永远不会来——直接同步
+            # 占位。否则「拖到格点上松手」时 entry col/row 不更新、
+            # gridChanged 不发，组件压着图标而图标不让位（M4 probe19 抓到）
+            self._on_snapped()
             return
         self._snapping = True
         for a in list(self._anims):
@@ -205,6 +257,30 @@ class FloatingWidget(QWidget):
             self._sync_grid_occupancy()
         self._save_geom()
 
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.on_resized()
+
+    def on_resized(self):
+        """尺寸变化钩子（span 切换 / DPI 变化 / 悬浮缩放手柄）：
+        子类按新尺寸重排版（如 ClockWidget 字号随高度缩放）。"""
+
+    def _write_occupancy(self, col: int, row: int, cs: int, rs: int):
+        """占位唯一写入口：写 entry + 落盘 + 变化时发 gridChanged。
+
+        _sync_grid_occupancy（吸附落定）与 _set_span（尺寸切换）共用——
+        变化检测必须对着**写入前**的 entry，所以调用方不得预写
+        colspan/rowspan（曾因此静默丢失 gridChanged，probe19 S5 抓到）。
+        """
+        changed = ((self.entry.get("col"), self.entry.get("row"),
+                    self.entry.get("colspan"), self.entry.get("rowspan"))
+                   != (col, row, cs, rs))
+        self.entry["col"], self.entry["row"] = col, row
+        self.entry["colspan"], self.entry["rowspan"] = cs, rs
+        self.storage.save()
+        if changed:
+            self.gridChanged.emit()
+
     def _sync_grid_occupancy(self):
         """吸附落定后把占位（col/row/colspan/rowspan）写进 entry。
 
@@ -214,17 +290,13 @@ class FloatingWidget(QWidget):
         """
         cw, ch = grid_flow.cell_size(self.storage)
         ox, oy = grid_flow.origin()
-        col = max(0, int(round((self.x() - ox) / max(1, cw))))
-        row = max(0, int(round((self.y() - oy) / max(1, ch))))
         cs, rs = grid_flow.widget_span(self.storage, self.entry)
-        changed = ((self.entry.get("col"), self.entry.get("row"),
-                    self.entry.get("colspan"), self.entry.get("rowspan"))
-                   != (col, row, cs, rs))
-        self.entry["col"], self.entry["row"] = col, row
-        self.entry["colspan"], self.entry["rowspan"] = cs, rs
-        self.storage.save()
-        if changed:
-            self.gridChanged.emit()
+        # col 夹到 [0, cols-cs]：跨度变大（右键尺寸切换）或吸附到右边缘时，
+        # 位置反算的 col 可能让组件右溢出网格（snap_point 只管左上角）
+        col = max(0, min(int(round((self.x() - ox) / max(1, cw))),
+                         max(0, self.storage.columns - cs)))
+        row = max(0, int(round((self.y() - oy) / max(1, ch))))
+        self._write_occupancy(col, row, cs, rs)
 
     # ---------- 鼠标 ----------
     def mousePressEvent(self, e):
@@ -264,6 +336,11 @@ class FloatingWidget(QWidget):
             self.resize(w, h)
         elif self._drag_off is not None:
             self.move(e.globalPosition().toPoint() - self._drag_off)
+            if self.anchored:
+                # 实时预览：报指针全局坐标（DesktopWindow 反算新占位矩形，
+                # 把矩形内图标挤走——组件跟着手指走，图标同步让位）
+                g = e.globalPosition().toPoint()
+                self.anchorHover.emit(self.entry.get("id", ""), g.x(), g.y())
         elif not self.anchored and (self._close_rect().contains(e.pos())
                                     or self._grip_rect().contains(e.pos())):
             self.setCursor(Qt.PointingHandCursor)
@@ -276,6 +353,12 @@ class FloatingWidget(QWidget):
             if self._drag_off is not None and not self._closing:
                 # 松手回弹：临界阻尼弹簧淡回（无动量不过冲）
                 self._fade(float(self.windowOpacity()), 1.0, 180)
+                if self.anchored:
+                    # 先回退预览态（快照），组件自身再吸附落定；
+                    # _on_snapped -> _sync_grid_occupancy -> gridChanged
+                    # 会按最终占位做正式 displace
+                    g = e.globalPosition().toPoint()
+                    self.anchorDrop.emit(self.entry.get("id", ""), g.x(), g.y())
                 self._snap_to_grid()
             else:
                 self._save_geom()
@@ -288,11 +371,30 @@ class FloatingWidget(QWidget):
         menu.setStyleSheet(theme.MENU_QSS)
         if self.anchored:
             menu.addAction("切换为自由悬浮", self._toggle_anchored)
+            self._add_span_menu(menu)
         else:
             menu.addAction("锚定到桌面（融入壁纸）", self._toggle_anchored)
         menu.addAction("隐藏", self._hide_self)
         menu.addAction("关闭", self._close_self)
         menu.exec(e.globalPos())
+
+    def _add_span_menu(self, menu):
+        """「组件尺寸」子菜单（M3）：catalog 登记了多个跨度才出现。
+        clock 当前只有 2×2 一项故不显示——菜单不做单选噪音。
+        返回子菜单（未创建返回 None）——调用方需持有引用，否则这个
+        Python 所有的 QMenu 会被 GC 连 C++ 对象一起收掉。"""
+        from . import widget_catalog
+        opts = widget_catalog.spans(self.entry.get("type"))
+        if len(opts) < 2:
+            return None
+        sub = menu.addMenu("组件尺寸")
+        cur = grid_flow.widget_span(self.storage, self.entry)
+        for cs, rs in opts:
+            act = sub.addAction("%d × %d 格" % (cs, rs),
+                                lambda cs=cs, rs=rs: self._set_span(cs, rs))
+            act.setCheckable(True)
+            act.setChecked((cs, rs) == cur)
+        return sub
 
     def _toggle_anchored(self):
         """锚定 <-> 悬浮：窗口标志位（NOACTIVATE）与绘制分支都要变，只能重建。

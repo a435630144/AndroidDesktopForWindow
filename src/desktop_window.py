@@ -46,14 +46,21 @@ class DesktopWindow(QWidget):
         self._band_rect = None
         self._band_moved = False
         self.icons = {}
-        # 实时让位（Live Reflow）状态：
-        #   _preview_order  拖动期间算出的新阅读序（只改内存，不落盘）
+        # 实时让位（Live Reflow）状态（2026-10-18 M2 起用位移清单）：
+        #   _preview_moves  拖动期间算出的位移清单 {id: (col,row)}（只改内存）
         #   _preview_drag   正在被拖的条目 id
-        #   _layout_snap    拖动开始时的布局快照（取消时回退用）
-        self._preview_order = None
+        #   _layout_snap    拖动开始时的布局快照（取消回退 / 撤销栈用）
+        #   _undo_stack     布局快照栈（Ctrl+Z，最多 20 步）
+        self._preview_moves = None
         self._preview_drag = None
         self._layout_snap = None
+        self._undo_stack = []
         self._drag_multi = False    # 多选拖动：走整体平移，不参与让位置换
+        # 锚定组件拖动实时预览（2026-10-18 M4，与图标拖动同一套语义）：
+        #   _widget_snap          进入预览时的布局快照（松手回退基准）
+        #   _widget_preview_rect  组件新占位矩形（变化检测，防抖）
+        self._widget_snap = None
+        self._widget_preview_rect = None
         # WindowDoesNotAcceptFocus(WS_EX_NOACTIVATE)：永不被激活，
         # 保证桌面带窗口永远压在应用窗口之下，不会抢焦点 / 置顶。
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
@@ -91,6 +98,8 @@ class DesktopWindow(QWidget):
         if attach_to_desktop(self):
             self.attached = True
             self._band_guard.track(self)
+            # M1：几何确定后重算网格（WidgetLayer 随后按新 origin 落位）
+            self._update_grid_metrics()
             self.visibilityChanged.emit(True)
             return
         self._attach_retries -= 1
@@ -111,6 +120,7 @@ class DesktopWindow(QWidget):
                                min(screen.width(), 1180), min(screen.height(), 780)))
         self.setWindowOpacity(float(self.storage.get_setting("opacity")))
         self.show()
+        self._update_grid_metrics()
         self.visibilityChanged.emit(True)
 
     def _show_current_mode(self):
@@ -120,6 +130,7 @@ class DesktopWindow(QWidget):
                 self.setWindowFlag(Qt.WindowStaysOnTopHint, False)
                 self._floating_flag_set = False
             self.setGeometry(QApplication.primaryScreen().availableGeometry())
+            self._update_grid_metrics()
         else:
             self._enter_floating_mode()
             return
@@ -165,10 +176,17 @@ class DesktopWindow(QWidget):
         self.rebuild(stagger=True)  # 模式切换：图标错峰淡入的仪式感
 
     def _on_guard_tick(self):
-        """守护周期回调：保持原生图标隐藏（explorer 重启等会令其重新可见）。"""
+        """守护周期回调：保持原生图标隐藏（explorer 重启等会令其重新可见）；
+        M1 附加：工作区几何变化（DPI / 分辨率 / 任务栏位置变化，
+        WM_SETTINGCHANGE/WM_DISPLAYCHANGE 的轮询兜底）时重算网格。"""
         if self.storage.get_setting("hide_native_icons") and self.isVisible():
             if not win32_layer.native_icons_hidden():
                 win32_layer.set_native_icons_visible(False)
+        if self.attached and self.isVisible():
+            geo = QApplication.primaryScreen().availableGeometry()
+            if (geo.width(), geo.height()) != (self.width(), self.height()):
+                self.setGeometry(geo)
+                self._update_grid_metrics()
 
     def paintEvent(self, event):
         if self.attached:
@@ -297,6 +315,29 @@ class DesktopWindow(QWidget):
     def _origin(self):
         return grid_flow.origin()
 
+    def _update_grid_metrics(self):
+        """M1（指导文档 §1）：按当前窗口尺寸重算 GridMetrics 写入
+        grid_flow——origin()/columns 等共享几何随之更新为按工作区
+        四边等距铺满。已有图标只 move 到新格点（不 rebuild：保留
+        动效状态与选中态，也避免闪烁）。"""
+        before = grid_flow.current_metrics()
+        grid_flow.set_grid(self.storage, (self.width(), self.height()))
+        after = grid_flow.current_metrics()
+        if before is not None and before == after:
+            return
+        for eid, icon in self.icons.items():
+            entry = self.storage.find_entry(eid)
+            if entry is not None:
+                icon.move(*self._entry_pos(entry))
+        self.update()
+
+    def resizeEvent(self, event):
+        # M1：窗口几何变化（挂载后铺满工作区 / 悬浮兜底 / 显示器几何变化）
+        # 时重算网格。未挂载时窗口尺寸无网格意义，跳过。
+        super().resizeEvent(event)
+        if self.attached:
+            self._update_grid_metrics()
+
     def _entry_pos(self, entry):
         cw, ch = self._cell()
         ox, oy = self._origin()
@@ -314,6 +355,21 @@ class DesktopWindow(QWidget):
         return max(0, min(col, cols - 1)), max(0, row)
 
     # ---------- 重建 ----------
+    def _wire_icon(self, icon):
+        """把一个 AppIcon 的全部信号接到窗口（rebuild 与增量 _add_icon 共用）。"""
+        icon.activated.connect(self._on_activate)
+        icon.clicked.connect(self._on_icon_clicked)
+        icon.folderClicked.connect(self.open_folder)
+        icon.mergeRequested.connect(self._on_merge)
+        icon.removeRequested.connect(self._on_remove_entry)
+        icon.dissolveRequested.connect(self._on_dissolve)
+        icon.openLocation.connect(self._on_open_location)
+        icon.dragStarted.connect(self._on_drag_started)
+        icon.dragFinished.connect(self._on_drag_finished)
+        icon.reflowHover.connect(self._on_reflow_hover)
+        icon.reflowDrop.connect(self._on_reflow_drop)
+        icon.payload_provider = self._drag_payload_for
+
     def rebuild(self, stagger=False):
         for icon in self.icons.values():
             icon.deleteLater()
@@ -324,18 +380,7 @@ class DesktopWindow(QWidget):
         chrome = self.storage.icon_chrome_scale()
         for idx, entry in enumerate(self.storage.layout):
             icon = AppIcon(entry, size, parent=self, chrome_scale=chrome)
-            icon.activated.connect(self._on_activate)
-            icon.clicked.connect(self._on_icon_clicked)
-            icon.folderClicked.connect(self.open_folder)
-            icon.mergeRequested.connect(self._on_merge)
-            icon.removeRequested.connect(self._on_remove_entry)
-            icon.dissolveRequested.connect(self._on_dissolve)
-            icon.openLocation.connect(self._on_open_location)
-            icon.dragStarted.connect(self._on_drag_started)
-            icon.dragFinished.connect(self._on_drag_finished)
-            icon.reflowHover.connect(self._on_reflow_hover)
-            icon.reflowDrop.connect(self._on_reflow_drop)
-            icon.payload_provider = self._drag_payload_for
+            self._wire_icon(icon)
             icon.set_selected(entry["id"] in self._selected)
             icon.move(*self._entry_pos(entry))
             if stagger:
@@ -355,6 +400,61 @@ class DesktopWindow(QWidget):
         self._drag_multi = False
         self._ole_active = False
         self.update()
+
+    # ---------- 增量更新（2026-10-18 M4：去 rebuild 化） ----------
+    def _add_icon(self, entry):
+        """增量新增一个图标（add_app / rescan / 文件夹提取等）。
+        已在位返回原实例；新图标淡入出场（appear_in(0)）。"""
+        if entry["id"] in self.icons:
+            return self.icons[entry["id"]]
+        size = self.storage.icon_metric()
+        chrome = self.storage.icon_chrome_scale()
+        icon = AppIcon(entry, size, parent=self, chrome_scale=chrome)
+        self._wire_icon(icon)
+        icon.set_selected(entry["id"] in self._selected)
+        icon.move(*self._entry_pos(entry))
+        icon.appear_in(0)
+        icon.show()
+        self.icons[entry["id"]] = icon
+        return icon
+
+    def _remove_icon(self, entry_id):
+        """增量移除一个图标（remove_entry / 合并被吸收方 / rescan 丢失）。"""
+        icon = self.icons.pop(entry_id, None)
+        self._selected.discard(entry_id)
+        if icon is not None:
+            icon.deleteLater()
+
+    def _sync_icons(self):
+        """位置类变化的全量同步：每个图标弹簧滑到自己的格子。
+
+        已在目标位上的 animate_to 早退（零成本）。这是 M4「去 rebuild
+        化」的核心——位置变化一律走动画，悬停态 / 进行中动画 / 选中态
+        全部保留（指导文档 §4.1）。
+        """
+        for eid, icon in self.icons.items():
+            entry = self.storage.find_entry(eid)
+            if entry is None:
+                continue
+            icon.animate_to(*self._entry_pos(entry))
+
+    def _sync_structure(self):
+        """结构同步：storage.layout 与 self.icons 对齐（移除多余、补上
+        缺失），再 _sync_icons 让位置变化走弹簧动画。
+
+        替代业务路径里的 rebuild()——合并 / 解散 / 增删条目不再销毁重建
+        全部 AppIcon。rebuild 只剩模式切换 / 图标大小变更 / 首屏这类
+        「整体刷新」仪式场景。条目 type 变化（app→folder）无需重建图标：
+        AppIcon.is_folder 是动态属性，直接读同一份 entry dict。
+        """
+        live = {e["id"] for e in self.storage.layout}
+        for eid in [eid for eid in self.icons if eid not in live]:
+            self._remove_icon(eid)
+        for e in self.storage.layout:
+            if e["id"] not in self.icons:
+                self._add_icon(e)
+        self._selected &= live
+        self._sync_icons()
 
     # ---------- 多选 ----------
     def _on_icon_clicked(self, entry_id):
@@ -388,17 +488,18 @@ class DesktopWindow(QWidget):
 
     # ---------- 拖拽 ----------
     def _on_drag_started(self):
-        # 快照当前布局：拖动期间 preview 只改内存，取消时据此回退
+        # 快照当前布局：拖动期间 preview 只改内存，取消时据此回退；
+        # 提交时同一快照压入撤销栈（Ctrl+Z）
         self._layout_snap = [(e.get("id"), int(e.get("col", 0)), int(e.get("row", 0)))
                              for e in self.storage.layout]
-        self._preview_order = None
+        self._preview_moves = None
         self._preview_drag = None
 
     def _on_drag_finished(self):
         self._drag_active = False
         self._drag_entry_id = None
         self._drag_multi = False
-        if self._preview_order is not None:
+        if self._preview_moves is not None:
             # 没有落点（拖到窗外 / 拖到资源管理器 / 按 Esc 取消）-> 回退
             self._cancel_preview()
         self.update()
@@ -427,17 +528,22 @@ class DesktopWindow(QWidget):
         dragged = e.mimeData().data(MIME_TYPE).data().decode()
         self._reflow_preview(dragged, self._cell_at(e.position().toPoint()))
 
-    def _on_reflow_hover(self, dragged: str, col: int, row: int):
-        """拖动悬停在某个图标上（且未武装合并）：按该图标所在格让位。"""
-        self._reflow_preview(dragged, (col, row))
+    def _on_reflow_hover(self, dragged: str, gx: int, gy: int):
+        """拖动悬停（2026-10-18 M2：参数是指针全局坐标，非图标格点）。
 
-    def _on_reflow_drop(self, dragged: str, col: int, row: int):
+        目标格只从指针全局位置反算——预览会改写 entry，读移动中的
+        entry 等于追逐漂移（指导文档 §2.3 病根 3）。
+        """
+        self._reflow_preview(dragged, self._cell_at(self.mapFromGlobal(QPoint(gx, gy))))
+
+    def _on_reflow_drop(self, dragged: str, gx: int, gy: int):
         """在图标上松手且未武装合并：直接走让位提交。
 
         不能依赖 drop 事件从图标冒泡到本窗口（实测不传播），故由
-        AppIcon.reflowDrop 直连（probe15 G11a）。
+        AppIcon.reflowDrop 直连（probe15 G11a）。参数为指针全局坐标。
         """
-        self._reflow_commit_or_compute(dragged, (col, row))
+        self._reflow_commit_or_compute(dragged,
+                                       self._cell_at(self.mapFromGlobal(QPoint(gx, gy))))
 
     # ---------- 锚定小组件占位（widget 是网格一等公民） ----------
     def _widget_cells(self):
@@ -449,44 +555,138 @@ class DesktopWindow(QWidget):
 
         用户描述"小组件占据格子位置，挤走其他对象"的直接实现：
         widget 松手吸附后 gridChanged -> 这里 displace -> 图标滑走。
+        2026-10-18 M4：位移走弹簧动画（_animate_icons_to_layout），
+        不再 rebuild——被挤图标只是换格子，实例/悬停态/动画全部保留。
         """
-        if self._displace_from_widgets():
+        moved = self._displace_from_widgets()
+        if moved:
             self.storage.save()
-            self.rebuild()
+            self._animate_icons_to_layout(moved)
 
-    def _displace_from_widgets(self) -> bool:
+    def _displace_from_widgets(self) -> dict:
         """把落在小组件占位格上的图标挪到第一个空格（排除组件占位）。
-        返回是否有图标被移动。"""
+        返回 {id: (col,row)} 位移清单（空 = 无需 displace）。"""
         wc = self._widget_cells()
         if not wc:
-            return False
-        moved = False
+            return {}
+        moved = {}
         for e in self.storage.layout:
             if (int(e.get("col", 0)), int(e.get("row", 0))) in wc:
                 col, row = self.storage.first_free_cell(extra_used=wc)
                 e["col"], e["row"] = col, row
-                moved = True
+                moved[e["id"]] = (col, row)
         return moved
 
+    # ---------- 锚定组件拖动实时预览（2026-10-18 M4） ----------
+    def _widget_entry_rect(self, entry) -> set:
+        """组件 entry 当前占位矩形（按 span 展开）。"""
+        cs, rs = grid_flow.widget_span(self.storage, entry)
+        col = max(0, int(entry.get("col", 0)))
+        row = max(0, int(entry.get("row", 0)))
+        return {(col + dc, row + dr) for dc in range(cs) for dr in range(rs)}
+
+    def _restore_snap(self, snap):
+        """按快照写回布局（仅内存；落盘由调用方决定）。"""
+        by_id = {e.get("id"): e for e in self.storage.layout}
+        for eid, col, row in snap:
+            e = by_id.get(eid)
+            if e is not None:
+                e["col"], e["row"] = col, row
+
+    def _on_widget_hover(self, widget_id: str, gx: int, gy: int):
+        """锚定组件拖动悬停（widget_base.anchorHover，指针全局坐标）。
+
+        与图标拖动同一套实时预览语义（M2）：按指针位置算组件新占位
+        矩形，把矩形内图标实时挤到最近空格——组件跟着手指走，图标
+        同步让位，不等松手。只改内存 + 动画；松手由 anchorDrop 回退，
+        组件自身吸附落定后的 gridChanged 按最终占位做正式 displace。
+        """
+        entry = next((w for w in self.storage.widgets
+                      if w.get("id") == widget_id), None)
+        if entry is None or not entry.get("anchored") or entry.get("hidden"):
+            return
+        cs, rs = grid_flow.widget_span(self.storage, entry)
+        col, row = self._cell_at(self.mapFromGlobal(QPoint(gx, gy)))
+        col = max(0, min(col, self.storage.columns - cs))
+        rect = {(col + dc, row + dr) for dc in range(cs) for dr in range(rs)}
+        if self._widget_preview_rect == rect:
+            return
+        if self._widget_snap is None:
+            # 进入预览：快照当前布局（松手回退基准）
+            self._widget_snap = [(e.get("id"), int(e.get("col", 0)),
+                                  int(e.get("row", 0)))
+                                 for e in self.storage.layout]
+        else:
+            # 预览态连续移动：先回到快照再按新矩形 displace，
+            # 否则上一次预览的挤位会叠加漂移
+            self._restore_snap(self._widget_snap)
+        # 其他组件的占位仍要避开；本组件的旧占位释放（图标可回填）
+        blocked = rect | (self._widget_cells() - self._widget_entry_rect(entry))
+        moves = {}
+        for e in self.storage.layout:
+            c, r = int(e.get("col", 0)), int(e.get("row", 0))
+            if (c, r) in blocked:
+                nc, nr = grid_flow.nearest_free_cell((c, r), blocked,
+                                                     self.storage.columns)
+                e["col"], e["row"] = nc, nr
+                moves[e["id"]] = (nc, nr)
+        self._widget_preview_rect = rect
+        self._animate_icons_to_layout(moves)
+
+    def _on_widget_drop(self, widget_id: str, gx: int, gy: int):
+        """组件松手：预览态回退到快照（组件自身吸附落定后的
+        gridChanged 会按最终占位做正式 displace + 动画）。
+        组件没动（拖回原地）时也走这里——快照回退即原位。"""
+        if self._widget_snap is not None:
+            self._restore_snap(self._widget_snap)
+        self._widget_snap = None
+        self._widget_preview_rect = None
+        self._sync_icons()
+
     def _reflow_preview(self, dragged_id: str, cell):
+        """实时让位预览（2026-10-18 M2：iOS 局部让位，reflow_moves）。
+
+        与旧 reflow_order 路径的区别：dragged **精确落到 target（含
+        空格）**，只有新旧位置之间的图标滑动一格——修复 P2 病根 1
+        （空格永不生效）与病根 2（拖到右侧空白被夹紧到最后一列 →
+        半幅布局平移；现在 cols 由 GridMetrics 铺满，落点即所见）。
+        目标格由调用方从指针全局位置反算（追逐漂移已消灭）。
+        """
         if self._drag_multi or dragged_id is None:
             return
         if dragged_id not in self.icons:
             return
         cols = self.storage.columns
-        order = grid_flow.reflow_order(self.storage.layout, cols, dragged_id, cell,
+        m = grid_flow.current_metrics()
+        rows = m.rows if m is not None else None
+        moves = grid_flow.reflow_moves(self.storage.layout, cols, dragged_id, cell,
+                                       rows=rows,
                                        extra_occupied=self._widget_cells())
-        if order is None or order == self._preview_order:
+        if moves is None:
+            return
+        if moves == self._preview_moves:
             return  # 无变化不重算：dragMove 频率很高，省掉无用动画重启
-        self._preview_order = order
+        self._preview_moves = moves
         self._preview_drag = dragged_id
         # 只改内存：落盘发生在 drop（commit）或根本不来（cancel 回退）
-        grid_flow.apply_order(self.storage.layout, order)
-        self._animate_icons_to_layout(skip=dragged_id)
+        by_id = {e.get("id"): e for e in self.storage.layout}
+        for eid, (c, r) in moves.items():
+            e = by_id.get(eid)
+            if e is not None:
+                e["col"], e["row"] = c, r
+        self._animate_icons_to_layout(moves, skip=dragged_id)
 
-    def _animate_icons_to_layout(self, skip=None):
-        for eid, icon in self.icons.items():
+    def _animate_icons_to_layout(self, moves: dict, skip=None):
+        """把发生位移的图标弹簧滑到新格（reduced-motion 时直接跳位）。
+
+        只动画 moves 里的图标——位移集合最小化是 M2 的核心性质，
+        顺带避免每次 dragMove 全量迭代 200 个图标。
+        """
+        for eid in moves:
             if eid == skip:
+                continue
+            icon = self.icons.get(eid)
+            if icon is None:
                 continue
             entry = self.storage.find_entry(eid)
             if entry is None:
@@ -495,9 +695,10 @@ class DesktopWindow(QWidget):
 
     def _commit_preview(self):
         """落点有效：把 preview 写盘。图标已在位上，无需 rebuild。"""
-        if self._preview_order is None:
+        if self._preview_moves is None:
             return
         dragged = self._preview_drag
+        self._push_undo(self._layout_snap)
         self.storage.save()
         if dragged and dragged in self.icons:
             entry = self.storage.find_entry(dragged)
@@ -505,29 +706,74 @@ class DesktopWindow(QWidget):
             if entry is not None:
                 icon.move(*self._entry_pos(entry))
             icon.set_drag_ghost(False)
-        self._preview_order = None
+        self._preview_moves = None
         self._preview_drag = None
         self._layout_snap = None
 
-    def _reflow_commit_or_compute(self, dragged_id: str, cell):
-        """单选落位：有预览就直接提交（落点与预览一致，避免坐标反算偏差）；
-        没有预览（拖动中未经 dragMove 直达）就按落点现算一次。"""
-        if self._preview_order is not None and self._preview_drag == dragged_id:
-            self._commit_preview()
+    def _push_undo(self, snap):
+        """把改动前的布局快照压入撤销栈（Ctrl+Z 回退用，最多 20 步）。
+
+        覆盖让位/多选平移等布局类操作（指导文档 §2.3/§5-P0-3；
+        组件推动与文件夹增删成员在 M3-M5 接入同一条栈）。
+        """
+        if snap is None:
             return
-        order = grid_flow.reflow_order(self.storage.layout, self.storage.columns,
-                                       dragged_id, cell,
-                                       extra_occupied=self._widget_cells())
-        if order is not None:
-            grid_flow.apply_order(self.storage.layout, order)
+        if self._undo_stack and self._undo_stack[-1] == snap:
+            return  # 与栈顶相同不重复压
+        self._undo_stack.append(snap)
+        del self._undo_stack[:-20]
+
+    def _undo_layout(self):
+        """Ctrl+Z：回退到上一个布局快照，全体图标弹簧滑回。"""
+        if not self._undo_stack:
+            return
+        snap = self._undo_stack.pop()
+        by_id = {e.get("id"): e for e in self.storage.layout}
+        for eid, col, row in snap:
+            e = by_id.get(eid)
+            if e is not None:
+                e["col"], e["row"] = col, row
         self.storage.save()
         self._clear_preview()
-        self.rebuild()
+        for eid, icon in self.icons.items():
+            entry = by_id.get(eid)
+            if entry is None:
+                continue
+            icon.animate_to(*self._entry_pos(entry), duration=220, damping=1.0)
+        self.update()
+
+    def _reflow_commit_or_compute(self, dragged_id: str, cell):
+        """单选落位：有预览就直接提交（落点与预览一致，避免坐标反算偏差）；
+        没有预览（拖动中未经 dragMove 直达）就按落点现算一次。
+
+        2026-10-18 M4：两条路径都走 _commit_preview 的动画落位——
+        不再 rebuild（实例保留：悬停态、进行中动画、选中态不丢；
+        原来这里 rebuild 会把全场图标瞬间跳位，正是 P2 病根 4）。
+        """
+        if self._preview_moves is not None and self._preview_drag == dragged_id:
+            self._commit_preview()
+            return
+        moves = grid_flow.reflow_moves(self.storage.layout, self.storage.columns,
+                                       dragged_id, cell,
+                                       extra_occupied=self._widget_cells())
+        if not moves:
+            self.storage.save()
+            self._clear_preview()
+            return
+        by_id = {e.get("id"): e for e in self.storage.layout}
+        for eid, (c, r) in moves.items():
+            e = by_id.get(eid)
+            if e is not None:
+                e["col"], e["row"] = c, r
+        # 借提交路径收尾：压撤销栈 + 落盘 + 动画落位 + 清预览
+        self._preview_moves = moves
+        self._preview_drag = dragged_id
+        self._commit_preview()
 
     def _cancel_preview(self):
         """取消：按快照回退布局，所有图标弹簧滑回原位。"""
         snap, self._layout_snap = self._layout_snap, None
-        self._preview_order = None
+        self._preview_moves = None
         self._preview_drag = None
         if snap is None:
             return
@@ -545,7 +791,7 @@ class DesktopWindow(QWidget):
         self.update()
 
     def _clear_preview(self):
-        self._preview_order = None
+        self._preview_moves = None
         self._preview_drag = None
         self._layout_snap = None
 
@@ -560,22 +806,25 @@ class DesktopWindow(QWidget):
             appsource.reveal_in_explorer(target)
 
     def add_app(self, app: dict):
-        self.storage.add_app(app)
+        entry = self.storage.add_app(app)
         self.storage.save()
-        self.rebuild()
+        # M4：增量新增（新图标淡入；指定格被占时的挤走位移走动画）
+        self._sync_structure()
 
     def rescan_desktop(self):
-        """重新扫描桌面文件：补新增、清丢失（仅布局，不动文件）。"""
+        """重新扫描桌面文件：补新增、清丢失（仅布局，不动文件）。
+        M4：增量同步——新增淡入 / 丢失移除 / compact 移位走弹簧动画。"""
         added, removed = self.storage.rescan_desktop()
-        self.rebuild()
+        self._sync_structure()
         return added, removed
 
     def _on_remove_entry(self, entry_id):
         entry = self.storage.find_entry(entry_id)
         self.storage.remove_entry(entry_id)
+        self._remove_icon(entry_id)     # M4：只移除目标图标实例
         self.storage.compact_layout()
         self.storage.save()
-        self.rebuild()
+        self._sync_icons()              # compact 的补位动画
         # 桌面文件只是从整理布局移除，文件本身仍在桌面文件夹
         if entry and entry.get("app", {}).get("kind") == "file":
             from .tray import notify_via_tray  # 延迟导入避免循环
@@ -590,7 +839,7 @@ class DesktopWindow(QWidget):
         self.storage.remove_entry(entry_id)
         self.storage.compact_layout()
         self.storage.save()
-        self.rebuild()
+        self._sync_structure()          # M4：成员增量淡入 + 文件夹图标移除
 
     def _on_merge(self, dragged_payload: str, target_id: str):
         # 合并会整体重排布局，让位预览失效
@@ -623,7 +872,7 @@ class DesktopWindow(QWidget):
                 self.storage.remove_entry(fid)
             self.storage.compact_layout()
             self.storage.save()
-            self.rebuild()
+            self._sync_structure()     # M4：成员并入/空文件夹移除走增量
             if self._popup is not None:
                 self._popup.refresh()
             return
@@ -646,7 +895,10 @@ class DesktopWindow(QWidget):
             self.storage.remove_entry(dragged["id"])
         self.storage.compact_layout()
         self.storage.save()
-        self.rebuild()
+        # M4：合并是结构变化（条目移除 + type 变更）——增量同步。
+        # target 的图标实例保留：AppIcon.is_folder 动态读 entry，自动
+        # 按文件夹样式重绘，无需重建。
+        self._sync_structure()
         if self._popup is not None:
             self._popup.refresh()
 
@@ -709,7 +961,7 @@ class DesktopWindow(QWidget):
                 self._popup.close()
         self.storage.compact_layout()
         self.storage.save()
-        self.rebuild()
+        self._sync_structure()          # M4：提取成员增量淡入 + 空文件夹移除
 
     def _on_remove_member(self, payload: str):
         """文件夹内右键移出成员。payload: "M:fid:idx" 或 "fid:idx"。"""
@@ -727,7 +979,7 @@ class DesktopWindow(QWidget):
                 if self._popup is not None:
                     self._popup.close()
         self.storage.save()
-        self.rebuild()
+        self._sync_structure()          # M4：空文件夹移除走增量
 
     # ---------- 拖放 ----------
     def dragEnterEvent(self, e):
@@ -773,6 +1025,7 @@ class DesktopWindow(QWidget):
             return
 
         # 多选：整体平移语义（让位置换对 N 个图标有歧义，不混用）
+        self._push_undo(self._layout_snap)
         primary = entries[0]
         old_col, old_row = int(primary.get("col", 0)), int(primary.get("row", 0))
         col, row = self._cell_at(pos)
@@ -789,7 +1042,16 @@ class DesktopWindow(QWidget):
                 e["col"], e["row"] = nc, nr
         self.storage.save()
         self._clear_preview()
-        self.rebuild()
+        # M4：多选平移是位置类变化——动画到位，不 rebuild。
+        # 注意逐个复位拖拽幽灵态：增量路径不再销毁图标实例，
+        # set_drag_ghost(True) 的残影必须显式清掉。
+        for e in entries:
+            icon = self.icons.get(e["id"])
+            if icon is None:
+                continue
+            icon.set_drag_ghost(False)
+            icon.animate_to(*self._entry_pos(e))
+        self.update()
 
     def _drop_files(self, urls, pos):
         """从资源管理器拖入文件：已在桌面的直接克隆，不在的先移入桌面文件夹。"""
@@ -811,7 +1073,7 @@ class DesktopWindow(QWidget):
                 continue
         if added:
             self.storage.save()
-            self.rebuild()
+            self._sync_structure()      # M4：拖入文件增量淡入 + 被挤位移动画
             from .tray import notify_via_tray
             notify_via_tray("已添加到整理桌面", "新增 %d 个项目" % added)
 
@@ -889,10 +1151,11 @@ class DesktopWindow(QWidget):
     def _remove_selected(self):
         for eid in list(self._selected):
             self.storage.remove_entry(eid)
+            self._remove_icon(eid)
         self._selected.clear()
         self.storage.compact_layout()
         self.storage.save()
-        self.rebuild()
+        self._sync_icons()              # M4：批量移除后 compact 补位走动画
 
     def _tidy(self):
         self.storage.tidy_layout()
@@ -907,6 +1170,9 @@ class DesktopWindow(QWidget):
         elif e.key() == Qt.Key_A and (e.modifiers() & Qt.ControlModifier):
             self._selected = set(self.icons.keys())
             self._refresh_selection()
+        elif e.key() == Qt.Key_Z and (e.modifiers() & Qt.ControlModifier):
+            # Ctrl+Z：布局撤销（让位 / 多选平移，指导文档 §2.3）
+            self._undo_layout()
 
     def closeEvent(self, e):
         self._band_guard.untrack(self)

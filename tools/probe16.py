@@ -138,12 +138,18 @@ def main():
         ]
         st2.save()
         wc = grid_flow.widget_cells(st2)
-        # 300px 宽 / 格宽 125px（offscreen dpr=1.25）= 2.4 -> round 2 列
-        cw, _ch = grid_flow.cell_size(st2)
-        expect_cols = max(1, int(round(300 / cw)))
-        check("G7 widget_cells 展开占位矩形",
-              wc == {(c, 0) for c in range(expect_cols)},
-              "cells=%s expect_cols=%d cw=%d" % (sorted(wc), expect_cols, cw))
+        # M3：entry 已存 colspan/rowspan 优先（saved > catalog > legacy round）
+        check("G7 widget_cells 展开占位矩形（saved span 3×1 优先）",
+              wc == {(0, 0), (1, 0), (2, 0)},
+              "cells=%s" % sorted(wc))
+        st2._data["widgets"] = [
+            {"id": "clk", "type": "clock", "w": 300, "h": 160, "hidden": False,
+             "anchored": True, "col": 0, "row": 0},
+        ]
+        st2.save()
+        check("G7c 无 saved span 的 clock 按 catalog 2×2 展开",
+              grid_flow.widget_cells(st2) == {(0, 0), (1, 0), (0, 1), (1, 1)},
+              "cells=%s" % sorted(grid_flow.widget_cells(st2)))
         slot = grid_flow.find_widget_slot(st2, {"w": 300, "h": 160})
         check("G7b find_widget_slot 避开已占区域", slot[0] >= 3, "slot=%s" % (slot,))
     finally:

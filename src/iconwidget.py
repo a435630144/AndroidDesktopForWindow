@@ -76,8 +76,8 @@ class AppIcon(QWidget):
     openLocation = Signal(dict)         # 在资源管理器中定位（桌面文件）
     dragStarted = Signal()
     dragFinished = Signal()
-    reflowHover = Signal(str, int, int)  # 拖动悬停：payload, 本图标所在 col, row
-    reflowDrop = Signal(str, int, int)   # 悬停未满即松手：payload, 本图标所在 col, row
+    reflowHover = Signal(str, int, int)  # 拖动悬停：payload, 指针全局 x, y
+    reflowDrop = Signal(str, int, int)   # 悬停未满即松手：payload, 指针全局 x, y
 
     def __init__(self, entry: dict, icon_size: int, in_folder: bool = False,
                  parent=None, chrome_scale: float = 1.0):
@@ -231,16 +231,23 @@ class AppIcon(QWidget):
         曲线：欠阻尼 0.78 ≈ 2% 一次微弹——有生命但不廉价；
         落位（带动量）才用 0.62 ≈ 7% 过冲。
         reduced-motion 时直接跳到位（保留结果、去掉位移）。
+
+        2026-10-18 M2 修复（probe17 S2/S5 实证的竞态）：无论走哪个
+        分支，都必须先停掉飞行中的旧 pos 动画——否则旧动画会在下一帧
+        把图标继续拖向它的旧目标。典型复现：预览动画刚起播就取消回滚，
+        图标当前位置恰等于回滚目标 -> 早退分支放行旧动画 -> 松手后
+        图标滑到预览位而非原位。
         """
         tx, ty = int(x), int(y)
-        if effects.reduced_motion() or (self.pos().x(), self.pos().y()) == (tx, ty):
-            if (self.pos().x(), self.pos().y()) != (tx, ty):
-                self.move(tx, ty)
-            return
         for a in list(self._anims):
             if a.propertyName() == b"pos":
                 a.stop()
                 self._anims.remove(a)
+        if (self.pos().x(), self.pos().y()) == (tx, ty):
+            return
+        if effects.reduced_motion():
+            self.move(tx, ty)
+            return
         anim = QPropertyAnimation(self, b"pos", self)
         anim.setDuration(effects.dur(duration))
         anim.setStartValue(self.pos())
@@ -656,10 +663,13 @@ class AppIcon(QWidget):
             return  # 文件夹内部不互相合并 / 不让位
         if self._merge_armed:
             return  # 已进入合并分支，不再驱动让位预览
-        # 未武装：把悬停目标格上报主窗口做实时让位（安卓默认语义）
+        # 未武装：把悬停目标格上报主窗口做实时让位（安卓默认语义）。
+        # 2026-10-18 M2（指导文档 §2.3）：报**指针全局坐标**而非本图标
+        # col/row——预览会改写 entry，读 entry 等于追逐一个移动的目标；
+        # 主窗口用 mapFromGlobal 反算格点，只信指针。
         e.acceptProposedAction()
-        self.reflowHover.emit(dragged, int(self.entry.get("col", 0)),
-                              int(self.entry.get("row", 0)))
+        g = self.mapToGlobal(e.position().toPoint())
+        self.reflowHover.emit(dragged, g.x(), g.y())
 
     def dragLeaveEvent(self, e):
         self._disarm_merge()
@@ -678,9 +688,10 @@ class AppIcon(QWidget):
             # 必须直连上报主窗口，不能靠 e.ignore() 冒泡——实测（probe15 G11a）
             # drop 事件不会从图标传播到父窗口（propagated=0），冒泡丢失会让
             # 预览永不提交、最终被 _cancel_preview 回退，表现为"拖了却没动"。
+            # 2026-10-18 M2：同样报指针全局坐标（见 dragMoveEvent 注释）。
             e.acceptProposedAction()
-            self.reflowDrop.emit(dragged, int(self.entry.get("col", 0)),
-                                 int(self.entry.get("row", 0)))
+            g = self.mapToGlobal(e.position().toPoint())
+            self.reflowDrop.emit(dragged, g.x(), g.y())
             return
         self._merge_target = False
         self.update()

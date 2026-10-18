@@ -19,6 +19,10 @@ class WidgetLayer(QObject):
     # 锚定小组件占位变化（落定 / 移动 / 尺寸变化）时发出，
     # 由 main.py 连到 DesktopWindow.on_widget_grid_changed 挤走图标。
     gridChanged = Signal()
+    # 锚定组件拖动实时预览（2026-10-18 M4）：转发 FloatingWidget 的
+    # anchorHover/anchorDrop（widget id + 指针全局坐标）。
+    anchorHover = Signal(str, int, int)
+    anchorDrop = Signal(str, int, int)
 
     def __init__(self, storage):
         super().__init__()
@@ -85,6 +89,8 @@ class WidgetLayer(QObject):
         w = cls(self.storage, entry)
         w.closed.connect(self._on_closed)
         w.gridChanged.connect(self.gridChanged.emit)
+        w.anchorHover.connect(self.anchorHover.emit)
+        w.anchorDrop.connect(self.anchorDrop.emit)
         self.widgets[entry["id"]] = w
         w.show()
         # 小组件同样纳入桌面带守护（防 Win+D 等场景漂移后盖住应用窗口）

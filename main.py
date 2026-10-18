@@ -69,6 +69,9 @@ def main() -> int:
     layer = WidgetLayer(storage)
     # 锚定小组件是网格一等公民：占位变化（落定/移动）时挤走被压住的图标
     layer.gridChanged.connect(window.on_widget_grid_changed)
+    # M4：组件拖动实时预览（hover 按新占位矩形实时挤走图标，松手回退）
+    layer.anchorHover.connect(window._on_widget_hover)
+    layer.anchorDrop.connect(window._on_widget_drop)
     # 启动兜底：小组件 spawn 时分配的占位可能压住已有图标（旧 state 升级），
     # 此时信号还未连上，手动触发一次 displace
     window.on_widget_grid_changed()

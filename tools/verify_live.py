@@ -163,6 +163,11 @@ def main():
 
     def phase1_native_mode():
         print("\n==== 阶段1：原生模式（问题2/5） ====", flush=True)
+        # 2026-10-18：migrate_to_native_mode() 自路线A（默认整理模式）后
+        # 已是空实现——这里显式切原生模式，保持本阶段断言的有效性
+        storage.set_setting("hide_native_icons", False)
+        window.apply_native_icons_setting()
+        time.sleep(0.4)
         ok("整理窗口已挂载桌面带", window.attached)
         ok("原生图标可见（DefView 未隐藏）", win32_layer.native_icons_hidden() is False)
         hwnd = int(window.winId())
@@ -209,8 +214,11 @@ def main():
             ok("真实点击便签后成为前台窗口（可输入）", fg == int(notes.winId()),
                "fg=%d notes=%d active=%s" % (fg, int(notes.winId()), notes.isActiveWindow()))
             notes.edit.setFocus()
-            QTest.keyClicks(notes.edit, "hello验证")
-            ok("便签可以输入文字", "hello验证" in notes.edit.toPlainText())
+            # 只用 ASCII：QTest.keyClicks 打中文会经输入法（搜狗）合成，
+            # 在本机环境直接杀进程（EXIT=127，Plain QTextEdit 上可复现，
+            # 与项目代码无关）——键盘输入路径用 ASCII 验证即可
+            QTest.keyClicks(notes.edit, "hello")
+            ok("便签可以输入文字", "hello" in notes.edit.toPlainText())
         else:
             ok("便签组件存在", False, "未创建")
         if panel is not None:
@@ -299,11 +307,22 @@ def main():
         ok("恢复原生模式后 DefView 可见", win32_layer.native_icons_hidden() is False)
         QTimer.singleShot(300, finish)
 
-    def finish():
-        fails = [n for n, c_ in RESULTS if not c_]
-        print("\n==== 汇总: %d 项, 失败 %d 项 ====" % (len(RESULTS), len(fails)), flush=True)
-        if fails:
-            print("失败项:", fails, flush=True)
+    def cleanup():
+        """幂等收尾（铁律：任何退出路径都必须恢复用户桌面）。
+
+        顺序有讲究：先停 BandGuard（否则 on_tick 会在恢复后重新隐藏
+        原生图标——竞态遗留，2026-10-18 实测过），再藏窗，再恢复图标
+        与 state.json。finish() 正常路径与异常/SIGINT 路径都走这里。
+        """
+        try:
+            window._band_guard.untrack(window)
+        except Exception:
+            pass
+        try:
+            window.hide()
+        except Exception:
+            pass
+        win32_layer.restore_native_icons()
         try:
             if STATE_BACKUP is not None:
                 STATE_PATH.write_bytes(STATE_BACKUP)
@@ -311,16 +330,37 @@ def main():
                 STATE_PATH.unlink(missing_ok=True)
         except Exception as e:
             print("state restore failed:", e, flush=True)
-        win32_layer.restore_native_icons()
+
+    def finish():
+        fails = [n for n, c_ in RESULTS if not c_]
+        print("\n==== 汇总: %d 项, 失败 %d 项 ====" % (len(RESULTS), len(fails)), flush=True)
+        if fails:
+            print("失败项:", fails, flush=True)
         try:
             window.grab().save(str(ROOT / "verify_shot.png"))
         except Exception:
             pass
+        # 先 cleanup 再 quit：注入的拖拽输入可能卡死 OLE DoDragDrop 嵌套
+        # 事件循环（2026-10-18 实测 app.quit 后 exec 不返回、进程挂死），
+        # cleanup 若排在 exec 返回后就永远跑不到——桌面将遗留隐藏图标
+        cleanup()
+        code = 1 if any(not c for _, c in RESULTS) else 0
+        # daemon 看门狗：主线程卡在嵌套循环时也能强杀（测试工具必须能退）
+        import threading
+        wd = threading.Timer(8.0, lambda: os._exit(code))
+        wd.daemon = True
+        wd.start()
         app.quit()
 
-    QTimer.singleShot(1200, phase1_native_mode)
-    app.exec()
-    return 1 if any(not c for _, c in RESULTS) else 0
+    try:
+        QTimer.singleShot(1200, phase1_native_mode)
+        app.exec()
+    finally:
+        cleanup()
+    # 正常路径：cleanup 已完成（幂等），确定性退出
+    code = 1 if any(not c for _, c in RESULTS) else 0
+    sys.stdout.flush()
+    os._exit(code)
 
 
 if __name__ == "__main__":

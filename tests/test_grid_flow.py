@@ -176,6 +176,167 @@ def main():
     x4, y4 = grid_flow.snap_point(st, 99999, 99999, (1920, 1080))
     check("snap_point 右下不越界", x4 <= 1920 and y4 <= 1080)
 
+    # ---------- 13. reflow_moves：位移清单（指导文档 §2.2，iOS 局部让位） ----------
+    # 语义与 reflow_order 的本质区别：dragged 精确落到 target（含空格），
+    # 只有新旧位置之间（阅读序）的图标滑动一格，其余一律不动。
+    def apply_moves(entries, moves):
+        by_id = {e["id"]: e for e in entries}
+        for eid, cell in moves.items():
+            if eid in by_id:
+                by_id[eid]["col"], by_id[eid]["row"] = cell
+
+    # 13.1 指导文档验证例 1：行内 A B C D（全占），拖 A 到 (3,0)（D 占）
+    entries = mk([("A", 0, 0), ("B", 1, 0), ("C", 2, 0), ("D", 3, 0)])
+    moves = grid_flow.reflow_moves(entries, COLS, "A", (3, 0))
+    check("例1 后移占用：位移集合 = B/C/D/A",
+          moves == {"B": (0, 0), "C": (1, 0), "D": (2, 0), "A": (3, 0)})
+    apply_moves(entries, moves)
+    check("例1 落点：A 精确占 (3,0)，B/C/D 依次前移",
+          [(e["id"], e["col"], e["row"])
+           for e in sorted(entries, key=lambda e: (e["row"], e["col"]))]
+          == [("B", 0, 0), ("C", 1, 0), ("D", 2, 0), ("A", 3, 0)])
+
+    # 13.2 指导文档验证例 2：稀疏 A B C _ E，拖 A 到空格 (3,0)
+    entries = mk([("A", 0, 0), ("B", 1, 0), ("C", 2, 0), ("E", 4, 0)])
+    moves = grid_flow.reflow_moves(entries, COLS, "A", (3, 0))
+    check("例2 后移空格：只有 B/C 前移，A 精确落空格",
+          moves == {"B": (0, 0), "C": (1, 0), "A": (3, 0)})
+    apply_moves(entries, moves)
+    by_id = {e["id"]: (e["col"], e["row"]) for e in entries}
+    occupied = set(by_id.values())
+    check("例2 E 不动仍在 (4,0)", by_id["E"] == (4, 0))
+    check("例2 空位从 (3,0) 移到 (2,0)（与 iOS 一致）",
+          (3, 0) in occupied and (2, 0) not in occupied)
+
+    # 13.3 前移占用：A B C D，拖 D 到 (1,0)（B 占）
+    entries = mk([("A", 0, 0), ("B", 1, 0), ("C", 2, 0), ("D", 3, 0)])
+    moves = grid_flow.reflow_moves(entries, COLS, "D", (1, 0))
+    check("前移占用：D/B/C 动，A 不动",
+          moves == {"D": (1, 0), "B": (2, 0), "C": (3, 0)})
+    apply_moves(entries, moves)
+    by_id = {e["id"]: (e["col"], e["row"]) for e in entries}
+    check("前移占用落点：A(0,0) D(1,0) B(2,0) C(3,0)",
+          (by_id["A"], by_id["D"], by_id["B"], by_id["C"])
+          == ((0, 0), (1, 0), (2, 0), (3, 0)))
+
+    # 13.4 前移空格：A _ C D（B 格空），拖 D 到空格 (1,0)
+    entries = mk([("A", 0, 0), ("C", 2, 0), ("D", 3, 0)])
+    moves = grid_flow.reflow_moves(entries, COLS, "D", (1, 0))
+    check("前移空格：D 落 (1,0)，C 后移一位，A 不动",
+          moves == {"D": (1, 0), "C": (3, 0)})
+    apply_moves(entries, moves)
+    by_id = {e["id"]: (e["col"], e["row"]) for e in entries}
+    check("前移空格落点：A(0,0) D(1,0) C(3,0)，空位前移到 (2,0)",
+          by_id["A"] == (0, 0) and by_id["D"] == (1, 0) and by_id["C"] == (3, 0)
+          and (2, 0) not in by_id.values())
+
+    # 13.5 原地恒等：拖到自己的老格 -> 无位移
+    entries = mk([("A", 0, 0), ("B", 1, 0), ("C", 2, 0)])
+    check("原地拖动返回空位移", grid_flow.reflow_moves(entries, COLS, "B", (1, 0)) == {})
+
+    # 13.6 跨行：A B / C D，拖 A 到 (0,1)（C 占）
+    entries = mk([("A", 0, 0), ("B", 1, 0), ("C", 0, 1), ("D", 1, 1)])
+    moves = grid_flow.reflow_moves(entries, COLS, "A", (0, 1))
+    check("跨行占用：A/B/C 动，D 不动",
+          moves == {"B": (0, 0), "C": (1, 0), "A": (0, 1)})
+    apply_moves(entries, moves)
+    by_id = {e["id"]: (e["col"], e["row"]) for e in entries}
+    check("跨行落点：B(0,0) C(1,0) A(0,1) D(1,1)",
+          (by_id["B"], by_id["C"], by_id["A"], by_id["D"])
+          == ((0, 0), (1, 0), (0, 1), (1, 1)))
+
+    # 13.7 越界夹紧：col 99 -> 最后一列；col -5 -> 0
+    entries = mk([("A", 0, 0), ("B", 1, 0)])
+    moves = grid_flow.reflow_moves(entries, 4, "A", (99, 0))
+    check("col 越界夹紧：A 落到 (3,0)，B 前移补位",
+          moves == {"B": (0, 0), "A": (3, 0)})
+    entries = mk([("A", 0, 0), ("B", 1, 0)])
+    moves = grid_flow.reflow_moves(entries, 4, "B", (-5, 0))
+    check("col 负值夹紧：B 落到 (0,0)，A 后移补位",
+          moves == {"B": (0, 0), "A": (1, 0)})
+
+    # 13.8 rows 夹紧（M6 分页预留）：target 行超上限时夹到 rows-1
+    entries = mk([("A", 0, 0), ("B", 0, 1)])
+    moves = grid_flow.reflow_moves(entries, COLS, "A", (0, 7), rows=2)
+    check("row 越界夹紧到 rows-1：A 落 (0,1)，B 前移",
+          moves == {"B": (0, 0), "A": (0, 1)})
+
+    # 13.9 组件占位（extra_occupied）：target 落在小组件格上 -> 就近解析
+    # (1,1) 在阅读序中位于 B(2,0) 之后 -> B 补位前移（iOS 行为）
+    entries = mk([("A", 0, 0), ("B", 2, 0)])
+    moves = grid_flow.reflow_moves(entries, COLS, "A", (1, 0),
+                                   extra_occupied={(1, 0)})
+    check("target 落在组件占位：解析到最近可用格 (1,1)，B 补位",
+          moves == {"B": (0, 0), "A": (1, 1)})
+
+    # 13.10 位移最小化：单格微移只动 1~2 个图标
+    entries = mk([("A", 0, 0), ("B", 1, 0), ("C", 2, 0), ("D", 3, 0),
+                  ("E", 4, 0), ("F", 5, 0)])
+    moves = grid_flow.reflow_moves(entries, COLS, "C", (3, 0))  # 与 D 换位
+    check("相邻交换只动 2 个图标", moves == {"C": (3, 0), "D": (2, 0)})
+    entries = mk([("A", 0, 0), ("B", 1, 0), ("C", 2, 0), ("D", 3, 0),
+                  ("E", 4, 0), ("F", 5, 0)])
+    moves = grid_flow.reflow_moves(entries, COLS, "C", (4, 0))  # 跳过 D 落到 E
+    check("隔格微移只动 3 个图标（C/D/E）",
+          moves == {"D": (2, 0), "E": (3, 0), "C": (4, 0)})
+
+    # 13.11 与旧 reflow_order 兼容：target 被占用时两者最终布局一致
+    entries = mk([("A", 0, 0), ("B", 1, 0), ("C", 2, 0), ("D", 3, 0)])
+    snap1 = [dict(e) for e in entries]
+    grid_flow.apply_order(entries, grid_flow.reflow_order(entries, COLS, "A", (2, 0)))
+    moves = grid_flow.reflow_moves(snap1, COLS, "A", (2, 0))
+    apply_moves(snap1, moves)
+    check("占用目标：reflow_moves 与 reflow_order 布局一致",
+          cells_of(entries) == cells_of(snap1)
+          and order_of(entries) == order_of(snap1))
+
+    # 13.12 dragged 不存在 -> None
+    entries = mk([("A", 0, 0)])
+    check("dragged 不存在返回 None",
+          grid_flow.reflow_moves(entries, COLS, "zzz", (1, 0)) is None)
+
+    # 13.13 随机压力：无重叠 / 无丢失 / dragged 精确落 resolved target /
+    #      run 外图标不动 / 占用集合合规（占用目标守恒；空格恰少一个洞）
+    rng = random.Random(20261018)
+    ok = True
+    for _ in range(300):
+        n = rng.randint(1, 12)
+        pool = [(c, r) for r in range(4) for c in range(COLS)]
+        picked = rng.sample(pool, n)
+        entries = mk([("i%d" % k, c, r) for k, (c, r) in enumerate(picked)])
+        did = rng.choice(entries)["id"]
+        old_cell = {e["id"]: (e["col"], e["row"]) for e in entries}
+        tgt = (rng.randrange(COLS), rng.randrange(4))
+        before_set = set(picked)
+        moves = grid_flow.reflow_moves(entries, COLS, did, tgt)
+        if moves is None:
+            ok = False
+            continue
+        # dragged 必须精确落在夹紧后的 target 上（恒等时老格即 target）
+        tc = max(0, min(COLS - 1, tgt[0]))
+        tr = max(0, tgt[1])
+        if moves.get(did, old_cell[did]) != (tc, tr):
+            ok = False
+        apply_moves(entries, moves)
+        after = {(e["col"], e["row"]) for e in entries}
+        # 无重叠 / 无丢失
+        if len(after) != len(entries) or sorted(e["id"] for e in entries) != sorted(old_cell):
+            ok = False
+        # 占用集合：target 被占用 -> 集合守恒；target 为空 -> 恰少一个洞、
+        # 恰多出 target（洞在 run 末端——与 iOS「空位随拖动平移」一致）
+        if (tc, tr) in before_set:
+            if after != before_set:
+                ok = False
+        else:
+            if (after - before_set) != {(tc, tr)} or len(before_set - after) != 1:
+                ok = False
+        # run 外图标不动（对照应用后的真实位置）
+        by_id = {e["id"]: (e["col"], e["row"]) for e in entries}
+        for eid, cell in old_cell.items():
+            if eid != did and eid not in moves and by_id[eid] != cell:
+                ok = False
+    check("300 轮随机拖动：精确落点 / 最小位移 / 无重叠 / 占用集合合规", ok)
+
     print("-" * 56)
     if failures:
         print("FAILED %d: %s" % (len(failures), failures))

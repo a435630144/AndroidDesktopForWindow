@@ -25,8 +25,9 @@ DEFAULT_SETTINGS = {
     "autostart": False,        # 开机自启动
     "icon_size": 72,           # 图标边长基准（像素，100% 缩放下的逻辑值）
     "icon_scale": 1.0,         # 用户自定义图标缩放（在 DPI 感知之上再乘，0.6~2.0）
-    "columns": 10,             # 每行图标数（125% DPI 下 59 个桌面文件 6 行放得下；
-                               # 旧默认 8 在 DPI 感知行高 150px 时会溢出屏幕底部）
+    "columns": "auto",         # 每行图标数："auto"=按工作区尺寸自动计算（M1 GridMetrics，
+                               # 指导文档 §1：四边等距铺满）；或整数（>=2）手动覆盖列数
+                               # （设置高级选项，rows 始终自动）
     "opacity": 0.95,           # 整理窗口不透明度 0.5 ~ 1.0
     "show_widgets": True,      # 是否显示桌面小组件
     "minimize_to_tray": True,  # 关闭窗口时隐藏到托盘（否则退出程序）
@@ -46,6 +47,8 @@ DEFAULT_WIDGETS = [
     # clock 默认锚定（非悬浮）：占据网格格子、融入壁纸（2026-10-18 用户要求
     # "小组件占据格子位置，挤走其他对象"）。可交互组件（notes/panel 含
     # 输入框）保持悬浮——锚定一律 NOACTIVATE，无法获得键盘焦点。
+    # M3：锚定 clock 的 w/h 在 spawn 时被 widget_catalog 推导值覆盖
+    # （2×2 格 = span × cell），此处旧像素值仅作悬浮态回退，不再生效
     {"id": "clock", "type": "clock", "w": 300, "h": 160, "hidden": False,
      "anchored": True},
     {"id": "notes", "type": "notes", "w": 300, "h": 300, "hidden": True, "text": ""},
@@ -132,7 +135,17 @@ class Storage:
 
     @property
     def columns(self) -> int:
-        return max(2, int(self._data["settings"].get("columns", 8)))
+        """当前网格列数：优先 GridMetrics 快照（M1 起的默认路径，
+        指导文档 §1）；快照未就绪时回退 settings 手动值
+        （"auto" -> 静态兜底 10）。"""
+        from . import grid_flow
+        m = grid_flow.current_metrics()
+        if m is not None:
+            return m.cols
+        raw = self._data["settings"].get("columns", 10)
+        if isinstance(raw, str) or raw is None:
+            return 10
+        return max(2, int(raw))
 
     def get_setting(self, key):
         return self._data["settings"].get(key, DEFAULT_SETTINGS.get(key))
