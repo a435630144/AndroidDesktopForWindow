@@ -259,25 +259,29 @@ def run(app):
 
     # ---------- S6：窗口变大（rpp 变大）页夹紧 ----------
     # 顺序：先小窗（rpp 小、页多）翻到第 3 页 -> 再放大窗（rpp 大、
-    # 总页数变少）触发越界夹紧。布局 max_row=8：大窗 rpp=8 时共 2 页。
+    # 总页数变少）触发越界夹紧。布局 max_row=8。
+    # v6 批次 A：cell 屏幕驱动——小窗 640x360 -> cell 55x67（clamp 下限）
+    # -> rpp=4；大窗 rpp=10。页数期望按实际 rpp 动态算（旧写死 5/2 是
+    # 旧 icon 派生几何 rpp=2/8 的值）。
     st2 = make_state([("x%d" % r, 0, r, "app", []) for r in (0, 4, 8)])
     w2 = DesktopWindow(st2)
-    w2.resize(640, 360)          # 小窗：rpp=2 -> 5 页
+    w2.resize(640, 360)          # 小窗：rpp 变小 -> 页变多
     w2._update_grid_metrics()
     settle(app, 200)
     small_rpp = grid_flow.rows_per_page()
     check("S6 小窗 rpp 变小", small_rpp < rpp, "rpp=%s" % small_rpp)
-    check("S6 小窗总页数变多", grid_flow.page_count(st2) == 5,
-          "total=%s" % grid_flow.page_count(st2))
+    check("S6 小窗总页数变多",
+          grid_flow.page_count(st2) == 8 // small_rpp + 1,
+          "total=%s rpp=%s" % (grid_flow.page_count(st2), small_rpp))
     w2.goto_page(2)
     settle(app, 200)
     check("S6 前置：小窗翻到 page2", w2._page == 2, "page=%s" % w2._page)
-    w2.resize(W, H)              # 大窗：rpp=8 -> 2 页 -> 夹紧
+    w2.resize(W, H)              # 大窗：rpp 变大 -> 总页数变少 -> 夹紧
     w2._update_grid_metrics()
     settle(app, 300)
     total = grid_flow.page_count(st2)
     check("S6 大窗总页数变少且当前页夹紧回末页",
-          total == 2 and w2._page == total - 1 and w2._page < 2,
+          total == 8 // rpp + 1 and w2._page == total - 1 and w2._page < 2,
           "page=%s total=%s" % (w2._page, total))
     check("S6 夹紧已落盘",
           Storage(path=str(STATE)).get_setting("current_page") == w2._page)

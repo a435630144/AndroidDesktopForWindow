@@ -92,8 +92,11 @@ def run(app):
     m = grid_flow.current_metrics()
     cw, ch = grid_flow.cell_size(st)
     ox, oy = grid_flow.origin()
-    check("S0 GridMetrics 就绪（19 列 8 行）",
-          m is not None and m.cols == 19 and m.rows == 8,
+    # v6 批次 A：cell 屏幕驱动（grid_sizing），1920x1040 -> cell 75x92
+    # -> cols=24 rows=10（旧 icon 派生断言 19x8 已按新几何动态化）
+    check("S0 GridMetrics 就绪（屏幕驱动几何）",
+          m is not None and m.cols == (1920 - 52) // m.cw
+          and m.rows == (1040 - 44) // m.ch and m.cols >= 20 and m.rows >= 8,
           "cols=%s rows=%s cell=%s" % (m.cols if m else None,
                                        m.rows if m else None, (cw, ch)))
 
@@ -163,7 +166,12 @@ def run(app):
     st.widgets.append(entry)      # 让 widget_cells 能读到（与实例共享同一 dict）
     st.save()
     ck.gridChanged.connect(lambda: got.append(1))
-    ck.move(ox + 17 * cw, oy)     # 贴右边缘：位置反算 col = 17
+    # v6 批次 A：cols 屏幕驱动（1920x1040 -> 24 列）。构造**真正越界**
+    # 的 col（cols-1：4 列跨度必然右溢出）验证夹紧；旧断言写死 col=17
+    # 在 19 列网格越界、24 列网格合法（17+4=21<=24），场景不再触发。
+    cols_now = grid_flow.current_metrics().cols
+    edge_col = cols_now - 1
+    ck.move(ox + edge_col * cw, oy)   # 贴右边缘：位置反算 col = cols-1
     ck._set_span(4, 2)
     settle(app, 100)
     check("S4 切 4×2 后尺寸 = 4×2 cell",
@@ -171,14 +179,16 @@ def run(app):
           "size=%s" % ((ck.width(), ck.height()),))
     check("S4 entry colspan/rowspan 写回",
           (entry["colspan"], entry["rowspan"]) == (4, 2))
-    check("S4 col 夹紧到网格内（17 -> 19-4=15）",
-          entry["col"] == 15, "col=%s" % entry["col"])
-    check("S4 窗口随夹紧移回格点（x = ox + 15*cw）",
-          ck.x() == ox + 15 * cw, "x=%s expect=%s" % (ck.x(), ox + 15 * cw))
+    check("S4 col 夹紧到网格内（%d -> %d-4=%d）"
+          % (edge_col, cols_now, cols_now - 4),
+          entry["col"] == cols_now - 4, "col=%s" % entry["col"])
+    check("S4 窗口随夹紧移回格点（x = ox + %d*cw）" % (cols_now - 4),
+          ck.x() == ox + (cols_now - 4) * cw,
+          "x=%s expect=%s" % (ck.x(), ox + (cols_now - 4) * cw))
     check("S4 gridChanged 已发射", len(got) >= 1)
     wc2 = grid_flow.widget_cells(st)
     check("S4 widget_cells 扩展到 8 格",
-          wc2 == {(15 + dc, dr) for dc in range(4) for dr in range(2)},
+          wc2 == {(cols_now - 4 + dc, dr) for dc in range(4) for dr in range(2)},
           "%s" % sorted(wc2))
 
     # ---------- S5：右键「组件尺寸」菜单 ----------

@@ -53,13 +53,19 @@ def settle(app, ms=400):
     loop.exec()
 
 
-def make_state(spec):
-    """spec: [(id, col, row), ...] -> (Storage, path)。禁用自动克隆/隐藏图标。"""
+def make_state(spec, auto_arrange=True):
+    """spec: [(id, col, row), ...] -> (Storage, path)。禁用自动克隆/隐藏图标。
+
+    v6 §3.2：默认 auto_arrange=False（自由移动）；本探针是 M2 递进
+    让位的专用验证，显式设 True 继续锁定递进算法（free 语义由
+    tests/test_free_move.py 锁定）。
+    """
     if STATE.exists():
         STATE.unlink()
     st = Storage(path=str(STATE))
     st._data["settings"]["hide_native_icons"] = False
     st._data["settings"]["auto_clone_desktop"] = False
+    st._data["settings"]["auto_arrange"] = bool(auto_arrange)
     st._data["widgets"] = []  # 清空默认组件：S1-S6 测纯图标让位
     st._data["layout"] = [
         {"id": i, "type": "app",
@@ -101,8 +107,12 @@ def run(app):
     m = grid_flow.current_metrics()
     cw, ch = grid_flow.cell_size(st)
     ox, oy = grid_flow.origin()
-    check("S0 GridMetrics 就绪（19 列 8 行）",
-          m is not None and m.cols == 19 and m.rows == 8,
+    # v6 批次 A：cell 屏幕驱动（grid_sizing），1920x1040 -> cell 75x92
+    # -> cols=(1920-52)//75=24, rows=(1040-44)//92=10（旧 icon 派生为
+    # 96x114/19x8，断言已按新几何动态化）
+    check("S0 GridMetrics 就绪（屏幕驱动几何）",
+          m is not None and m.cols == (1920 - 52) // m.cw
+          and m.rows == (1040 - 44) // m.ch and m.cols >= 20 and m.rows >= 8,
           "cols=%s rows=%s cell=%s origin=%s" % (
               m.cols if m else None, m.rows if m else None, (cw, ch), (ox, oy)))
     check("S0 图标已按网格落位",
