@@ -95,8 +95,14 @@ class FloatingWidget(QWidget):
     # ---------- 跨度尺寸（M3） ----------
     def _anchored_pixel_size(self):
         """锚定且跨度已知（saved colspan 或 catalog）时的像素尺寸；
-        否则返回 (None, None)——调用方回退 entry 的 w/h。"""
+        否则返回 (None, None)——调用方回退 entry 的 w/h。
+
+        v6 §1.3：无界模式返回 (None, None)——组件尺寸 = 用户像素值
+        （entry 的 w/h，可拖手柄改），不走 span × cell 派生。
+        """
         if not self.anchored:
+            return None, None
+        if grid_flow.free_mode(self.storage):
             return None, None
         from . import widget_catalog
         wtype = self.entry.get("type")
@@ -117,8 +123,12 @@ class FloatingWidget(QWidget):
         M6：col/row 反算走 grid_flow.pos_cell（含当前页偏移），再走
         clamp_widget_cell 夹到本页行范围（组件不越页底）——span 夹紧
         的唯一实现（v6 §4，与 spawn/hover/吸附共用）。
+
+        v6 §1.3：无界模式无格点——空转（尺寸直接 resize，见下）。
         """
         if not self.anchored or cs < 1 or rs < 1:
+            return
+        if grid_flow.free_mode(self.storage):
             return
         cw, ch = grid_flow.cell_size(self.storage)
         self.resize(cs * cw, rs * ch)
@@ -215,6 +225,21 @@ class FloatingWidget(QWidget):
         self.entry["h"] = g.height()
         self.storage.save()
 
+    def _save_geom_free(self):
+        """v6 §1.3 无界模式几何持久化：fx/fy = 松手像素位。
+
+        x/y 同步写一份——widget_pos 的fx/fy 回退源与 __init__ 的初始
+        geometry 都读它；row 置为当前页载体（无界模式 row 只决定第几页，
+        松手即落入当前页）。
+        """
+        g = self.geometry()
+        self.entry["fx"], self.entry["fy"] = g.x(), g.y()
+        self.entry["x"], self.entry["y"] = g.x(), g.y()
+        self.entry["w"], self.entry["h"] = g.width(), g.height()
+        self.entry["row"] = (grid_flow.current_page()
+                             * grid_flow.rows_per_page())
+        self.storage.save()
+
     def _close_rect(self):
         if self.anchored:
             return QRect()          # 锚定模式无 chrome
@@ -271,8 +296,13 @@ class FloatingWidget(QWidget):
         snap_point（只夹 1 格行范围），2×2 组件拖到页底会先吸附到越页
         位置、_on_snapped 再夹紧跳回，视觉上是"先越界再弹回"；现在一
         次夹到底，entry 与视觉全程一致。
+
+        v6 §1.3：无界模式没有格点可吸——落点即松手位，fx/fy 直接存。
         """
         if not self.anchored or self._snapping:
+            return
+        if grid_flow.free_mode(self.storage):
+            self._save_geom_free()
             return
         cs, rs = grid_flow.widget_span(self.storage, self.entry)
         col, row = grid_flow.pos_cell(self.storage, self.x(), self.y())
@@ -316,7 +346,11 @@ class FloatingWidget(QWidget):
         _sync_grid_occupancy（吸附落定）与 _set_span（尺寸切换）共用——
         变化检测必须对着**写入前**的 entry，所以调用方不得预写
         colspan/rowspan（曾因此静默丢失 gridChanged，probe19 S5 抓到）。
+
+        v6 §1.3：无界模式组件不占格——空转（落点持久化走 _save_geom_free）。
         """
+        if grid_flow.free_mode(self.storage):
+            return
         changed = ((self.entry.get("col"), self.entry.get("row"),
                     self.entry.get("colspan"), self.entry.get("rowspan"))
                    != (col, row, cs, rs))
@@ -337,7 +371,11 @@ class FloatingWidget(QWidget):
         走 clamp_widget_cell（v6 §4 唯一实现）——拖到页底松手时组件底边
         不越出当前页（夹紧后顺手把窗口移回夹紧格点，entry 与视觉保持
         一致，同 col 语义）。
+
+        v6 §1.3：无界模式无占位概念——空转。
         """
+        if grid_flow.free_mode(self.storage):
+            return
         cs, rs = grid_flow.widget_span(self.storage, self.entry)
         col, row = grid_flow.pos_cell(self.storage, self.x(), self.y())
         col, row = grid_flow.clamp_widget_cell(self.storage, col, row, cs, rs)
@@ -426,9 +464,12 @@ class FloatingWidget(QWidget):
     def _add_span_menu(self, menu):
         """「组件尺寸」子菜单（M3）：catalog 登记了多个跨度才出现。
         clock 当前只有 2×2 一项故不显示——菜单不做单选噪音。
+        v6 §1.3：无界模式没有格跨度——不显示。
         返回子菜单（未创建返回 None）——调用方需持有引用，否则这个
         Python 所有的 QMenu 会被 GC 连 C++ 对象一起收掉。"""
         from . import widget_catalog
+        if grid_flow.free_mode(self.storage):
+            return None
         opts = widget_catalog.spans(self.entry.get("type"))
         if len(opts) < 2:
             return None

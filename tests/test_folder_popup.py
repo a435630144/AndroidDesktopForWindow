@@ -27,7 +27,7 @@ from PySide6.QtCore import QEvent, QEventLoop, QPoint, QPointF, Qt, QTimer
 from PySide6.QtGui import QColor, QKeyEvent, QMouseEvent, QPixmap
 from PySide6.QtWidgets import QApplication
 
-from src import theme, win32_layer
+from src import grid_flow, theme, win32_layer
 from src.desktop_window import DesktopWindow
 from src.folder_popup import BandInputBox, FolderPopup, ScrimWindow
 from src.storage import Storage
@@ -240,6 +240,84 @@ def main(app):
     check("F9 refresh 重抓背板（对象更换）",
           popup._backdrop is not old_backdrop and not popup._backdrop.isNull())
     check("F9 refresh 后仍存活（未自动关闭）", popup.isVisible() or True)
+
+    # ---------- F10：v6 §6.2 弹窗居中 + 幕布覆盖吞点击 + 带内最顶 ----------
+    st3 = make_state([("a", 0, 0, "app", []),
+                      ("f", 1, 0, "folder",
+                       [{"name": "m1", "target": "m1", "kind": "app"}])])
+    w2 = DesktopWindow(st3)
+    # 窗口按 offscreen 屏幕实际尺寸铺满：网格中心落在屏内，弹窗不被
+    # 屏幕夹紧拉偏——居中断言才是几何恒等式而非夹紧结果
+    scr_geo0 = app.primaryScreen().availableGeometry()
+    w2.resize(scr_geo0.size())
+    w2._update_grid_metrics()
+    w2.attached = True          # 走桌面带分支（win32 层打桩，见下）
+    # 打桩桌面带：fake_z 模拟 z-order（顶->底），9999 = 整理窗口。
+    # attach_to_desktop 的真实语义是「插到 Progman 正上方」= 带内最底
+    # （已有带成员之下）——打桩必须复刻这一点，否则测不出穿透。
+    fake_z = [9999]
+    real = (win32_layer.attach_to_desktop, win32_layer.insert_above_window,
+            win32_layer.band_topmost_hwnd)
+
+    def _fake_attach(widget, below_hwnd=0):
+        fake_z.append(int(widget.winId()))     # 带内最底（Progman 正上方）
+        return True
+
+    def _fake_top(exclude_hwnd=0, zorder=None):
+        for hw in fake_z:
+            if hw != exclude_hwnd:
+                return hw
+        return 0
+
+    def _fake_insert(hwnd, above_of):
+        if hwnd in fake_z:
+            fake_z.remove(hwnd)
+        i = fake_z.index(above_of) if above_of in fake_z else len(fake_z)
+        fake_z.insert(i, hwnd)
+        return True
+
+    win32_layer.attach_to_desktop = _fake_attach
+    win32_layer.band_topmost_hwnd = _fake_top
+    win32_layer.insert_above_window = _fake_insert
+    try:
+        w2.open_folder("f")
+        settle(app, 150)
+        pop = w2._popup
+        scr = w2._scrim
+        check("F10 弹窗与幕布都已创建", pop is not None and scr is not None)
+        if pop is not None and scr is not None:
+            cx, cy = grid_flow.page_grid_center(st3)
+            got_c = (pop.x() + pop.width() // 2, pop.y() + pop.height() // 2)
+            check("F10 弹窗中心 = 当前页网格区中心",
+                  abs(got_c[0] - cx) <= 1 and abs(got_c[1] - cy) <= 1,
+                  "got=%s want=%s" % (got_c, (cx, cy)))
+            scr_geo = app.primaryScreen().availableGeometry()
+            check("F10 幕布覆盖整个工作区", scr.geometry() == scr_geo,
+                  "%s vs %s" % (scr.geometry(), scr_geo))
+            shw, phw = int(scr.winId()), int(pop.winId())
+            check("F10 幕布压在整理窗口之上（吞点击不穿透）",
+                  fake_z.index(shw) < fake_z.index(9999),
+                  "z=%s" % (fake_z,))
+            check("F10 弹窗压在幕布之上（带内最顶）",
+                  fake_z.index(phw) < fake_z.index(shw),
+                  "z=%s" % (fake_z,))
+            # 幕布吞点击：点击幕布 -> 发射 clicked 且弹窗关闭
+            got_click = []
+            scr.clicked.connect(lambda: got_click.append(1))
+            send_click(scr, QPoint(scr_geo.width() // 2, scr_geo.height() // 2))
+            settle(app, 50)
+            check("F10 点击幕布吞掉并关闭弹窗",
+                  got_click == [1] and w2._popup is None,
+                  "click=%s popup=%s" % (got_click, w2._popup))
+    finally:
+        win32_layer.attach_to_desktop = real[0]
+        win32_layer.insert_above_window = real[1]
+        win32_layer.band_topmost_hwnd = real[2]
+        if w2._scrim is not None:
+            w2._scrim.close()
+        if w2._popup is not None:
+            w2._popup.close()
+        w2.close()
 
     print("-" * 56)
     if failures:

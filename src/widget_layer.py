@@ -75,23 +75,38 @@ class WidgetLayer(QObject):
         if cls is None:
             return
         if entry.get("anchored"):
-            # 锚定组件：分配网格占位（排除已有组件与图标），按格点定位。
-            # M6：find_widget_slot 默认限运行时当前页行范围（组件不越页底）
-            if "col" not in entry:
-                col, row = grid_flow.find_widget_slot(self.storage, entry)
+            if grid_flow.free_mode(self.storage):
+                # v6 §1.3 无界锚定：row 仅作页载体，位置读 fx/fy（缺列
+                # 时补一份，落在当前页），尺寸用 entry 的 w/h（用户像素），
+                # 不分配网格占位、不写 colspan/rowspan 覆盖用户尺寸
+                if "col" not in entry or "row" not in entry:
+                    entry["col"] = 0
+                    entry["row"] = (grid_flow.current_page()
+                                    * grid_flow.rows_per_page())
+                if "fx" not in entry or "fy" not in entry:
+                    entry["fx"] = int(entry.get("x", 0) or 0)
+                    entry["fy"] = int(entry.get("y", 0) or 0)
+                # __init__ 的初始 geometry 读 x/y——同步一份，窗口才落在
+                # fx/fy 上（否则停在网格模式遗留的旧格点像素）
+                entry["x"], entry["y"] = entry["fx"], entry["fy"]
             else:
-                # v6 §4：旧数据越页修正——span 夹紧到所属页行范围
-                # （便签 2×2 存在 row=rpp-1 会跨页半截，probe23 S2）
+                # 锚定组件：分配网格占位（排除已有组件与图标），按格点定位。
+                # M6：find_widget_slot 默认限运行时当前页行范围（组件不越页底）
+                if "col" not in entry:
+                    col, row = grid_flow.find_widget_slot(self.storage, entry)
+                else:
+                    # v6 §4：旧数据越页修正——span 夹紧到所属页行范围
+                    # （便签 2×2 存在 row=rpp-1 会跨页半截，probe23 S2）
+                    cs, rs = grid_flow.widget_span(self.storage, entry)
+                    col, row = grid_flow.clamp_widget_cell(
+                        self.storage, int(entry.get("col", 0)),
+                        int(entry.get("row", 0)), cs, rs)
+                entry["col"], entry["row"] = col, row
                 cs, rs = grid_flow.widget_span(self.storage, entry)
-                col, row = grid_flow.clamp_widget_cell(
-                    self.storage, int(entry.get("col", 0)),
-                    int(entry.get("row", 0)), cs, rs)
-            entry["col"], entry["row"] = col, row
-            cs, rs = grid_flow.widget_span(self.storage, entry)
-            entry["colspan"], entry["rowspan"] = cs, rs
-            # M6：位置统一走 cell_pos（页内局部行映射）
-            entry["x"], entry["y"] = grid_flow.cell_pos(
-                self.storage, int(entry["col"]), int(entry["row"]))
+                entry["colspan"], entry["rowspan"] = cs, rs
+                # M6：位置统一走 cell_pos（页内局部行映射）
+                entry["x"], entry["y"] = grid_flow.cell_pos(
+                    self.storage, int(entry["col"]), int(entry["row"]))
             self.storage.save()
         w = cls(self.storage, entry)
         w.closed.connect(self._on_closed)
@@ -110,6 +125,22 @@ class WidgetLayer(QObject):
                 w.hide()
         # 小组件同样纳入桌面带守护（防 Win+D 等场景漂移后盖住应用窗口）
         self._band_guard.track(w)
+
+    def apply_layout_mode(self):
+        """v6 §1.3 模式切换后重排组件：关闭全部再按新模式 spawn。
+
+        锚定组件的位置来源（cell_pos ↔ fx/fy）与尺寸来源（span 派生 ↔
+        用户像素）都随模式变，逐个 set_anchored 式的原地切换表达不了
+        「整体刷新」——3 个组件全量重建成本可忽略，语义最干净。
+        """
+        for w in list(self.widgets.values()):
+            self._band_guard.untrack(w)
+            w.close()
+        self.widgets.clear()
+        for entry in self.storage.widgets:
+            if entry.get("hidden"):
+                continue
+            self._spawn(entry)
 
     def _on_closed(self, widget_id):
         w = self.widgets.pop(widget_id, None)
@@ -142,7 +173,9 @@ class WidgetLayer(QObject):
             on_page = grid_flow.page_of(row, rpp) == page
             if on_page and w.isHidden():
                 w.show()      # 滑入前先显示（隐藏窗口的动画不可见）
-            anim = w.animate_to(*grid_flow.cell_pos(self.storage, col, row))
+            # v6 §1.3：位置统一走 widget_pos——网格模式 cell_pos、
+            # 无界模式 fx/fy + 页间偏移（与图标同一套页载体语义）
+            anim = w.animate_to(*grid_flow.widget_pos(self.storage, w.entry))
             if not on_page:
                 if anim is None:
                     self._cull_widget(w)

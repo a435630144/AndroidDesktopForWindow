@@ -42,14 +42,15 @@ UI 对标 iOS 文件夹 + Liquid Glass 材质语言：
 """
 import traceback
 
-from PySide6.QtCore import (QEasingCurve, QParallelAnimationGroup, QPointF,
-                            QPropertyAnimation, QRect, QRectF, Qt, Signal,
-                            Property)
+from PySide6.QtCore import (QEasingCurve, QParallelAnimationGroup, QPoint,
+                            QPointF, QPropertyAnimation, QRect, QRectF, Qt,
+                            Signal, Property)
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
 
 from . import appsource
 from . import effects
+from . import grid_flow
 from . import theme
 from . import win32_layer
 from .folder_tint import auto_tint, folder_tint
@@ -312,21 +313,26 @@ class FolderPopup(QWidget):
         w = pad * 2 + (cols - 1) * pitch_x + icon_size
         h = pad + title_h + (rows - 1) * pitch_y + (icon_size + int(round(42 * m))) + bar_h + pad - int(round(8 * m))
         # 高度不超过可用屏幕的 82%：桌面文件全拖进来的极端情况不顶出屏幕
-        screen = QGuiApplication.screenAt(anchor_rect.center()) if anchor_rect else None
+        # v6 §6.2（指导文档 §6.2 反馈 8/9）：弹窗中心对齐**当前页网格区
+        # 中心**——幕布吞掉桌面层点击后弹窗是模态面板，从任意位置的文件夹
+        # 图标打开都落屏幕同一处，比贴锚点更符合预期；网格区几何所有页
+        # 相同（页只是行偏移），故与翻页状态解耦。
+        cx, cy = grid_flow.page_grid_center(self.storage)
+        screen = QGuiApplication.screenAt(QPoint(int(cx), int(cy)))
         screen = screen or QGuiApplication.primaryScreen()
-        max_h = int(screen.availableGeometry().height() * 0.82)
+        geo = screen.availableGeometry()
+        max_h = int(geo.height() * 0.82)
         self.setFixedSize(max(240, w), min(max(150, h), max_h))
+        x = cx - self.width() // 2
+        y = cy - self.height() // 2
+        x = max(geo.left() + 8, min(x, geo.right() - self.width() - 8))
+        y = max(geo.top() + 8, min(y, geo.bottom() - self.height() - 8))
+        self.move(x, y)
         if anchor_rect is not None:
-            geo = screen.availableGeometry()
-            x = anchor_rect.center().x() - self.width() // 2
-            y = anchor_rect.top() - self.height() - 10
-            if y < geo.top() + 8:
-                y = anchor_rect.bottom() + 10
-            x = max(geo.left() + 8, min(x, geo.right() - self.width() - 8))
-            y = max(geo.top() + 8, min(y, geo.bottom() - self.height() - 8))
-            self.move(x, y)
             # 玻璃从图标位置涌出：缩放中心 = 图标中心（弹窗本地坐标）
             self._zoom_center = self.mapFromGlobal(anchor_rect.center())
+        else:
+            self._zoom_center = QPointF(self.width() / 2, self.height() / 2)
         if not keep_backdrop:
             # 玻璃背板：必须在 show() 之前抓屏，否则会把自己抓进去
             self._backdrop = effects.glass_backdrop(
@@ -422,9 +428,10 @@ class FolderPopup(QWidget):
             self.close()
             return
         self.entry = found
-        self._regrab_backdrop()
-        # 保留背板对象（刚抓的）：_build 只重建成员与布局度量
+        # v6 §6.2：_build 现在会按网格区中心重新定位——必须先 build
+        # （移动 + 重建成员）再抓背板，否则背板抓在旧位置（窗口已移走）。
         self._build(None, keep_backdrop=True)
+        self._regrab_backdrop()
 
     def _regrab_backdrop(self):
         """背板重抓：隐藏本窗 → 抓屏 → 同帧显示回（避免把自己抓进去）。"""

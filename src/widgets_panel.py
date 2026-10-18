@@ -18,8 +18,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QFileInfo, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import (QFileIconProvider, QHBoxLayout, QLabel, QLineEdit,
-                               QListWidget, QListWidgetItem, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QFileIconProvider, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+                               QListWidget, QListWidgetItem, QScrollArea, QToolButton, QVBoxLayout, QWidget)
 
 from . import appsource
 from . import theme
@@ -265,7 +265,10 @@ class DesktopPanel(FloatingWidget):
     def __init__(self, storage, entry):
         # interactive=True：搜索框 / 按钮需要键盘焦点（NOACTIVATE 窗口无法输入）
         super().__init__(storage, entry, interactive=True)
-        self.setMinimumSize(340, 460)
+        # v6 §6.1：3×4 span（cell 75×92 -> 225×368）必须可达——旧硬编码
+        # 340×460 比 span 还大，锚定时视觉 ≠ 占位（M3「碰撞 = 视觉边界」
+        # 的回归）。地板值只防浮空，不挡 span。
+        self.setMinimumSize(200, 260)
         self._apps_cache = None
         self._build()
 
@@ -294,16 +297,19 @@ class DesktopPanel(FloatingWidget):
         self.list_results.itemClicked.connect(lambda it: self._launch_item(it))
         lay.addWidget(self.list_results)
 
-        # 快捷文件夹
-        folders = QHBoxLayout()
+        # 快捷文件夹：v6 §6.1 改 3 列网格（3+2 两行）——旧单行 5×68px
+        # 在 3×4 span（内宽 ~193px）下放不下；网格排布在悬浮 400px 与
+        # 锚定 225px 两种宽度下都不溢出
+        folders = QGridLayout()
         folders.setSpacing(4)
-        for label, path in (
+        quick = (
             ("最近下载", _known_folder("Downloads", "下载")),
             ("桌面", _known_folder("Desktop", "桌面")),
             ("图片", _known_folder("Pictures", "图片")),
             ("文档", _known_folder("Documents", "文档")),
             ("视频", _known_folder("Videos", "视频")),
-        ):
+        )
+        for i, (label, path) in enumerate(quick):
             btn = QToolButton()
             btn.setText(label)
             if path is not None:
@@ -313,21 +319,35 @@ class DesktopPanel(FloatingWidget):
             else:
                 btn.setEnabled(False)
                 btn.setToolTip("目录不存在")
-            btn.setIconSize(QSize(40, 40))
+            btn.setIconSize(QSize(28, 28))
             btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-            btn.setFixedSize(68, 72)
+            btn.setFixedSize(60, 56)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(TOOLBUTTON_QSS)
-            folders.addWidget(btn)
-        folders.addStretch(1)
+            folders.addWidget(btn, i // 3, i % 3)
+        folders.setColumnStretch(2, 1)
         lay.addLayout(folders)
 
-        # 磁盘 / 最近下载 / 天气
-        lay.addWidget(DiskCard(self))
+        # 磁盘 / 最近下载 / 天气：装进滚动区——3×4 span 高度有限，
+        # 内容超高时可滚动（悬浮大尺寸时自然全部露出）
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea{background: transparent;}"
+                             "QScrollArea>QWidget>QScrollBar{background: transparent;}")
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        inner_lay = QVBoxLayout(inner)
+        inner_lay.setContentsMargins(0, 0, 0, 0)
+        inner_lay.setSpacing(12)
+        inner_lay.addWidget(DiskCard(self))
         self.recent = RecentCard(self)
-        lay.addWidget(self.recent)
-        lay.addWidget(WeatherCard(self))
-        lay.addStretch(1)
+        inner_lay.addWidget(self.recent)
+        inner_lay.addWidget(WeatherCard(self))
+        inner_lay.addStretch(1)
+        scroll.setWidget(inner)
+        lay.addWidget(scroll, 1)
 
     # ---------- 搜索 ----------
     def _on_search(self, text):

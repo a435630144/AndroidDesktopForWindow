@@ -218,7 +218,13 @@ class Storage:
           - 同格多条目只保留第一个，其余挪到第一个空格
           - 顺序、空行、空列全部保留——用户想把图标放哪就放哪
         显式「整理布局」（托盘/右键菜单）走 tidy_layout() 才顺序铺满。
+
+        v6 §1.3：无界模式下 col/row 只是**页载体**（位置全在 fx/fy），
+        重写它们会打乱页归属——直接跳过。
         """
+        from . import grid_flow  # 延迟导入：grid_flow 依赖 storage 的访问器
+        if grid_flow.free_mode(self):
+            return
         cols = self.columns
         used = set()
         for e in sorted(self._data["layout"],
@@ -231,12 +237,29 @@ class Storage:
             e["col"], e["row"] = col, row
 
     def tidy_layout(self):
-        """显式整理：按 (row, col) 排序后顺序铺满为连续网格（用户主动触发）。"""
+        """显式整理：按 (row, col) 排序后顺序铺满为连续网格（用户主动触发）。
+
+        v6 §1.3：无界模式没有网格可铺——跳过（用户要整齐就切回网格模式）。
+        """
+        from . import grid_flow
+        if grid_flow.free_mode(self):
+            return
         entries = sorted(self._data["layout"],
                          key=lambda e: (e.get("row", 0), e.get("col", 0)))
         for i, e in enumerate(entries):
             e["col"] = i % self.columns
             e["row"] = i // self.columns
+
+    def free_icon_box(self):
+        """无界模式图标 widget 尺寸（逻辑 px）= icon_px + legacy chrome。
+
+        与 AppIcon 不传 layout 时的旧chrome 路径同一组数（s+24m, s+40m）
+        ——free_slot 的占位矩形要与真实图标一致，此处按同式复刻
+        （AppIcon 实例尺寸的唯一权威在 iconwidget，这里只做布局预算）。
+        """
+        s = max(24, int(self.get_setting("icon_px") or 96))
+        m = self.icon_chrome_scale()
+        return s + int(round(24 * m)), s + int(round(40 * m))
 
     def occupant(self, col, row, exclude_id=None):
         for e in self._data["layout"]:
@@ -267,11 +290,37 @@ class Storage:
 
         app 自带稳定 id（df: 哈希 / sm: 路径 / sys-xxx）时直接用作条目 id，
         同一应用重复添加返回已有条目，不产生副本。
+
+        v6 §1.3 无界模式：落点走 free_slot（当前页画布内首个不重叠的
+        格点对齐位），位置写 fx/fy；col/row 退化为页载体（row = 页号×rpp）。
+        显式指定 col/row 的调用（拖入文件等）在无界模式下按像素解释，
+        由 _page_local_pos 同式换算成 fx/fy。
         """
         entry_id = app.get("id") or uuid.uuid4().hex[:8]
         existing = self.find_entry(entry_id)
         if existing is not None:
             return existing
+        from . import grid_flow  # 延迟导入：grid_flow 依赖 storage 的访问器
+        if grid_flow.free_mode(self):
+            page = grid_flow.current_page()
+            rpp = grid_flow.rows_per_page()
+            if col is None or row is None:
+                w, h = self.free_icon_box()
+                fx, fy = grid_flow.free_slot(self, page, w, h)
+            else:
+                fx, fy = grid_flow._page_local_pos(self, int(col), int(row))
+            entry = {
+                "id": entry_id,
+                "type": "app",
+                "app": app,
+                "apps": [],
+                "col": 0,
+                "row": page * rpp,      # 页载体：无界模式 row 只决定第几页
+                "fx": int(fx),
+                "fy": int(fy),
+            }
+            self._data["layout"].append(entry)
+            return entry
         if col is None or row is None:
             col, row = self.first_free_cell()
         else:
@@ -318,8 +367,13 @@ class Storage:
         组件占位格自动避开。**仅播种 /「重新扫描桌面文件」时调用**——
         加载时不调用，尊重用户自由移动后的留空（§3.2：auto_arrange
         =False 默认，拖完的空格是用户的，不是缺陷）。
+
+        v6 §1.3：无界模式位置在 fx/fy，pack 重写 col/row 会打乱页归属
+        与视觉位置——跳过（新条目落点由 add_app 的自由分支负责）。
         """
         from . import grid_flow  # 延迟导入，避免模块级循环依赖
+        if grid_flow.free_mode(self):
+            return 0
         cols = max(2, int(self.columns))
         used = set(grid_flow.widget_cells(self))   # 组件占位（不可覆盖）
         entries = sorted(self._data["layout"],

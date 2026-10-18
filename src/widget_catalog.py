@@ -22,8 +22,14 @@ Span = Tuple[int, int]
 # 每种组件类型的可用跨度列表（列, 行），第一项 = 默认。
 # 2026-10-18 D3 决策：clock 默认 2×2（时间行 + 日期行刚好铺满，
 # 字号可随 cell 缩放）；后续 notes/panel 等接入时在此登记。
+# 2026-10-19 v6 §6.1（反馈 7b 前半）：notes 2×2、panel 3×4 登记入网格——
+# 锚定时位置 = cell_pos、尺寸 = span × cell（pixel_size 精确推导），
+# 碰撞边界 = 视觉边界；悬浮态仍用 entry 的像素 w/h（可交互组件要键盘
+# 焦点，见 storage.DEFAULT_WIDGETS 注释）。
 WIDGET_CATALOG = {
     "clock": [(2, 2)],
+    "notes": [(2, 2)],
+    "panel": [(3, 4)],
 }
 
 

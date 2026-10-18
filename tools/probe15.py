@@ -78,7 +78,12 @@ def main():
     st, path = make_state()
     w = DesktopWindow(st)
     w.show_desktop()
-    QTest.qWait(300)
+    # 等启动模式解析完成再进断言：offscreen 挂载失败时 _try_attach_once
+    # 会在 1500ms 后重试并落入 _enter_floating_mode——那次 setGeometry +
+    # _update_grid_metrics 会重建网格快照与全部图标。若在模式解析前记录
+    # pos_before（G4），回退断言对照的就是两套几何（G4 存量 flaky 根因）。
+    # 真机挂载成功时此等待为空转（attached=True 无重试）。
+    QTest.qWait(2200)
 
     ids = [e["id"] for e in st.layout]
     dragged, other = ids[0], ids[7]        # e0 在 (0,0)，e7 在 (7,0)

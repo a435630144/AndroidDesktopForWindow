@@ -77,6 +77,13 @@ class SystemTray:
         act_rescan.triggered.connect(self._rescan)
         m.addAction(act_rescan)
 
+        from . import grid_flow
+        self.act_layout = QAction(
+            "切换到无界模式（自由摆布）" if not grid_flow.free_mode(self.storage)
+            else "切换到网格模式（对齐网格）", m)
+        self.act_layout.triggered.connect(self._toggle_layout_mode)
+        m.addAction(self.act_layout)
+
         self.widget_menu = m.addMenu("小组件")
         self.widget_menu.setStyleSheet(theme.MENU_QSS)
         self._fill_widget_menu()
@@ -135,6 +142,16 @@ class SystemTray:
     def _rescan(self):
         added, removed = self.window.rescan_desktop()
         self.notify("重新扫描完成", "新增 %d 项，清理失效 %d 项" % (added, removed))
+
+    def _toggle_layout_mode(self):
+        """v6 §1.3：网格 <-> 无界 切换（托盘入口；切换后刷新菜单文案）。"""
+        from . import grid_flow
+        self.window.set_layout_mode(
+            "grid" if grid_flow.free_mode(self.storage) else "free")
+        self._build_menu()
+        self.notify("布局模式已切换",
+                    "无界模式：自由摆布、可重叠、可加空白页" if grid_flow.free_mode(self.storage)
+                    else "网格模式：所有对象对齐网格")
 
     def _toggle_autostart(self, checked):
         autostart.set_enabled(checked)

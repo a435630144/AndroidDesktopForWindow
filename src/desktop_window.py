@@ -433,10 +433,9 @@ class DesktopWindow(QWidget):
             self._update_grid_metrics()
 
     def _entry_pos(self, entry):
-        # M6：列夹紧 + 页内局部行映射统一在 grid_flow.cell_pos（DRY）
-        return grid_flow.cell_pos(self.storage,
-                                  int(entry.get("col", 0)),
-                                  int(entry.get("row", 0)))
+        # M6：列夹紧 + 页内局部行映射统一在 grid_flow.cell_pos（DRY）；
+        # v6 §1.3：双模式唯一入口（无界模式读 fx/fy + 页间偏移）
+        return grid_flow.entry_pos(self.storage, entry)
 
     def _cell_at(self, pos):
         # M6：反算含当前页偏移（页内 y -> 全局 row），委托 grid_flow
@@ -465,6 +464,92 @@ class DesktopWindow(QWidget):
         if cell != self._hl_cell:
             self._hl_cell = cell
             self.update()
+
+    def _drag_pos(self, fallback: QPoint):
+        """拖影左上角的窗口坐标（v6 §1.3 无界松手落点用）。
+
+        与 _drag_cell 同一取源：浮动拖影 = 拖动图标的视觉化身。无拖影
+        （合成 drop / 探针直调）退化为指针位置。
+        """
+        icon = self.icons.get(self._drag_entry_id or "")
+        ghost = getattr(icon, "_drag_ghost_w", None) if icon is not None else None
+        if ghost is None:
+            return fallback
+        return self.mapFromGlobal(ghost.geometry().topLeft())
+
+    def _free_drop(self, ids, pos):
+        """无界模式松手（v6 §1.3）：整块按拖影位移量平移到像素位。
+
+        单选/多选同一条语义：主条目（_drag_entry_id，回退 payload 首个）
+        落到 pos（夹紧进当前页画布），其余选中成员保持**相对偏移**平移
+        （与 §5.0 多选的形状保持同语言）；row 同步为当前页载体。
+        不吸附、不避让、可重叠；不走撤销栈外的任何重排。
+        """
+        page = grid_flow.current_page()
+        rpp = grid_flow.rows_per_page()
+        canvas_h = grid_flow.page_canvas_h(self.storage)
+        primary = self._drag_entry_id if self._drag_entry_id in ids else ids[0]
+        pent = self.storage.find_entry(primary)
+        if pent is None:
+            return
+        picon = self.icons.get(primary)
+        pw = picon.width() if picon is not None else 0
+        ph = picon.height() if picon is not None else 0
+        # 主条目新位置（夹紧进画布：x∈[0,W-w]，y∈[0,画布高-h]）
+        nx = max(0, min(int(pos.x()), max(0, self.width() - pw)))
+        ny = max(0, min(int(pos.y()), max(0, canvas_h - ph)))
+        # 位移量 = 新位置 - 拖动前位置（拖动前位置在 entry.fx/fy，预览在
+        # 无界模式下不改写布局，读到的就是拖动前的值）
+        dx = nx - int(pent.get("fx", 0) or 0)
+        dy = ny - int(pent.get("fy", 0) or 0)
+        moved = {}
+        for eid in ids:
+            e = self.storage.find_entry(eid)
+            if e is None:
+                continue
+            icon = self.icons.get(eid)
+            w = icon.width() if icon is not None else 0
+            h = icon.height() if icon is not None else 0
+            e["fx"] = max(0, min(int(e.get("fx", 0) or 0) + dx,
+                                 max(0, self.width() - w)))
+            e["fy"] = max(0, min(int(e.get("fy", 0) or 0) + dy,
+                                 max(0, canvas_h - h)))
+            e["row"] = page * rpp        # 页载体：松手即落入当前页
+            moved[eid] = (e["fx"], e["fy"])
+        if not moved:
+            return
+        self._push_undo(self._layout_snap)
+        self.storage.save()
+        for eid, (fx, fy) in moved.items():
+            icon = self.icons.get(eid)
+            if icon is not None:
+                icon.animate_to(fx, fy)
+                icon.set_drag_ghost(False)
+        self._cull_page_icons()
+        self._clear_preview()
+        self.update()
+
+    def set_layout_mode(self, mode: str):
+        """v6 §1.3：切换网格 / 无界模式（托盘 + 桌面右键入口）。
+
+        双坐标换算（grid_flow.to_free_coords / to_grid_coords）后整体
+         rebuild——图标尺寸体系（三档 layout ↔ 用户像素值）与组件占位
+        语义都随模式变，只有重建能一次性换干净；翻页状态夹回合法页。
+        """
+        mode = "free" if str(mode) == "free" else "grid"
+        if mode == grid_flow.layout_mode(self.storage):
+            return
+        self.storage.set_setting("layout_mode", mode)
+        if mode == "free":
+            grid_flow.to_free_coords(self.storage)
+        else:
+            grid_flow.to_grid_coords(self.storage)
+        self.storage.save()
+        self.rebuild(stagger=True)      # 模式切换的仪式感：错峰淡入
+        self._clamp_page()
+        if self._widget_layer is not None:
+            self._widget_layer.apply_layout_mode()
+        self.update()
 
     # ---------- 分页（M6，指导文档 §7-M6） ----------
     # _page 委托 grid_flow 运行时页（单一状态源）：所有位置换算
@@ -673,6 +758,17 @@ class DesktopWindow(QWidget):
         p.end()
 
     # ---------- 重建 ----------
+    def _icon_size(self):
+        """图标绘制边长（双模式，v6 §1.2/§1.3）。
+
+        网格模式 = storage.icon_metric()（DPI × 用户缩放感知；三档 layout
+        再按 cell 比例裁 widget 整体）；无界模式 = 用户像素值 icon_px
+        **直接生效**（规格 §1.2：设置内数字输入，不过档位公式）。
+        """
+        if grid_flow.free_mode(self.storage):
+            return max(24, int(self.storage.get_setting("icon_px") or 96))
+        return self.storage.icon_metric()
+
     def _wire_icon(self, icon):
         """把一个 AppIcon 的全部信号接到窗口（rebuild 与增量 _add_icon 共用）。"""
         icon.activated.connect(self._on_activate)
@@ -694,7 +790,7 @@ class DesktopWindow(QWidget):
         self.icons.clear()
         self._selected = {eid for eid in self._selected
                           if self.storage.find_entry(eid) is not None}
-        size = self.storage.icon_metric()          # DPI × 缩放感知
+        size = self._icon_size()                 # v6 §1.3：双模式图标边长
         chrome = self.storage.icon_chrome_scale()
         layout = self._icon_layout()               # v6 A2：三档 × 当前 cell
         for idx, entry in enumerate(self.storage.layout):
@@ -728,8 +824,13 @@ class DesktopWindow(QWidget):
 
         档位（storage.icon_tier）× 当前 cell（GridMetrics 快照，屏幕驱动）
         -> grid_sizing.IconLayout；快照未就绪返回 None（回退旧 chrome 路径）。
+
+        v6 §1.3：无界模式返回 None——图标尺寸走用户像素值（icon_px）
+        直接生效 + legacy chrome 路径（AppIcon 不传 layout 的行为）。
         """
         from . import grid_sizing
+        if grid_flow.free_mode(self.storage):
+            return None
         m = grid_flow.current_metrics()
         if m is None:
             return None
@@ -740,7 +841,7 @@ class DesktopWindow(QWidget):
         已在位返回原实例；新图标淡入出场（appear_in(0)）。"""
         if entry["id"] in self.icons:
             return self.icons[entry["id"]]
-        size = self.storage.icon_metric()
+        size = self._icon_size()
         chrome = self.storage.icon_chrome_scale()
         layout = self._icon_layout()               # v6 A2：三档 × 当前 cell
         icon = AppIcon(entry, size, parent=self, chrome_scale=chrome,
@@ -876,6 +977,8 @@ class DesktopWindow(QWidget):
             return
         e.acceptProposedAction()
         dragged = e.mimeData().data(MIME_TYPE).data().decode()
+        if grid_flow.free_mode(self.storage):
+            return      # v6 §1.3：无界模式无让位预览、无目标格红框
         cell = self._drag_cell(e.position().toPoint())
         self._set_highlight(cell)       # v6 §5.2：红框跟随面积判定结果
         self._reflow_preview(dragged, cell)
@@ -886,8 +989,10 @@ class DesktopWindow(QWidget):
         目标格只从指针全局位置反算——预览会改写 entry，读移动中的
         entry 等于追逐漂移（指导文档 §2.3 病根 3）。2026-10-19 v6
         §5.2：反算升级为拖影矩形的面积判定（_drag_cell），指针位置
-        仅作无拖影时的退化输入。
+        仅作无拖影时的退化输入。v6 §1.3：无界模式整条跳过。
         """
+        if grid_flow.free_mode(self.storage):
+            return
         pos = self.mapFromGlobal(QPoint(gx, gy))
         cell = self._drag_cell(pos)
         self._set_highlight(cell)
@@ -905,8 +1010,14 @@ class DesktopWindow(QWidget):
         multi_move 分支，与空白格 drop 同一条语义。
 
         2026-10-19 v6 §5.2：落点格走拖影矩形面积判定（_drag_cell）。
+        2026-10-19 v6 §1.3：无界模式走 _free_drop（像素落点，无让位）。
         """
         pos = self.mapFromGlobal(QPoint(gx, gy))
+        if grid_flow.free_mode(self.storage):
+            # v6 §1.3：无界模式（含多选）走像素落点，无让位
+            self._free_drop([p for p in dragged.split(",") if p],
+                            self._drag_pos(pos))
+            return
         if self._drag_multi:
             self._drop_internal(dragged, pos)
             return
@@ -914,7 +1025,13 @@ class DesktopWindow(QWidget):
 
     # ---------- 锚定小组件占位（widget 是网格一等公民） ----------
     def _widget_cells(self):
-        """可见锚定小组件占据的格子集合（从 storage 读，与实例解耦）。"""
+        """可见锚定小组件占据的格子集合（从 storage 读，与实例解耦）。
+
+        v6 §1.3：无界模式下组件不占格（元素可相互重叠）——返回空集，
+        让位 / 避让 / 落点拒绝全部自然失效。
+        """
+        if grid_flow.free_mode(self.storage):
+            return set()
         return grid_flow.widget_cells(self.storage)
 
     def on_widget_grid_changed(self):
@@ -972,6 +1089,8 @@ class DesktopWindow(QWidget):
                       if w.get("id") == widget_id), None)
         if entry is None or not entry.get("anchored") or entry.get("hidden"):
             return
+        if grid_flow.free_mode(self.storage):
+            return      # v6 §1.3：无界模式组件不占格，图标不被挤走
         cs, rs = grid_flow.widget_span(self.storage, entry)
         col, row = self._cell_at(self.mapFromGlobal(QPoint(gx, gy)))
         # v6 §4：预览矩形按 span 夹紧（clamp_widget_cell）——旧实现只夹
@@ -1032,6 +1151,8 @@ class DesktopWindow(QWidget):
         """
         if dragged_id is None:
             return
+        if grid_flow.free_mode(self.storage):
+            return      # v6 §1.3：无界模式无让位——自由摆布、可重叠
         if self._drag_multi:
             self._reflow_preview_multi(dragged_id, cell)
             return
@@ -1425,6 +1546,13 @@ class DesktopWindow(QWidget):
         # 测试挡住，点不到（2026-10-18 实测）。
         if self.attached:
             win32_layer.attach_to_desktop(scrim)
+            # v6 §6.2 覆盖性：幕布必须吞掉桌面层所有点击（不穿透）。
+            # 只插 Progman 正上方会让幕布落在整理窗口之下——桌面窗口是
+            # 全窗口 HTCLIENT，命中测试先收到点击，幕布形同虚设（图标层
+            # 实际可点）。与弹窗同机制：插到桌面带内最顶。
+            top = win32_layer.band_topmost_hwnd(exclude_hwnd=int(scrim.winId()))
+            if top:
+                win32_layer.insert_above_window(int(scrim.winId()), top)
             self._band_guard.track(scrim)
             win32_layer.attach_to_desktop(popup)
             popup.attach_above_band()
@@ -1581,6 +1709,12 @@ class DesktopWindow(QWidget):
             self._cancel_preview()
             return
 
+        if grid_flow.free_mode(self.storage):
+            # v6 §1.3 无界松手：整块按拖影位移量平移到像素位（不吸附 /
+            # 不避让 / 可重叠——§1.2 自由摆布语义）
+            self._free_drop(ids, self._drag_pos(pos))
+            return
+
         if len(entries) == 1 and not self._drag_multi:
             # 单选：走让位（拖动期间已生成预览 -> 直接提交）
             self._reflow_commit_or_compute(entries[0]["id"], self._drag_cell(pos))
@@ -1678,6 +1812,14 @@ class DesktopWindow(QWidget):
             arr_act.setChecked(bool(self.storage.get_setting("auto_arrange")))
             arr_act.triggered.connect(self._toggle_auto_arrange)
             menu.addSeparator()
+            free_now = grid_flow.free_mode(self.storage)
+            menu.addAction("切换到无界模式（自由摆布）" if not free_now
+                           else "切换到网格模式（对齐网格）",
+                           self._toggle_layout_mode)
+            if free_now:
+                menu.addAction("添加空白页", self._add_blank_page)
+                menu.addAction("删除当前空白页", self._remove_blank_page)
+            menu.addSeparator()
             menu.addAction("显示设置", lambda: self._open_uri("ms-settings:display"))
             menu.addAction("个性化（桌面背景）",
                            lambda: self._open_uri("ms-settings:personalization-background"))
@@ -1717,6 +1859,39 @@ class DesktopWindow(QWidget):
         """自动排序开关（v6 §3.2）：False=自由移动（落 target 原位留空，
         不走 reflow_moves——用户默认）；True=拖动后 reflow 递进。"""
         self.storage.set_setting("auto_arrange", bool(checked))
+
+    def _toggle_layout_mode(self):
+        """v6 §1.3：网格 <-> 无界 切换（桌面右键 / 托盘同一入口）。"""
+        self.set_layout_mode(
+            "grid" if grid_flow.free_mode(self.storage) else "free")
+
+    def _add_blank_page(self):
+        """v6 §1.3：末尾追加一页空白页（extra_pages 记录页码）。
+
+        取 max(当前总页数, 数据页数) 作为新页号——不与已有页冲突；
+        追加后翻过去，用户面对一张干净的画布。
+        """
+        extras = grid_flow.extra_pages(self.storage)
+        total = grid_flow.page_count(self.storage)
+        new_page = max(total, extras[-1] + 1 if extras else 0)
+        extras.append(new_page)
+        self.storage.set_setting("extra_pages", sorted(set(extras)))
+        self.goto_page(new_page)
+        self.update()
+
+    def _remove_blank_page(self):
+        """v6 §1.3：删除当前空白页（仅 extra_pages 里的空页可删——
+        有数据的页删了会丢条目，直接拒绝并提示）。"""
+        page = self._page
+        extras = grid_flow.extra_pages(self.storage)
+        if page not in extras:
+            from .tray import notify_via_tray
+            notify_via_tray("无法删除", "当前页不是空白页（有内容或不存在）")
+            return
+        extras.remove(page)
+        self.storage.set_setting("extra_pages", extras)
+        self._clamp_page()
+        self.update()
 
     @staticmethod
     def _open_uri(uri: str):

@@ -4,10 +4,10 @@
 运行：python tests/test_widget_catalog.py   （offscreen，无需显示桌面）
 
 覆盖：
-  - WIDGET_CATALOG：clock 默认 2×2（决策 D3）
+  - WIDGET_CATALOG：clock 2×2（D3）；v6 §6.1 起 notes 2×2、panel 3×4
   - widget_span 从 catalog 读，不再 round 像素（银行家舍入坑根除）
   - entry 已存 colspan/rowspan 优先（用户尺寸切换的持久化）
-  - 非 catalog 类型（notes/panel）回退 legacy 像素换算
+  - 非 catalog 类型回退 legacy 像素换算
   - pixel_size = span × cell 精确推导（碰撞 = 视觉边界）
   - widget_cells 按 span 精确展开（时钟 2×2 = 4 格，旧 round 只有 2 格）
 """
@@ -62,9 +62,14 @@ def main():
           widget_catalog.default_span("clock") == (2, 2))
     check("catalog: clock 可用尺寸列表 = [(2,2)]",
           widget_catalog.spans("clock") == [(2, 2)])
-    check("catalog: 非 catalog 类型无跨度", widget_catalog.spans("notes") == [])
+    # v6 §6.1（反馈 7b 前半）：notes 2×2、panel 3×4 登记入网格
+    check("catalog: notes 默认跨度 2×2（v6 §6.1）",
+          widget_catalog.default_span("notes") == (2, 2))
+    check("catalog: panel 默认跨度 3×4（v6 §6.1）",
+          widget_catalog.default_span("panel") == (3, 4))
+    check("catalog: 完全未知类型无跨度", widget_catalog.spans("weather") == [])
     check("catalog: default_span 对未知类型返回 None",
-          widget_catalog.default_span("notes") is None)
+          widget_catalog.default_span("weather") is None)
 
     # ---------- 2. widget_span 从 catalog 读（不再 round 像素） ----------
     clock = {"id": "clock", "type": "clock", "w": 300, "h": 160,
@@ -81,10 +86,10 @@ def main():
           grid_flow.widget_span(st, clock_4x2) == (4, 2))
 
     # ---------- 4. 非 catalog 类型回退 legacy 像素换算 ----------
-    notes = {"id": "notes", "type": "notes", "w": 300, "h": 160,
-             "anchored": True, "col": 0, "row": 0}
-    check("widget_span(notes) 回退 legacy 像素换算 (2,1)",
-          grid_flow.widget_span(st, notes) == (2, 1))
+    weather = {"id": "w", "type": "weather", "w": 300, "h": 160,
+               "anchored": True, "col": 0, "row": 0}
+    check("widget_span(weather) 回退 legacy 像素换算 (2,1)",
+          grid_flow.widget_span(st, weather) == (2, 1))
 
     # ---------- 5. pixel_size = span × cell 精确推导 ----------
     check("pixel_size(clock) == 2×cell（240×284 @125%）",
@@ -92,8 +97,12 @@ def main():
           "%s" % (widget_catalog.pixel_size(st, "clock"),))
     check("pixel_size(clock, span=(4,2)) == 4×2 cell",
           widget_catalog.pixel_size(st, "clock", (4, 2)) == (4 * cw, 2 * ch))
-    check("pixel_size(非 catalog 类型) 返回 None",
-          widget_catalog.pixel_size(st, "notes") is None)
+    check("pixel_size(notes) == 2×2 cell（v6 §6.1 登记后不再 None）",
+          widget_catalog.pixel_size(st, "notes") == (2 * cw, 2 * ch))
+    check("pixel_size(panel) == 3×4 cell",
+          widget_catalog.pixel_size(st, "panel") == (3 * cw, 4 * ch))
+    check("pixel_size(未知类型) 返回 None",
+          widget_catalog.pixel_size(st, "weather") is None)
 
     # ---------- 6. widget_cells 按 span 精确展开 ----------
     st2 = _St(widgets=[clock])

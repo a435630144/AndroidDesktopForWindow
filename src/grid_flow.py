@@ -513,7 +513,7 @@ def page_number(max_row: int, rpp: int) -> int:
 
 def page_count(storage, rpp: int = 0) -> int:
     """总页数：布局条目与锚定组件占位（含跨度）的最大全局行决定，
-    至少 1 页。"""
+    至少 1 页；v6 §1.3 起再与空白页（extra_pages 最大值+1）取大。"""
     rpp = max(1, int(rpp) or rows_per_page())
     max_row = 0
     for e in getattr(storage, "layout", []):
@@ -523,7 +523,11 @@ def page_count(storage, rpp: int = 0) -> int:
             continue
         _cs, rs = widget_span(storage, w)
         max_row = max(max_row, int(w.get("row", 0) or 0) + rs - 1)
-    return page_number(max_row, rpp)
+    n = page_number(max_row, rpp)
+    extras = extra_pages(storage)
+    if extras:
+        n = max(n, extras[-1] + 1)
+    return n
 
 
 def cell_pos(storage, col: int, row: int) -> Cell:
@@ -537,6 +541,236 @@ def cell_pos(storage, col: int, row: int) -> Cell:
     天然形成「当前页滑出、邻页滑入」的 iOS launcher 动画。
     """
     cw, ch = cell_size(storage)
+    ox, oy = origin()
+    cols = storage.columns
+    col = max(0, min(int(col), cols - 1))
+    rel = max(0, int(row)) - current_page() * rows_per_page()
+    return ox + col * cw, oy + rel * ch
+
+
+def page_grid_center(storage) -> Cell:
+    """网格区中心（v6 §6.2，指导文档 §6.2 反馈 8/9 居中项）。
+
+    公式：(ox + cols*cw//2, oy + rows*ch//2)。网格区几何所有页相同
+    （页只是行偏移的视图概念），故**不读 current_page**——文件夹弹窗
+    中心对齐此点：弹窗是模态面板，从任意位置的文件夹图标打开都落在
+    屏幕同一处，比「贴锚点图标」更符合预期，且与翻页状态解耦。
+    """
+    cw, ch = cell_size(storage)
+    ox, oy = origin()
+    cols = int(storage.columns)
+    rows = rows_per_page()
+    return ox + cols * cw // 2, oy + rows * ch // 2
+
+
+# ---------- 双模式（v6 §1.3，指导文档_网格与无界双模式_v6.md） ----------
+def layout_mode(storage) -> str:
+    """当前布局模式（归一化）："grid"（默认）| "free"。"""
+    m = str(storage.get_setting("layout_mode") or "grid").strip().lower()
+    return "free" if m == "free" else "grid"
+
+
+def free_mode(storage) -> bool:
+    """v6 §1.3：是否无界模式（所有元素自由摆布、可相互重叠）。"""
+    return layout_mode(storage) == "free"
+
+
+def page_canvas_h(storage) -> int:
+    """无界模式单页画布高 = 网格区高（rows × ch）。
+
+    与网格模式**同一页几何**——翻页滑行偏移量一致，goto_page / cull /
+    sync_page 机制零改动；无界只是把 x 与页内 y 从格点上解绑
+    （row 退化为纯页载体，见 to_free_coords）。
+    """
+    m = _current_metrics
+    if m is not None:
+        return max(1, int(m.rows)) * int(m.ch)
+    _cw, ch = cell_size(storage)
+    return rows_per_page() * ch
+
+
+def _page_local_pos(storage, col: int, row: int) -> Cell:
+    """所属页视角的格点像素（当前页偏移归零）——无界 fx/fy 的生成式。"""
+    cw, ch = cell_size(storage)
+    ox, oy = origin()
+    cols = storage.columns
+    rpp = rows_per_page()
+    page = page_of(row, rpp)
+    x = ox + max(0, min(int(col), cols - 1)) * cw
+    y = oy + (max(0, int(row)) - page * rpp) * ch
+    return x, y
+
+
+def free_pos_cell(storage, x: int, y: int, page: int) -> Cell:
+    """无界页内像素 -> (col, 全局 row)：按所属页反算（pos_cell 的页参数化版）。
+
+    pos_cell 按**当前页**偏移反算；无界条目的 fx/fy 是页内坐标，必须
+    按它自己的页反算，否则第 2 页的条目会被吸附回第 0 页。
+    """
+    cw, ch = cell_size(storage)
+    ox, oy = origin()
+    cols = storage.columns
+    rpp = rows_per_page()
+    col = int((x - ox) / max(1, cw)) if x >= ox else -1
+    local = int((y - oy) / max(1, ch)) if y >= oy else -1
+    local = max(0, min(local, rpp - 1))
+    col = max(0, min(col, cols - 1))
+    return col, max(0, int(page)) * rpp + local
+
+
+def entry_pos(storage, entry) -> Cell:
+    """v6 §1.3：条目 -> 窗口控件坐标（双模式唯一入口，取代 DesktopWindow
+    _entry_pos 里的裸 cell_pos）。
+
+    网格模式 = cell_pos(col, row)；无界模式 = (fx, fy) + 页间滑行偏移
+    （与网格同一套页载体语义：row 只决定第几页，位置全自由）。
+    无界条目缺 fx/fy（未经 to_free_coords 的历史数据 / 并发新增）时
+    按所属页格点懒生成一次——视觉落在它的网格原位，不跳变。
+    """
+    if not free_mode(storage):
+        return cell_pos(storage, int(entry.get("col", 0)), int(entry.get("row", 0)))
+    if "fx" not in entry or "fy" not in entry:
+        entry["fx"], entry["fy"] = _page_local_pos(
+            storage, int(entry.get("col", 0) or 0), int(entry.get("row", 0) or 0))
+    page = page_of(int(entry.get("row", 0) or 0))
+    x = int(entry.get("fx", 0) or 0)
+    y = int(entry.get("fy", 0) or 0)
+    return x, y + (page - current_page()) * page_canvas_h(storage)
+
+
+def widget_pos(storage, entry) -> Cell:
+    """v6 §1.3：组件 -> 窗口控件坐标（双模式）。
+
+    锚定组件：网格模式 = cell_pos(col,row)；无界模式 = (fx,fy) + 页间
+    偏移（与图标同一套页载体语义）。悬浮组件两种模式都是 entry 的
+    x/y（屏幕角落 chrome，不参与翻页）。
+    """
+    if entry.get("anchored"):
+        if free_mode(storage):
+            page = page_of(int(entry.get("row", 0) or 0))
+            x = int(entry.get("fx", entry.get("x", 0)) or 0)
+            y = int(entry.get("fy", entry.get("y", 0)) or 0)
+            return x, y + (page - current_page()) * page_canvas_h(storage)
+        return cell_pos(storage, int(entry.get("col", 0)), int(entry.get("row", 0)))
+    return int(entry.get("x", 0) or 0), int(entry.get("y", 0) or 0)
+
+
+def to_free_coords(storage) -> int:
+    """切无界：为缺 fx/fy 的条目/锚定组件生成页内像素坐标。
+
+    生成式 = 所属页视角的格点（_page_local_pos）——切过去的那一刻
+    视觉位置不变（无跳变），之后自由拖拽改 fx/fy。已有 fx/fy 的
+    不重算（幂等：反复切换不丢用户摆好的位置）。返回换算个数。
+    """
+    n = 0
+    for e in getattr(storage, "layout", []):
+        if "fx" in e and "fy" in e:
+            continue
+        e["fx"], e["fy"] = _page_local_pos(
+            storage, int(e.get("col", 0) or 0), int(e.get("row", 0) or 0))
+        n += 1
+    for w in getattr(storage, "widgets", []):
+        if not w.get("anchored") or ("fx" in w and "fy" in w):
+            continue
+        w["fx"], w["fy"] = _page_local_pos(
+            storage, int(w.get("col", 0) or 0), int(w.get("row", 0) or 0))
+        n += 1
+    return n
+
+
+def to_grid_coords(storage) -> int:
+    """切回网格：按 fx/fy 反算吸附回最近格点，并清掉 fx/fy。
+
+    清空是关键：否则下次切无界时 to_free_coords 认为"已有自由坐标"
+    跳过生成，用户在网格模式下的整理就丢了（反直觉）。row 同步更新
+    （无界模式 row 只是页载体，吸附后按新格点归位）。
+    """
+    n = 0
+    for e in getattr(storage, "layout", []):
+        if "fx" not in e or "fy" not in e:
+            continue
+        page = page_of(int(e.get("row", 0) or 0))
+        col, row = free_pos_cell(storage, int(e.get("fx", 0)),
+                                 int(e.get("fy", 0)), page)
+        e["col"], e["row"] = col, row
+        del e["fx"], e["fy"]
+        n += 1
+    for w in getattr(storage, "widgets", []):
+        if not w.get("anchored") or "fx" not in w or "fy" not in w:
+            continue
+        page = page_of(int(w.get("row", 0) or 0))
+        col, row = free_pos_cell(storage, int(w.get("fx", 0)),
+                                 int(w.get("fy", 0)), page)
+        cs, rs = widget_span(storage, w)
+        col, row = clamp_widget_cell(storage, col, row, cs, rs)
+        w["col"], w["row"] = col, row
+        w["x"], w["y"] = cell_pos(storage, col, row)
+        del w["fx"], w["fy"]
+        n += 1
+    return n
+
+
+def extra_pages(storage) -> list:
+    """无界模式空白页页码（settings["extra_pages"]，归一化排序去重）。"""
+    raw = storage.get_setting("extra_pages") or []
+    out = []
+    try:
+        items = list(raw)
+    except TypeError:
+        return []
+    for v in items:
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n >= 0 and n not in out:
+            out.append(n)
+    return sorted(out)
+
+
+def _free_taken(storage, page: int) -> list:
+    """无界某页已占的矩形列表 [(x, y, w, h)]（条目 + 锚定组件）。"""
+    cw, ch = cell_size(storage)
+    out = []
+    for e in getattr(storage, "layout", []):
+        if page_of(int(e.get("row", 0) or 0)) != page:
+            continue
+        out.append((int(e.get("fx", 0) or 0), int(e.get("fy", 0) or 0),
+                    int(e.get("fw", 0) or cw), int(e.get("fh", 0) or ch)))
+    for w in getattr(storage, "widgets", []):
+        if not w.get("anchored") or w.get("hidden"):
+            continue
+        if page_of(int(w.get("row", 0) or 0)) != page:
+            continue
+        cs, rs = widget_span(storage, w)
+        out.append((int(w.get("fx", 0) or 0), int(w.get("fy", 0) or 0),
+                    cs * cw, rs * ch))
+    return out
+
+
+def free_slot(storage, page: int, w: int, h: int) -> Cell:
+    """无界模式新条目落点：该页画布内第一个不重叠的格点对齐位。
+
+    扫描 lattice = cell（视觉仍与网格参照系对齐，不吹毛求疵地自由）；
+    阅读序。全满回退画布左上角——无界模式允许重叠，不丢条目
+    （与网格模式 first_free_cell_in_page 的全满回退同策）。
+    """
+    cw, ch = cell_size(storage)
+    ox, oy = origin()
+    cols = storage.columns
+    canvas_h = page_canvas_h(storage)
+    max_x = ox + cols * cw
+    taken = _free_taken(storage, page)
+    y = oy
+    while y + h <= oy + canvas_h:
+        x = ox
+        while x + w <= max_x:
+            if not any(x < tx + tw and x + w > tx and y < ty + th and y + h > ty
+                       for tx, ty, tw, th in taken):
+                return x, y
+            x += cw
+        y += ch
+    return ox, oy
     ox, oy = origin()
     cols = storage.columns
     col = max(0, min(int(col), cols - 1))
@@ -648,11 +882,19 @@ def widget_span(storage, widget: dict) -> Cell:
 
 def widget_cells(storage) -> set:
     """所有可见锚定 widget 占据的格子集合（从 storage.widgets 读，解耦：
-    小组件只写 storage，DesktopWindow 直接读，无需实例引用）。"""
+    小组件只写 storage，DesktopWindow 直接读，无需实例引用）。
+
+    v6 C2：无 col/row 的锚定组件（spawn 中、尚未分配占位）**不占格**——
+    否则 find_widget_slot 把它自己算作占 (0,0)，首组件永远落不到左上角
+    （幻影占位：便签被推去 (3,0)）。定位完成即写 col/row，天然只影响
+    spawn 窗口内的这一次求解。
+    """
     cells = set()
     for w in storage.widgets:
         if not w.get("anchored") or w.get("hidden"):
             continue
+        if "col" not in w or "row" not in w:
+            continue  # 未定位：无占位（幻影修复）
         col = max(0, int(w.get("col", 0)))
         row = max(0, int(w.get("row", 0)))
         cs, rs = widget_span(storage, w)

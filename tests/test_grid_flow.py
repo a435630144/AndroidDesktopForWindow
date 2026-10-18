@@ -419,6 +419,20 @@ def main():
           grid_flow.cell_by_overlap(st2, (ox + cw, oy, cw, ch))
           == grid_flow.pos_cell(st2, ox + cw + cw // 2, oy + ch // 2) == (1, 0))
 
+    # ---------- §16 page_grid_center（v6 §6.2 文件夹弹窗居中） ----------
+    # 规格（指导文档 §6.2）：弹窗中心对齐当前页网格区中心
+    # (ox + cols*cw//2, oy + rows*ch//2)。网格区几何所有页相同
+    # （页只是行偏移），故该点与当前页无关——纯函数不读 current_page。
+    cols2 = st2.columns
+    rows2 = grid_flow.rows_per_page()
+    want_c = (ox + cols2 * cw // 2, oy + rows2 * ch // 2)
+    check("C1 page_grid_center = (ox+cols*cw//2, oy+rows*ch//2)",
+          grid_flow.page_grid_center(st2) == want_c)
+    grid_flow.set_page(2)
+    check("C2 page_grid_center 与当前页无关（翻页后同值）",
+          grid_flow.page_grid_center(st2) == want_c)
+    grid_flow.set_page(0)
+
     print("-" * 56)
     if failures:
         print("FAILED %d: %s" % (len(failures), failures))
