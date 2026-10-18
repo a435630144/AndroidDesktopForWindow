@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QFormLayout, QHBoxLayout, QLa
                                QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout)
 
 from . import autostart
+from . import grid_flow
 from . import theme
 
 
@@ -62,11 +63,33 @@ class SettingsDialog(QDialog):
         form.addRow("图标缩放比例：", scale_row)
         self._refresh_icon_labels()
 
+        # 每行图标数：auto（M1 GridMetrics 四边等距铺满）或手动覆盖。
+        # 2026-10-18 修：columns 默认值改 "auto" 后这里 int("auto") 直接崩，
+        # 设置窗口打不开（开发者模式开关也因此摸不到）——auto 用复选框表达，
+        # auto 态下 spin 只展示当前生效列数、不落笔。
+        self.chk_auto_cols = QCheckBox("自动（按屏幕尺寸四边等距铺满）")
+        raw_cols = self.storage.get_setting("columns")
+        cols_auto = (raw_cols is None
+                     or (isinstance(raw_cols, str)
+                         and raw_cols.strip().lower() in ("", "auto")))
+        self.chk_auto_cols.setChecked(cols_auto)
+        self.chk_auto_cols.toggled.connect(self._apply_auto_columns)
         self.spin_cols = QSpinBox()
-        self.spin_cols.setRange(3, 12)
-        self.spin_cols.setValue(int(self.storage.get_setting("columns")))
+        self.spin_cols.setRange(2, 24)  # 与 grid_metrics MIN_COLS/MAX_COLS 一致
+        m = grid_flow.current_metrics()
+        eff_cols = m.cols if m is not None else 10
+        try:
+            manual = int(raw_cols)
+        except (TypeError, ValueError):
+            manual = eff_cols
+        self.spin_cols.setValue(manual if not cols_auto else eff_cols)
+        self.spin_cols.setEnabled(not cols_auto)
         self.spin_cols.valueChanged.connect(self._apply_columns)
-        form.addRow("每行图标数：", self.spin_cols)
+        cols_row = QHBoxLayout()
+        cols_row.addWidget(self.chk_auto_cols)
+        cols_row.addWidget(self.spin_cols)
+        cols_row.addStretch(1)
+        form.addRow("每行图标数：", cols_row)
 
         self.sld_opacity = QSlider(Qt.Horizontal)
         self.sld_opacity.setRange(50, 100)
@@ -98,6 +121,11 @@ class SettingsDialog(QDialog):
         self.chk_tray.setChecked(bool(self.storage.get_setting("minimize_to_tray")))
         self.chk_tray.toggled.connect(lambda v: self.storage.set_setting("minimize_to_tray", bool(v)))
         form.addRow("托盘：", self.chk_tray)
+
+        self.chk_dev = QCheckBox("开发者模式：桌面显示网格边框等调试信息（开发期默认开启）")
+        self.chk_dev.setChecked(bool(self.storage.get_setting("dev_mode")))
+        self.chk_dev.toggled.connect(self._apply_dev_mode)
+        form.addRow("开发者：", self.chk_dev)
 
         root.addLayout(form)
 
@@ -142,10 +170,33 @@ class SettingsDialog(QDialog):
         self.window.rebuild()
 
     def _apply_columns(self, value):
+        if self.chk_auto_cols.isChecked():
+            return  # auto 态下 spin 只是展示当前生效列数，不落笔
         self.storage.set_setting("columns", int(value))
         self.storage.compact_layout()
         self.storage.save()
         self.window.rebuild()
+
+    def _apply_auto_columns(self, checked):
+        """自动列数开关：开=写 "auto" 由 GridMetrics 按屏幕铺满；关=以当前
+        生效列数作手动值落笔（M1 语义，设置 UI 2026-10-18 修 int("auto") 崩）。"""
+        self.spin_cols.setEnabled(not checked)
+        if checked:
+            self.storage.set_setting("columns", "auto")
+            self.window.rebuild()
+            m = grid_flow.current_metrics()
+            if m is not None:
+                self.spin_cols.setValue(m.cols)
+        else:
+            self.storage.set_setting("columns", int(self.spin_cols.value()))
+            self.storage.compact_layout()
+            self.storage.save()
+            self.window.rebuild()
+
+    def _apply_dev_mode(self, checked):
+        """开发者模式开关（2026-10-18）：网格可视化边框即时显隐，无需重启。"""
+        self.storage.set_setting("dev_mode", bool(checked))
+        self.window.update()
 
     def _apply_opacity(self, value):
         self.lbl_opacity.setText("%d%%" % value)

@@ -86,6 +86,14 @@ class DesktopWindow(QWidget):
         """桌面整理模式：隐藏原生图标，由本窗口全盘接管（框选 / 自己的右键菜单）。"""
         return bool(self.storage.get_setting("hide_native_icons"))
 
+    def _dev_mode(self) -> bool:
+        """开发者模式（2026-10-18）：桌面渲染网格可视化边框，排查布局问题用。
+
+        设置里可开关（SettingsDialog.chk_dev），开发期默认开启
+        （storage DEFAULT_SETTINGS["dev_mode"]=True）。
+        """
+        return bool(self.storage.get_setting("dev_mode"))
+
     # ---------- 显示 / 隐藏 ----------
     def show_desktop(self):
         if self.attached or self._attach_known_failed:
@@ -210,6 +218,8 @@ class DesktopWindow(QWidget):
             if self._band_rect is not None:
                 self._paint_band(event)
             if self._organize_mode():
+                if self._dev_mode():
+                    self._paint_grid_debug()
                 self._paint_dots()
             return  # 除上述元素外全透明，融入壁纸
         p = QPainter(self)
@@ -221,6 +231,8 @@ class DesktopWindow(QWidget):
         p.setFont(theme.ui_font(13))
         p.drawText(24, 30, "桌面整理 Demo · 悬浮模式（未能挂载桌面层，功能不受影响）")
         if self._organize_mode():
+            if self._dev_mode():
+                self._paint_grid_debug()
             self._paint_dots()
 
     def _paint_hit_fill(self):
@@ -483,6 +495,56 @@ class DesktopWindow(QWidget):
                 p.setBrush(QColor(theme.TEXT_DIM.red(), theme.TEXT_DIM.green(),
                                   theme.TEXT_DIM.blue(), 110))
                 p.drawEllipse(c, 4, 4)
+        p.end()
+
+    def _paint_grid_debug(self):
+        """开发者模式：网格可视化边框（2026-10-18，排查布局问题用）。
+
+        画四样东西（调试色与主题色刻意错开——ACCENT 是蓝，这里用春绿/
+        品红，肉眼一眼区分；像素签名见 tests/test_dev_mode.py）：
+          - 网格工作区外边界（ox,oy → +cols*cw, +rows*ch）：2px 春绿实线
+          - 内部网格线（cols+1 竖 + rows+1 横）：1px 春绿 140 alpha
+            （亮壁纸上也清晰，又不抢图标焦点；叠深色底混合后像素签名
+             见 tests/test_dev_mode.py 相对式判据）
+          - 原点十字（ox,oy）：8px 品红——四边等距铺满的锚点
+          - 左上几何信息文字（ox/oy/列行/格尺寸/页码）：春绿 12px
+        只在整理模式画（原生模式桌面是系统原生的，不盖任何东西）；
+        GridMetrics 快照未就绪（挂载前）时跳过。
+        """
+        m = grid_flow.current_metrics()
+        if m is None:
+            return
+        green = QColor(0, 255, 170)      # 春绿：线 + 文字
+        pink = QColor(255, 64, 160)      # 品红：原点十字
+        x0, y0 = m.ox, m.oy
+        x1, y1 = m.ox + m.cols * m.cw, m.oy + m.rows * m.ch
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        # 外边界
+        p.setPen(QPen(green, 2))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(QRect(x0, y0, x1 - x0, y1 - y0))
+        # 内部网格线（alpha 140：亮壁纸上也清晰，又不抢图标焦点）
+        p.setPen(QPen(QColor(0, 255, 170, 140), 1))
+        for c in range(1, m.cols):
+            x = x0 + c * m.cw
+            p.drawLine(x, y0, x, y1)
+        for r in range(1, m.rows):
+            y = y0 + r * m.ch
+            p.drawLine(x0, y, x1, y)
+        # 原点十字（四边等距铺满的锚点）
+        p.setPen(QPen(pink, 2))
+        p.drawLine(x0 - 5, y0, x0 + 5, y0)
+        p.drawLine(x0, y0 - 5, x0, y0 + 5)
+        # 几何信息文字（左上，边界内侧）
+        total = grid_flow.page_count(self.storage)
+        p.setPen(QPen(QColor(0, 255, 170, 220), 1))
+        p.setFont(theme.ui_font(12))
+        p.drawText(QRect(x0 + 6, y0 + 6, 560, 20),
+                   Qt.AlignLeft | Qt.AlignVCenter,
+                   "DEV 网格 ox=%d oy=%d %d列×%d行 格%dx%d 第%d/%d页"
+                   % (m.ox, m.oy, m.cols, m.rows, m.cw, m.ch,
+                      self._page + 1, max(1, total)))
         p.end()
 
     # ---------- 重建 ----------

@@ -40,6 +40,9 @@ DEFAULT_SETTINGS = {
     "desktop_clone_seeded": False,  # 是否已把桌面文件克隆进网格
     "desktop_clone_v2": False,      # 是否已按 Shell 已知目录（OneDrive 重定向）补扫过
     "native_mode_migrated": False,  # 旧版状态是否已迁移（现仅作历史标记）
+    # 开发者模式（2026-10-18）：开发期默认开启——桌面渲染网格可视化边框
+    # （边界/网格线/原点十字/几何信息文字），供排查布局问题；设置里可关。
+    "dev_mode": True,
 }
 
 DEFAULT_WIDGETS = [
