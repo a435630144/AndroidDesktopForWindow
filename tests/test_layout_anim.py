@@ -9,6 +9,10 @@
   T3  add_app 增量：只新增一个图标实例，其余实例不变
   T4  _on_remove_entry 增量：只移除目标实例，其余不变
   T5  多选平移（_drop_internal）不再 rebuild：实例不变 + 平移正确
+  T5b 多选主条目锚点 = 真正被拖的图标（payload 首 id 不当时条目）
+  T5c 多选贴右边缘整块左移不叠格（v6 §5.0 反馈病根）
+  T5d 多选目标占据者交换到源格
+  T5e 多选实时预览（_reflow_preview multi）+ 取消回退
   T6  merge 结构同步：条目与 icons 对齐，类型变化的图标不重建（is_folder 动态）
   T7  widget 拖动实时预览：hover 按新占位矩形挤走图标，drop 回退
   T8  _sync_structure 幂等：无变化时不动任何实例
@@ -155,13 +159,84 @@ def main(app):
     w5._drag_multi = True
     w5._on_drag_started()
     drop_pos = QPoint(200, 200)
-    tc, tr = w5._cell_at(drop_pos)   # 1920x1040 @ cell 96x114 -> (2,1)
+    tc, tr = w5._cell_at(drop_pos)   # 1920x1040 屏幕驱动 cell -> 动态格
     w5._drop_internal("a,b", drop_pos)
     b5 = cells_of(st5)
     check("T5 多选平移落点（a→(%d,%d)、b→(%d,%d)）" % (tc, tr, tc + 1, tr),
           b5["a"] == (tc, tr) and b5["b"] == (tc + 1, tr), "%s" % b5)
     check("T5 多选平移后实例不变（不 rebuild）",
           all(id(w5.icons.get(eid)) == i for eid, i in ids5.items()))
+
+    # ---------- T5b：主条目 = 真正被拖的图标（v6 §5.0）----------
+    # payload 是 sorted 逗号串——拿首 id 当时条目会让锚点跳错：抓 "b"
+    # 时必须 b 落指针、a 保偏移（-1,0），而不是 a 落指针。
+    st5b = make_state([("a", 0, 0), ("b", 1, 0), ("c", 2, 0)])
+    w5b = new_window(app, st5b)
+    w5b._selected = {"a", "b"}
+    w5b._drag_multi = True
+    w5b._drag_entry_id = "b"
+    w5b._on_drag_started()
+    pos_b = QPoint(400, 300)
+    tcb, trb = w5b._cell_at(pos_b)
+    w5b._drop_internal("a,b", pos_b)
+    b5b = cells_of(st5b)
+    check("T5b 主条目锚点：b 落指针 (%d,%d)、a 保偏移 (%d,%d)"
+          % (tcb, trb, tcb - 1, trb),
+          b5b["b"] == (tcb, trb) and b5b["a"] == (tcb - 1, trb), "%s" % b5b)
+
+    # ---------- T5c：右边缘夹紧不聚列（v6 §5.0 反馈病根）----------
+    # 旧逐成员 clamp：a/b 的 nc 全落 cols-1 叠同一格。multi_move 整块
+    # 刚性左移：b→cols-1、a→cols-2，2x1 形状保持。
+    st5c = make_state([("a", 0, 0), ("b", 1, 0)])
+    w5c = new_window(app, st5c)
+    w5c._selected = {"a", "b"}
+    w5c._drag_multi = True
+    w5c._drag_entry_id = "a"
+    w5c._on_drag_started()
+    cols = st5c.columns
+    cw, ch = grid_flow.cell_size(st5c)
+    ox, oy = grid_flow.origin()
+    edge = QPoint(ox + (cols - 1) * cw + cw // 2, oy + ch // 2)
+    w5c._drop_internal("a,b", edge)
+    b5c = cells_of(st5c)
+    check("T5c 贴右整体左移不叠格（a→(%d,0)、b→(%d,0)）"
+          % (cols - 2, cols - 1),
+          b5c["a"] == (cols - 2, 0) and b5c["b"] == (cols - 1, 0), "%s" % b5c)
+
+    # ---------- T5d：目标占据者交换到源格 ----------
+    st5d = make_state([("a", 0, 0), ("b", 1, 0), ("x", 4, 0)])
+    w5d = new_window(app, st5d)
+    w5d._selected = {"a", "b"}
+    w5d._drag_multi = True
+    w5d._drag_entry_id = "a"
+    w5d._on_drag_started()
+    pos_d = QPoint(ox + 4 * cw + cw // 2, oy + ch // 2)
+    tcd, trd = w5d._cell_at(pos_d)
+    w5d._drop_internal("a,b", pos_d)
+    b5d = cells_of(st5d)
+    check("T5d 主条目落 (%d,%d)，占据者 x 交换到源格 (0,0)" % (tcd, trd),
+          b5d["a"] == (tcd, trd) and b5d["x"] == (0, 0), "%s" % b5d)
+    check("T5d 成员 b 保偏移 (%d,%d)" % (tcd + 1, trd),
+          b5d["b"] == (tcd + 1, trd), "%s" % b5d)
+
+    # ---------- T5e：多选实时预览 + 取消回退 ----------
+    st5e = make_state([("a", 0, 0), ("b", 1, 0), ("c", 2, 0)])
+    w5e = new_window(app, st5e)
+    w5e._selected = {"a", "b"}
+    w5e._drag_multi = True
+    w5e._drag_entry_id = "a"
+    w5e._on_drag_started()
+    tce, tre = w5e._cell_at(QPoint(400, 300))
+    w5e._reflow_preview("a,b", (tce, tre))
+    b5e = cells_of(st5e)
+    check("T5e 多选预览：块跟着指针走（a→(%d,%d)、b→(%d,%d)、c 不动）"
+          % (tce, tre, tce + 1, tre),
+          b5e["a"] == (tce, tre) and b5e["b"] == (tce + 1, tre)
+          and b5e["c"] == (2, 0), "%s" % b5e)
+    w5e._on_drag_finished()          # 无落点 -> 取消回退
+    b5e2 = cells_of(st5e)
+    check("T5e 取消后布局回退（a=(0,0)、b=(1,0)）",
+          b5e2["a"] == (0, 0) and b5e2["b"] == (1, 0), "%s" % b5e2)
 
     # ---------- T6：merge 结构同步 ----------
     st6 = make_state([("a", 0, 0), ("b", 1, 0), ("c", 2, 0)])

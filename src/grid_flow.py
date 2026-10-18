@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """图标网格让位引擎（Live Reflow）——纯逻辑，零 Qt 依赖，可离线单测。
 
-两个求解入口（2026-10-18 M2 起 preview 走 reflow_moves）：
+三个求解入口（2026-10-18 M2 起 preview 走 reflow_moves；2026-10-19 v6
+§5.0 起多选拖动走 multi_move）：
 
-1. **reflow_moves（位移清单，指导文档 §2.2，当前主路径）**：
+1. **reflow_moves（位移清单，指导文档 §2.2，单选主路径）**：
    iOS 局部让位——dragged 精确落到 target（含空格，修复 P2 病根 1），
    只有新旧位置之间（阅读序）的图标滑动一格，其余不动。返回
    {id: (col, row)} 最小位移集，由 AppIcon.animate_to 驱动。
@@ -12,10 +13,16 @@
    design.md 2.2「占用格集合上的置换」——占用格集合守恒前提下重排
    阅读序。dragged 落在第 k 个占用格上（空格场景落点不精确，P2 病根）。
 
-性质（tests/test_grid_flow.py 全量断言）：
+3. **multi_move（多选位移清单，v6 §5.0）**：
+   整块刚性平移——主条目落指针 cell（组件占位则行优先顺延），成员保持
+   相对偏移，bbox 夹紧不聚列；非选中占据者交换到源格，绝不丢条目。
+
+性质（tests/test_grid_flow.py + tests/test_multi_move.py 全量断言）：
   - reflow_moves：精确落点 / 最小位移 / 无重叠 / 无丢失 /
     占用集合 = 旧集合 - 老格 + target
   - reflow_order：占用格集合守恒 / 跨行 / 空格 / 占用格 / 原地统一处理
+  - multi_move：形状保持 / 无叠格 / 数量守恒 / 边缘夹紧不聚列 /
+    组件占位顺延 / 占据者交换不丢
   - O(n log n)，每次 dragMove 全量重算无压力
 
 与 DesktopWindow 的关系：_cell()/_origin() 已下沉到本模块（cell_size/origin），
@@ -175,6 +182,141 @@ def reflow_moves(entries: Sequence[dict], cols: int, dragged_id: str,
         # p == d 但 target 不是 dragged 老格（空格落在老格与前一个占用格之间）
         moves[dragged_id] = target
     # else：p == d 且 cells[p] == target —— 原地恒等，无位移
+    return moves
+
+
+def _forward_scan_cell(start: Cell, blocked: set, cols: int,
+                       max_row: int) -> Cell:
+    """从 start 起按阅读序找第一个非 blocked 格（v6 §5.0 顺延扫描）。
+
+    「行优先扫描」的精确语义：同一行内从 start 列向右，到行尾后下一行
+    从列 0 继续——target 被组件占位时主条目顺延到 (7,5) 而不是左侧
+    等距空格（MM3 钉死：顺延 != 曼哈顿最近，而是阅读序向前）。
+    扫描上限 max_row；找不到返回夹紧后的 start（兜底：叠一格好过
+    丢一个条目）。
+    """
+    sc = max(0, min(int(start[0]), cols - 1))
+    sr = max(0, int(start[1]))
+    for row in range(sr, max(sr, int(max_row)) + 1):
+        for col in range(sc if row == sr else 0, cols):
+            if (col, row) not in blocked:
+                return col, row
+    return sc, sr
+
+
+def multi_move(entries: Sequence[dict], cols: int, primary_id: str,
+               target: Cell, selected, extra_occupied=()) -> Optional[dict]:
+    """多选拖动的位移清单 {id: (col, row)}（v6 §5.0，2026-10-19 新增）。
+
+    症状（反馈）：框选多个图标再移动，松手后**有的图标叠在同一个网格内**。
+    规格（指导文档_网格与无界双模式_v6.md §5.0）：
+      1. 主条目（拖的那个）精确落指针 cell；其余成员保持与原布局相同的
+         相对偏移；
+      2. 严禁两个成员落同一格——目标被占（含被另一个选中成员预定/已被
+         组件占位）时顺延到最近空格（行优先扫描），不允许覆盖；
+      3. 贴右/下边缘时 col/row 夹紧不得导致成员聚成一列（旧病根：逐成员
+         max(0, min(cols-1, ...)) 各自夹紧，多个成员的 nc 全落 cols-1）；
+      4. 目标格的非选中占据者：交换到源格；源格也被占则顺延，绝不丢条目。
+
+    算法（纯函数，零 Qt 依赖；TDD：tests/test_multi_move.py）：
+      a. 主条目落点 = 指针 cell 夹紧；落在组件占位格上则从该格起**行优先
+         顺延**（组件格不给图标用；非选中图标不挡主条目——按规则 4 交换）；
+      b. 整块**刚性平移**：成员 = 主条目落点 + 原相对偏移；bbox 夹紧进
+         [0, cols-1] x [0, +inf)（贴右整体左移、贴左整体右移——形状与
+         偏移守恒，不聚列不叠格）；
+      c. 成员落点仍撞组件占位（主条目顺延后刚性格平移可能把别人推回组件
+         格的罕见交织）：按阅读序逐个行优先顺延（主条目优先）；
+      d. 非选中占据者交换到对应成员的**源格**；源格被占/在组件上/越界则
+         行优先顺延——每个条目都有落点，绝不丢；
+      e. 返回值含**全部**选中成员（含原地恒等的）+ 被交换/顺延的非选中
+         图标；未受影响的条目不出现在字典里（MM1：无关图标 x 不在内）。
+
+    与 reflow_moves 的分工：reflow 是单选 iOS 局部让位（递进语义）；
+    multi_move 是多选整块平移（绝对落点 + 刚性形状）。auto_arrange 对
+    多选无意义——整块平移两种模式一致（反馈只要求不叠格）。
+
+    脏布局（占用格重复）/ primary 不在 selected / 不在布局 -> None
+    （宁可不平移也别写坏，与 reflow_moves 同策）。
+    """
+    if cols < 1:
+        return None
+    by_id = {}
+    for e in entries:
+        by_id[e.get("id")] = e
+    if primary_id not in by_id:
+        return None
+    sel = []
+    for i in (selected or ()):
+        if i in by_id and i not in sel:
+            sel.append(i)
+    if primary_id not in sel:
+        return None
+    cells = [_cell_of(e) for e in entries]
+    if len(set(cells)) != len(cells):
+        return None  # 脏布局（占用格重复）：宁可不平移也别写坏
+    src = {i: _cell_of(by_id[i]) for i in sel}
+    if len(set(src.values())) != len(sel):
+        return None  # 选中成员占位格重复（相对偏移无定义）
+
+    extra = set(extra_occupied or ())
+    icon_cell = {}
+    for e, c in zip(entries, cells):
+        icon_cell[c] = e.get("id")
+    sel_set = set(sel)
+    max_row = max([r for _, r in cells] + [0]) + 2
+
+    # a. 主条目落点：指针 cell 夹紧；落在组件占位上 -> 行优先顺延
+    tcol = max(0, min(int(cols) - 1, int(target[0])))
+    trow = max(0, int(target[1]))
+    land = (tcol, trow)
+    if land in extra:
+        land = _forward_scan_cell(land, extra, cols, max(max_row, trow))
+
+    # b. 整块刚性平移 + bbox 夹紧（贴右整体左移 / 贴左整体右移）
+    pcol, prow = src[primary_id]
+    want = {}
+    for i in sel:
+        want[i] = (land[0] + (src[i][0] - pcol), land[1] + (src[i][1] - prow))
+    min_c = min(c for c, _ in want.values())
+    max_c = max(c for c, _ in want.values())
+    min_r = min(r for _, r in want.values())
+    shift_c = -min_c if min_c < 0 else 0
+    if max_c + shift_c > cols - 1:
+        shift_c = (cols - 1) - max_c
+    if min_c + shift_c < 0:          # 块宽于网格：左对齐兜底
+        shift_c = -min_c
+    shift_r = -min_r if min_r < 0 else 0
+    finals = {i: (want[i][0] + shift_c, want[i][1] + shift_r) for i in sel}
+
+    # c. 成员级组件占位顺延（主条目已在 a 解析；按阅读序，主条目优先）
+    taken = set(finals.values())
+    nomove = {c: i for c, i in icon_cell.items() if i not in sel_set}
+    for i in sorted(sel, key=lambda x: (finals[x][1], finals[x][0],
+                                        x != primary_id)):
+        if finals[i] in extra:
+            nc = _forward_scan_cell(finals[i], extra | taken | set(nomove),
+                                    cols, max(max_row, finals[i][1]))
+            taken.discard(finals[i])
+            taken.add(nc)
+            finals[i] = nc
+
+    # 返回值含全部选中成员（含原地恒等）——调用方与 MM5 按数量守恒校验
+    moves = {i: finals[i] for i in sel}
+
+    # d. 非选中占据者交换到源格；源格不可用（被占/组件上/越界）则顺延
+    occupied = set(finals.values())
+    moving = sorted(c for c in nomove if c in occupied)
+    staying = set(nomove) - set(moving)
+    for c in moving:
+        xid = nomove[c]
+        member = next(i for i in sel if finals[i] == c)
+        dest = src[member]
+        if not (0 <= dest[0] < cols) or dest in extra \
+                or dest in occupied or dest in staying:
+            dest = _forward_scan_cell(c, extra | occupied | staying,
+                                      cols, max(max_row, c[1]))
+        moves[xid] = dest
+        occupied.add(dest)
     return moves
 
 

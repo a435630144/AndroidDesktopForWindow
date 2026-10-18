@@ -762,7 +762,16 @@ class DesktopWindow(QWidget):
 
         不能依赖 drop 事件从图标冒泡到本窗口（实测不传播），故由
         AppIcon.reflowDrop 直连（probe15 G11a）。参数为指针全局坐标。
+
+        2026-10-19 v6 §5.0：多选松手落在图标上同样走这条信号——旧代码
+        把 "a,b" 当时条目 id 传给 _reflow_commit_or_compute，查不到 →
+        整个 drop 被吞（多选落图标 = 无操作）。改路由 _drop_internal 的
+        multi_move 分支，与空白格 drop 同一条语义。
         """
+        if self._drag_multi:
+            self._drop_internal(dragged,
+                                self.mapFromGlobal(QPoint(gx, gy)))
+            return
         self._reflow_commit_or_compute(dragged,
                                        self._cell_at(self.mapFromGlobal(QPoint(gx, gy))))
 
@@ -876,8 +885,15 @@ class DesktopWindow(QWidget):
         2026-10-19 v6 §3.2：auto_arrange=False（**默认，自由移动**）时
         不走递进——只落 dragged 自己、原位留空（_free_moves）；True 才
         走 reflow_moves 递进（旧 M2 行为）。
+
+        2026-10-19 v6 §5.0：多选拖动（_drag_multi）走 multi_move 整块
+        刚性平移预览——旧代码直接 return，多选拖动全程无预览、松手瞬间
+        跳位；且 drop 路径逐成员 clamp 会聚列叠格（反馈病根）。
         """
-        if self._drag_multi or dragged_id is None:
+        if dragged_id is None:
+            return
+        if self._drag_multi:
+            self._reflow_preview_multi(dragged_id, cell)
             return
         if dragged_id not in self.icons:
             return
@@ -899,6 +915,33 @@ class DesktopWindow(QWidget):
     def _auto_arrange(self) -> bool:
         """自动排序开关（v6 §3.2）：False=自由移动（默认）。"""
         return bool(self.storage.get_setting("auto_arrange"))
+
+    def _reflow_preview_multi(self, payload: str, cell):
+        """多选拖动实时预览（v6 §5.0）：整块刚性平移跟着指针走。
+
+        主条目 = 真正被抓住的图标（_drag_entry_id）——payload 是
+        sorted 逗号串，拿首 id 当时条目会让整块锚点跳错（用户抓的是
+        块内哪个图标，哪个才落指针）。
+        布局已被上次预览改写也没关系：multi_move 在改写后布局上算的
+        等价于增量 delta（块内相对偏移守恒，与单选 reflow 的增量预览
+        同构；交换出去的占据者不会再次被换回）。
+        """
+        ids = [p for p in payload.split(",") if p]
+        primary = self._drag_entry_id
+        if primary not in ids:
+            primary = ids[0] if ids else None
+        if primary is None:
+            return
+        live = {e.get("id") for e in self.storage.layout}
+        if primary not in live:
+            return
+        moves = grid_flow.multi_move(self.storage.layout,
+                                     self.storage.columns, primary, cell,
+                                     set(ids),
+                                     extra_occupied=self._widget_cells())
+        if not moves:
+            return
+        self._apply_preview_moves(primary, moves)
 
     def _free_moves(self, dragged_id: str, cell) -> dict:
         """自由移动位移清单（v6 §3.2）：只落 dragged 自己，原位留空。
@@ -1385,26 +1428,39 @@ class DesktopWindow(QWidget):
             self._reflow_commit_or_compute(entries[0]["id"], self._cell_at(pos))
             return
 
-        # 多选：整体平移语义（让位置换对 N 个图标有歧义，不混用）
-        self._push_undo(self._layout_snap)
-        primary = entries[0]
-        old_col, old_row = int(primary.get("col", 0)), int(primary.get("row", 0))
-        col, row = self._cell_at(pos)
-        dcol, drow = col - old_col, row - old_row
-        occupant = self.storage.occupant(col, row, exclude_id=primary["id"])
-        if occupant is not None and occupant["id"] not in self._selected:
-            occupant["col"], occupant["row"] = old_col, old_row
-        primary["col"], primary["row"] = col, row
-        for e in entries[1:]:
-            nc = max(0, min(self.storage.columns - 1, int(e.get("col", 0)) + dcol))
-            nr = max(0, int(e.get("row", 0)) + drow)
-            occ = self.storage.occupant(nc, nr, exclude_id=e["id"])
-            if occ is None or occ["id"] in self._selected:
-                e["col"], e["row"] = nc, nr
-        self.storage.save()
-        self._clear_preview()
+        # 多选：整体平移语义（v6 §5.0 multi_move——不叠格/形状保持/
+        # 边缘夹紧/占据者交换不丢条目）。旧实现逐成员
+        # max(0, min(cols-1, col+dcol)) 各自夹紧，多个成员的 nc 全落
+        # cols-1 聚成一列叠格（反馈病根）；且主条目取 payload 首 id
+        # （sorted 串）而非真正被拖的图标，锚点错误。
+        if self._preview_moves is not None and self._preview_drag in ids:
+            # 拖动期间已生成预览（落点与预览一致）-> 直接提交
+            self._commit_preview()
+        else:
+            primary = self._drag_entry_id
+            if primary not in ids:
+                primary = entries[0]["id"]
+            moves = grid_flow.multi_move(self.storage.layout,
+                                         self.storage.columns, primary,
+                                         self._cell_at(pos), set(ids),
+                                         extra_occupied=self._widget_cells())
+            if moves:
+                by_id = {e.get("id"): e for e in self.storage.layout}
+                for eid, (c, r) in moves.items():
+                    e = by_id.get(eid)
+                    if e is not None:
+                        e["col"], e["row"] = c, r
+                # 借提交路径收尾：压撤销栈 + 落盘 + 动画落位 + 清预览
+                self._preview_moves = moves
+                self._preview_drag = primary
+                self._commit_preview()
+            else:
+                # 脏布局等无效输入：不动布局，仅收尾（与单选无位移同策）
+                self.storage.save()
+                self._clear_preview()
+                return
         # M4：多选平移是位置类变化——动画到位，不 rebuild。
-        # 注意逐个复位拖拽幽灵态：增量路径不再销毁图标实例，
+        # 逐个复位拖拽幽灵态：增量路径不再销毁图标实例，
         # set_drag_ghost(True) 的残影必须显式清掉。
         for e in entries:
             icon = self.icons.get(e["id"])
