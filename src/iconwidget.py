@@ -33,7 +33,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QToolTip, QWidget
 
 from . import appsource
 from . import effects
-from . import folder_tint
+from .folder_tint import folder_tint
 from . import theme
 
 MIME_TYPE = "application/x-desktoporg-item"
