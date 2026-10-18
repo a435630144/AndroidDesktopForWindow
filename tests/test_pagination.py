@@ -101,8 +101,12 @@ def fresh_window(st):
 
 
 def main(app):
-    rpp = 8      # 1920x1040 窗口：rows = (1040-44)//114 = 8
-    cw, ch = 96, 114
+    # v6 批次 A：cell 屏幕驱动（grid_sizing.cell_for_screen），
+    # 1920x1040 -> cell 78x96 -> rows=(1040-44)//96=10（旧 icon 派生为
+    # 96x114/rows=8）。rows/cell 一律从窗口快照动态取，不写死。
+    w_geo = fresh_window(make_state([]))
+    rpp = grid_flow.rows_per_page()
+    cw, ch = grid_flow.current_metrics().cw, grid_flow.current_metrics().ch
 
     # ---------- T1：纯函数边界 ----------
     check("T1 page_of 基本", grid_flow.page_of(0, 8) == 0
@@ -128,7 +132,7 @@ def main(app):
     # ---------- T2：rows_per_page ----------
     st0 = make_state([])
     w0 = fresh_window(st0)
-    check("T2 rows_per_page = GridMetrics.rows（1920x1040 -> 8）",
+    check("T2 rows_per_page = GridMetrics.rows（1920x1040 动态）",
           grid_flow.rows_per_page() == rpp, "%s" % grid_flow.rows_per_page())
     saved = grid_flow.current_metrics()
     grid_flow.set_grid(st0, (0, 0))     # 极端小屏 clamp 到 MIN_ROWS=1
@@ -197,8 +201,9 @@ def main(app):
     check("T6 page1 下 y=oy 反算全局 row=8",
           w._cell_at(QPointF(ox + 10, oy + 10)) == (0, rpp),
           "%s" % (w._cell_at(QPointF(ox + 10, oy + 10)),))
-    check("T6 page1 底部行不越页（row 15 上限）",
-          w._cell_at(QPointF(ox + 10, oy + 7 * ch + ch - 2))[1] == rpp + 7)
+    check("T6 page1 底部行不越页（局部行 rpp-1 上限）",
+          w._cell_at(QPointF(ox + 10, oy + (rpp - 1) * ch + ch - 2))[1] == 2 * rpp - 1,
+          "%s" % (w._cell_at(QPointF(ox + 10, oy + (rpp - 1) * ch + ch - 2)),))
 
     # ---------- T7：first_free_cell_in_page ----------
     st2 = make_state([("a", 0, 0, "app", []), ("b", 1, 0, "app", [])])

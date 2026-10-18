@@ -20,9 +20,11 @@
   columns 设置语义："auto"（默认）自动计算；int（>=2）为手动覆盖
   （设置高级选项；指定后 GridMetrics 以手动值为准，rows 仍自动）。
 
-  接入（指导文档 §1.3）：grid_flow.origin() / storage.columns 改读本模块
-  的计算结果；DesktopWindow、widget_base、widget_layer、folder_popup 经
-  grid_flow 共用同一份几何，保持既有 DRY 约定。
+    2026-10-19 v6 批次 A（指导文档_网格与无界双模式_v6.md §2.1）：
+    cell 来源改为**屏幕驱动**——`grid_sizing.cell_for_screen(W, H)`
+    （短边归一化公式），与 `icon_size / icon_scale` **完全解钩**：
+    高 DPI 大屏不再 cell 更大列数更少，跨设备每屏格数密度一致。
+    （旧实现 cell 来自 `grid_flow.cell_size(storage)` 的 icon 派生。）
 """
 from __future__ import annotations
 
@@ -80,11 +82,11 @@ def compute(storage, screen_size: Tuple[int, int],
     screen_size：availableGeometry 的 (W, H)，任务栏已由 Qt 扣除；
     窗口左上角在屏幕上的偏移由调用方处理（整理窗口铺满整个工作区）。
     """
-    from . import grid_flow  # 延迟导入：cell_size 的唯一实现，避免重复
+    from . import grid_sizing  # 延迟导入：cell 公式的唯一实现，避免重复
 
-    cw, ch = grid_flow.cell_size(storage)
-    cw, ch = max(1, int(cw)), max(1, int(ch))
     W, H = int(screen_size[0]), int(screen_size[1])
+    cw, ch = grid_sizing.cell_for_screen(W, H)
+    cw, ch = max(1, int(cw)), max(1, int(ch))
     chrome = float(storage.icon_chrome_scale())
     edge_x = int(round(26 * chrome))
     edge_y = int(round(22 * chrome))

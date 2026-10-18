@@ -260,12 +260,18 @@ def origin() -> Cell:
 
 
 def cell_size(storage) -> Cell:
-    """单元格尺寸：与 AppIcon(setFixedSize(s+24m, s+40m)) 对齐。
+    """单元格尺寸——**快照优先**（DRY 单一来源）。
 
-    s = DPI × 用户缩放双感知的图标边长；m = 外围 chrome 缩放。
-    2026-10-18 chrome 从 28/46 收紧到 24/40（用户反馈"图标大小不对"——
-    留白占比过大显图标小），行高再多 2px 间隙消除相邻标签重叠。
+    2026-10-18 M1 前：与 AppIcon(setFixedSize(s+24m, s+40m)) 对齐的
+    icon 派生值。2026-10-19 v6 批次 A（指导文档 §2.1）：GridMetrics
+    的 cell 改屏幕驱动（grid_sizing.cell_for_screen，与 icon_size 解钩），
+    cell_pos/pos_cell/snap_point/_cell_at 等一切几何换算必须跟随快照，
+    否则出现"快照 cell 75x92 与派生 cell 96x114"双源漂移（T3 抓到）。
+    快照未就绪（无头测试 / 挂载前）回退 icon 派生，保持旧行为。
     """
+    m = _current_metrics
+    if m is not None:
+        return m.cw, m.ch
     s = int(storage.icon_metric())
     m = float(storage.icon_chrome_scale())
     return s + int(round(24 * m)), s + int(round(40 * m)) + 2
