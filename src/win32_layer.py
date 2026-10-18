@@ -179,6 +179,46 @@ def is_above(hwnd: int, other: int) -> bool:
     return wins.index(hwnd) < wins.index(other)
 
 
+# ---------- 桌面带成员注册表（M5：弹窗「带内最顶」用） ----------
+# attach_to_desktop 成功时登记 hwnd。band_topmost_hwnd() 供文件夹弹窗
+# 找带内当前最顶成员（整理窗口 + 各小组件 + 幕布），把弹窗插到其上——
+# 保证弹窗压得住桌面带内所有元素（指导文档 §4.2，决策 D5）。
+# 关闭的窗口会从 z-order 枚举里消失，过期登记项由 band_topmost_hwnd
+# 过滤；显式 unregister 供 close 路径调用。
+_BAND_HWNDS = []
+
+
+def register_band_window(hwnd: int):
+    """登记桌面带成员（attach_to_desktop 成功时调用）。"""
+    hwnd = int(hwnd)
+    if hwnd and hwnd not in _BAND_HWNDS:
+        _BAND_HWNDS.append(hwnd)
+
+
+def unregister_band_window(hwnd: int):
+    """注销桌面带成员（窗口关闭路径调用）。"""
+    try:
+        _BAND_HWNDS.remove(int(hwnd))
+    except ValueError:
+        pass
+
+
+def band_topmost_hwnd(exclude_hwnd: int = 0, zorder=None) -> int:
+    """桌面带内当前最顶成员的 hwnd（z-order 索引最小；排除 exclude）。
+
+    zorder 可注入（单测用；缺省实时枚举）。过期登记（已关闭窗口）自动
+    过滤。无成员返回 0（调用方回退主窗口）。
+    """
+    wins = list(zorder) if zorder is not None else _enum_zorder()
+    best = 0
+    for hw in list(_BAND_HWNDS):
+        if hw == exclude_hwnd or hw not in wins:
+            continue
+        if best == 0 or wins.index(hw) < wins.index(best):
+            best = hw
+    return best
+
+
 def attach_to_desktop(widget, below_hwnd: int = 0) -> bool:
     """把 Qt 窗口放入桌面带（壁纸之上、应用窗口之下）。
 
@@ -206,7 +246,10 @@ def attach_to_desktop(widget, below_hwnd: int = 0) -> bool:
             if is_above(hwnd, progman):
                 break
             ctypes.windll.kernel32.Sleep(50)
-        return is_above(hwnd, progman)
+        if is_above(hwnd, progman):
+            register_band_window(hwnd)
+            return True
+        return False
     except Exception:
         return False
 

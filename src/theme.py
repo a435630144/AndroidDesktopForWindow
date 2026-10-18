@@ -48,6 +48,21 @@ FOLDER_BG_BOTTOM = QColor(40, 40, 49)      # 瓷砖渐变：底部沉实
 FOLDER_HILIGHT = QColor(255, 255, 255, 60)  # 顶部 1px 内高光（与玻璃语言统一）
 FOLDER_BORDER = QColor(255, 255, 255, 34)
 
+# ---------- 文件夹背景色板（M5，指导文档 §4.2「背景色」D5） ----------
+# 8 预设 + 「自动」（成员图标平均色）。entry["tint"] 存 "#RRGGBB"；
+# 图标渐变（_paint_folder）与弹窗背板共用同一颜色（iOS 文件夹语言）。
+# 取值走 iOS 文件夹色系：低饱和暖色/冷色各半，深底上可读。
+FOLDER_TINTS = [
+    QColor(94, 92, 230),   # 蓝紫（默认）
+    QColor(232, 93, 116),  # 粉红
+    QColor(240, 152, 62),  # 橙
+    QColor(245, 205, 82),  # 黄
+    QColor(88, 186, 120),  # 绿
+    QColor(64, 176, 190),  # 青
+    QColor(84, 132, 238),  # 蓝
+    QColor(148, 108, 214), # 紫
+]
+
 # ---------- 圆角 ----------
 RADIUS_PANEL = 14
 RADIUS_CARD = 12

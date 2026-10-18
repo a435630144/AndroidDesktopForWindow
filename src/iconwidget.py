@@ -33,6 +33,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QToolTip, QWidget
 
 from . import appsource
 from . import effects
+from . import folder_tint
 from . import theme
 
 MIME_TYPE = "application/x-desktoporg-item"
@@ -101,6 +102,8 @@ class AppIcon(QWidget):
         self._drag_mime = None
         self._hover = False
         self._merge_target = False
+        # 文件夹「打开中」态（M5）：弹窗打开期间源图标高亮
+        self._folder_open = False
         # 拖动虚影：拖动期间本图标不绘制（格子在视觉上被让出），但不 hide()——
         # hide 会牵动显隐生命周期与命中测试，纯绘制跳过零风险
         self._drag_ghost = False
@@ -291,13 +294,15 @@ class AppIcon(QWidget):
 
     def _display_name(self) -> str:
         if self.is_folder:
-            return "文件夹"
+            # M5：文件夹可重命名（指导文档 §4.2）；entry["name"] 缺省「文件夹」
+            return self.entry.get("name") or "文件夹"
         return self.entry.get("app", {}).get("name", "")
 
     def _tooltip(self) -> str:
         if self.is_folder:
+            name = self.entry.get("name") or "文件夹"
             names = "、".join(a.get("name", "") for a in self.entry.get("apps", [])[:8])
-            return "文件夹：%s" % names
+            return "%s：%s" % (name, names) if names else name
         app = self.entry.get("app", {})
         target = app.get("target", "")
         return "%s\n%s" % (app.get("name", ""), target) if target else app.get("name", "")
@@ -306,6 +311,18 @@ class AppIcon(QWidget):
         if self.selected != on:
             self.selected = on
             self.update()
+
+    def set_folder_open(self, on: bool):
+        """文件夹「打开中」态（M5，指导文档 §4.2 源 cell）：弹窗打开期间
+        源图标高亮（ACCENT_SOFT + 描边），关闭恢复。"""
+        if self._folder_open != bool(on):
+            self._folder_open = bool(on)
+            self.update()
+
+    def refresh_meta(self):
+        """名称/成员变化后刷新 tooltip 与重绘（M5 重命名 / 增删成员）。"""
+        self.setToolTip(self._tooltip())
+        self.update()
 
     # ---------- 绘制 ----------
     def paintEvent(self, event):
@@ -327,8 +344,13 @@ class AppIcon(QWidget):
         if self._appear < 0.995:
             p.setOpacity(self._appear)
 
-        # 背景状态：悬停 / 合并目标 / 选中
-        if self._merge_target:
+        # 背景状态：文件夹打开中 / 悬停 / 合并目标 / 选中
+        if self._folder_open:
+            # 打开态最醒目：实心 tint + 强描边（一眼看出弹窗属于哪个 cell）
+            p.setPen(QPen(theme.ACCENT, 1.5))
+            p.setBrush(theme.ACCENT_SOFT)
+            p.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), theme.RADIUS_ITEM, theme.RADIUS_ITEM)
+        elif self._merge_target:
             p.setPen(QPen(theme.ACCENT_BORDER, 1.5))
             p.setBrush(theme.ACCENT_SOFT)
             p.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), theme.RADIUS_ITEM, theme.RADIUS_ITEM)
@@ -357,12 +379,16 @@ class AppIcon(QWidget):
         """深色圆角方形 + 迷你图标矩阵（安卓风，按成员数 1/2/3/4 自适应）。
 
         瓷砖材质（2026-10-18 升级）：垂直渐变（顶亮底沉，受光方向与液态
-        玻璃一致）+ 顶部 1px 内高光 + 细描边——替代原来的纯色平底。"""
+        玻璃一致）+ 顶部 1px 内高光 + 细描边——替代原来的纯色平底。
+        M5：渐变取 entry 色板色（folder_tint，与弹窗背板同一颜色），
+        缺省回退 theme 深灰瓷砖（iOS 文件夹语言：图标与弹窗同色）。
+        """
         s = self.icon_size
         box = QRectF(3, 3, s - 6, s - 6)
+        tint = folder_tint(self.entry)
         grad = QLinearGradient(0, box.top(), 0, box.bottom())
-        grad.setColorAt(0.0, theme.FOLDER_BG_TOP)
-        grad.setColorAt(1.0, theme.FOLDER_BG_BOTTOM)
+        grad.setColorAt(0.0, tint.lighter(135))
+        grad.setColorAt(1.0, tint.darker(165))
         p.setPen(QPen(theme.FOLDER_BORDER, 1))
         p.setBrush(QBrush(grad))
         p.drawRoundedRect(box, s * 0.24, s * 0.24)

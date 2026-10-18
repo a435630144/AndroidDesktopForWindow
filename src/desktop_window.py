@@ -15,7 +15,7 @@ from . import grid_flow
 from . import theme
 from . import win32_layer
 from .band_guard import BandGuard
-from .folder_popup import FolderPopup
+from .folder_popup import FolderPopup, ScrimWindow
 from .iconwidget import MIME_TYPE, AppIcon
 from .storage import Storage
 from .win32_layer import attach_to_desktop
@@ -38,6 +38,8 @@ class DesktopWindow(QWidget):
         self._attach_known_failed = False
         self._floating_flag_set = False
         self._popup = None
+        self._scrim = None             # M5：文件夹幕布（弹窗下一层）
+        self._folder_open_icon = None  # M5：处于打开态的源图标（AppIcon）
         self._selected = set()      # 多选：entry id 集合（单击/Ctrl/框选）
         self._drag_active = False   # QDrag 进行中：命中测试临时全窗口接收
         self._drag_entry_id = None  # 当前正在拖的条目（多选拖动时判成员）
@@ -143,9 +145,8 @@ class DesktopWindow(QWidget):
         self.visibilityChanged.emit(True)
 
     def hide_desktop(self):
-        if self._popup is not None:
-            self._popup.close()
-            self._popup = None
+        # M5：隐藏整理窗口前先收好文件夹弹窗与幕布（否则两者留在屏幕上）
+        self._close_popup()
         self.hide()
         # 隐藏整理窗口时恢复原生图标：用户要回自己的桌面时不能什么都没有
         if not self._attach_known_failed:
@@ -237,8 +238,7 @@ class DesktopWindow(QWidget):
         # 文件夹弹窗开着时点桌面空白处 = 关闭弹窗（iOS 文件夹语义；
         # 弹窗自身 NOACTIVATE 收不到 Esc，× 按钮 + 这里 + 再点图标共三条路径）
         if self._popup is not None and e.button() == Qt.LeftButton:
-            self._popup.close()
-            self._popup = None
+            self._close_popup()
             return
         if e.button() == Qt.LeftButton and self._organize_mode():
             self._band_start = e.pos()
@@ -420,10 +420,22 @@ class DesktopWindow(QWidget):
 
     def _remove_icon(self, entry_id):
         """增量移除一个图标（remove_entry / 合并被吸收方 / rescan 丢失）。"""
+        if self._folder_open_icon is not None and entry_id == self._folder_open_icon_entry_id():
+            self._exit_folder_open_state()
         icon = self.icons.pop(entry_id, None)
         self._selected.discard(entry_id)
         if icon is not None:
             icon.deleteLater()
+
+    def _folder_open_icon_entry_id(self):
+        """打开态源图标对应的 entry id（AppIcon.entry 引用同一 dict）。"""
+        icon = self._folder_open_icon
+        if icon is None:
+            return None
+        try:
+            return (icon.entry or {}).get("id")
+        except RuntimeError:
+            return None
 
     def _sync_icons(self):
         """位置类变化的全量同步：每个图标弹簧滑到自己的格子。
@@ -915,8 +927,10 @@ class DesktopWindow(QWidget):
         if not entry or entry.get("type") != "folder":
             return
         if self._popup is not None:
-            self._popup.close()
-            self._popup = None
+            if self._popup.entry.get("id") == entry_id:
+                self._close_popup()      # 再次点击同一文件夹 = 关闭（iOS 语义）
+                return
+            self._close_popup()
         icon = self.icons.get(entry_id)
         anchor_rect = None
         if icon is not None:
@@ -926,19 +940,99 @@ class DesktopWindow(QWidget):
         popup.launchApp.connect(self._on_activate)
         popup.extractRequested.connect(self._on_extract)
         popup.removeMember.connect(self._on_remove_member)
+        popup.memberAdded.connect(self._on_popup_member_added)
+        popup.renamed.connect(lambda: self._refresh_folder_icon(entry_id))
+        popup.tintChanged.connect(lambda: self._refresh_folder_icon(entry_id))
         popup.closed.connect(self._on_popup_closed)
         self._popup = popup
         popup.show()
-        # 挂桌面带：插到本窗口（整理窗口）正上方一位——位于原生图标层之上、
-        # 应用窗口之下。不用 StaysOnTopHint（那会盖住所有应用窗口）。
-        # 注意：必须用 insert_above_window（普通窗口语义），attach_to_desktop
-        # 的 below_hwnd 分支是把窗口插到参照窗口**下方**——弹窗在整理窗口
-        # 之下会被其全窗口 HTCLIENT 命中测试挡住，点不到（2026-10-18 实测）。
+        # M5：幕布先挂（弹窗下层层）——压暗桌面带内所有元素；点击幕布
+        # 关闭弹窗（与 DesktopWindow 空白点击关闭双保险）。
+        scrim = ScrimWindow()
+        scrim.clicked.connect(self._close_popup)
+        self._scrim = scrim
+        scrim.show()
+        scrim.fade_in()
+        # 挂桌面带：不用 StaysOnTopHint（那会盖住所有应用窗口）。幕布与
+        # 弹窗都插 Progman 正上方；弹窗再 attach_above_band() 插到桌面带
+        # 内最顶（压得住整理窗口与所有小组件）。必须 insert_above_window
+        # （普通窗口语义）：attach_to_desktop 的 below_hwnd 分支是插到
+        # 参照窗口下方——弹窗在整理窗口之下会被其全窗口 HTCLIENT 命中
+        # 测试挡住，点不到（2026-10-18 实测）。
         if self.attached:
-            win32_layer.insert_above_window(int(popup.winId()), int(self.winId()))
+            win32_layer.attach_to_desktop(scrim)
+            self._band_guard.track(scrim)
+            win32_layer.attach_to_desktop(popup)
+            popup.attach_above_band()
+            self._band_guard.track(popup)
+        self._folder_open_icon = icon
+        if icon is not None:
+            icon.set_folder_open(True)
+
+    def _close_popup(self):
+        """主动关闭弹窗（切文件夹 / 同文件夹二击 / Esc / 幕布点击 / 隐藏桌面）。
+
+        与 _on_popup_closed（弹窗自行关闭路径：× 按钮、空文件夹 refresh
+        自动关等）分离：主动关闭先摘除 closed 信号——旧弹窗的收起动画
+        要 200ms 才发 closed，不摘的话会误清随后新建的弹窗引用
+        （open_folder 连续切换文件夹的竞态）。
+        """
+        popup = self._popup
+        self._popup = None
+        self._exit_folder_open_state()
+        if popup is not None:
+            try:
+                popup.closed.disconnect(self._on_popup_closed)
+            except Exception:
+                pass
+            popup.close()
+        scrim = self._scrim
+        self._scrim = None
+        if scrim is not None:
+            scrim.fade_out_then_close()
 
     def _on_popup_closed(self):
+        """弹窗自行关闭后的收尾（closed 信号）：清引用 + 源图标退出
+        打开态 + 幕布淡出销毁。幂等：_close_popup 已清场时为空操作。"""
         self._popup = None
+        self._exit_folder_open_state()
+        scrim = self._scrim
+        self._scrim = None
+        if scrim is not None:
+            scrim.fade_out_then_close()
+
+    def _exit_folder_open_state(self):
+        """源图标退出打开态（高亮描边撤销）。图标可能已被增量移除
+        （文件夹解散走 _remove_icon），deleteLater 后的部件访问抛
+        RuntimeError——吞掉即可。"""
+        icon = self._folder_open_icon
+        self._folder_open_icon = None
+        if icon is not None:
+            try:
+                icon.set_folder_open(False)
+            except RuntimeError:
+                pass
+
+    def _refresh_folder_icon(self, entry_id):
+        """重命名 / 换色后刷新源图标（标签 + tooltip + 渐变重绘）。"""
+        icon = self.icons.get(entry_id)
+        if icon is not None:
+            try:
+                icon.refresh_meta()
+            except RuntimeError:
+                pass
+
+    def _on_popup_member_added(self, entry_id):
+        """＋ 添加面板 / 拖入：桌面条目并入文件夹。成员 apps 的追加由
+        popup._add_member_by_id 完成，这里只把桌面上的源条目移出布局
+        （M4 增量：不 rebuild）。"""
+        e = self.storage.find_entry(entry_id)
+        if e is None:
+            return
+        self.storage.remove_entry(entry_id)
+        self.storage.compact_layout()
+        self.storage.save()
+        self._sync_structure()
 
     def _on_extract(self, payload: str):
         """把文件夹成员拖出到桌面（落到哪个格子就用哪个格子）。
@@ -957,11 +1051,12 @@ class DesktopWindow(QWidget):
         self.storage.add_app(app)
         if not folder["apps"]:
             self.storage.remove_entry(fid)
-            if self._popup is not None:
-                self._popup.close()
         self.storage.compact_layout()
         self.storage.save()
         self._sync_structure()          # M4：提取成员增量淡入 + 空文件夹移除
+        # M5：文件夹被解散时 refresh 自动关弹窗；仍有成员时刷新成员网格
+        if self._popup is not None:
+            self._popup.refresh()
 
     def _on_remove_member(self, payload: str):
         """文件夹内右键移出成员。payload: "M:fid:idx" 或 "fid:idx"。"""
@@ -976,10 +1071,11 @@ class DesktopWindow(QWidget):
             folder["apps"].pop(idx)
             if not folder["apps"]:
                 self.storage.remove_entry(fid)
-                if self._popup is not None:
-                    self._popup.close()
         self.storage.save()
         self._sync_structure()          # M4：空文件夹移除走增量
+        # M5：同上——解散自动关，否则刷到空态
+        if self._popup is not None:
+            self._popup.refresh()
 
     # ---------- 拖放 ----------
     def dragEnterEvent(self, e):
