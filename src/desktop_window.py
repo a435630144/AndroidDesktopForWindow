@@ -872,21 +872,64 @@ class DesktopWindow(QWidget):
         （空格永不生效）与病根 2（拖到右侧空白被夹紧到最后一列 →
         半幅布局平移；现在 cols 由 GridMetrics 铺满，落点即所见）。
         目标格由调用方从指针全局位置反算（追逐漂移已消灭）。
+
+        2026-10-19 v6 §3.2：auto_arrange=False（**默认，自由移动**）时
+        不走递进——只落 dragged 自己、原位留空（_free_moves）；True 才
+        走 reflow_moves 递进（旧 M2 行为）。
         """
         if self._drag_multi or dragged_id is None:
             return
         if dragged_id not in self.icons:
             return
-        cols = self.storage.columns
-        # M6：不再传 rows=GridMetrics.rows——那是单屏行数，分页后目标行
-        # 是全局行（可到 page*rpp + rpp-1），传了会把落点错夹回第 0 页
-        # （probe21 S4 抓到：拖到 page1 底行落回 row 7）。落点限页由
-        # pos_cell 的局部行夹紧保证，reflow 层不做行夹紧。
-        moves = grid_flow.reflow_moves(self.storage.layout, cols, dragged_id, cell,
-                                       rows=None,
-                                       extra_occupied=self._widget_cells())
-        if moves is None:
+        if self._auto_arrange():
+            cols = self.storage.columns
+            # M6：不再传 rows=GridMetrics.rows——那是单屏行数，分页后目标行
+            # 是全局行（可到 page*rpp + rpp-1），传了会把落点错夹回第 0 页
+            # （probe21 S4 抓到：拖到 page1 底行落回 row 7）。落点限页由
+            # pos_cell 的局部行夹紧保证，reflow 层不做行夹紧。
+            moves = grid_flow.reflow_moves(self.storage.layout, cols, dragged_id,
+                                           cell, rows=None,
+                                           extra_occupied=self._widget_cells())
+        else:
+            moves = self._free_moves(dragged_id, cell)
+        if not moves:
             return
+        self._apply_preview_moves(dragged_id, moves)
+
+    def _auto_arrange(self) -> bool:
+        """自动排序开关（v6 §3.2）：False=自由移动（默认）。"""
+        return bool(self.storage.get_setting("auto_arrange"))
+
+    def _free_moves(self, dragged_id: str, cell) -> dict:
+        """自由移动位移清单（v6 §3.2）：只落 dragged 自己，原位留空。
+
+        目标被非 dragged 占据时与占据者**交换**到源格（自由摆放的
+        直觉：不丢条目、不覆盖）；目标落在组件占位格上则拒绝（不覆盖
+        组件，拖动无效——与 reflow 的 extra_occupied 语义一致）。
+        """
+        by_id = {e.get("id"): e for e in self.storage.layout}
+        src = by_id.get(dragged_id)
+        if src is None:
+            return {}
+        old = (int(src.get("col", 0)), int(src.get("row", 0)))
+        if cell == old:
+            return {}
+        occupant = None
+        for e in self.storage.layout:
+            if e.get("id") == dragged_id:
+                continue
+            if (int(e.get("col", 0)), int(e.get("row", 0))) == cell:
+                occupant = e
+                break
+        if occupant is None and cell in self._widget_cells():
+            return {}                      # 组件占位格：拒绝
+        moves = {dragged_id: cell}
+        if occupant is not None:
+            moves[occupant["id"]] = old    # 交换到源格
+        return moves
+
+    def _apply_preview_moves(self, dragged_id: str, moves: dict):
+        """预览位移落地共用路径：去重 -> 写内存 -> 最小集合动画。"""
         if moves == self._preview_moves:
             return  # 无变化不重算：dragMove 频率很高，省掉无用动画重启
         self._preview_moves = moves
@@ -976,9 +1019,13 @@ class DesktopWindow(QWidget):
         if self._preview_moves is not None and self._preview_drag == dragged_id:
             self._commit_preview()
             return
-        moves = grid_flow.reflow_moves(self.storage.layout, self.storage.columns,
-                                       dragged_id, cell,
-                                       extra_occupied=self._widget_cells())
+        if self._auto_arrange():
+            moves = grid_flow.reflow_moves(self.storage.layout,
+                                           self.storage.columns,
+                                           dragged_id, cell,
+                                           extra_occupied=self._widget_cells())
+        else:
+            moves = self._free_moves(dragged_id, cell)
         if not moves:
             self.storage.save()
             self._clear_preview()
@@ -1409,9 +1456,14 @@ class DesktopWindow(QWidget):
             menu.addSeparator()
             menu.addAction("重新扫描桌面文件", self.rescan_desktop)
             size_menu = menu.addMenu("图标大小")
-            for label, px in (("大", 96), ("中", 72), ("小", 56)):
+            for label, tier in (("小", "small"), ("中", "medium"), ("大", "large")):
                 act = size_menu.addAction(label)
-                act.triggered.connect(lambda checked=False, v=px: self._set_icon_size(v))
+                act.triggered.connect(
+                    lambda checked=False, t=tier: self._set_icon_tier(t))
+            arr_act = menu.addAction("自动排序（拖动后递进）")
+            arr_act.setCheckable(True)
+            arr_act.setChecked(bool(self.storage.get_setting("auto_arrange")))
+            arr_act.triggered.connect(self._toggle_auto_arrange)
             menu.addSeparator()
             menu.addAction("显示设置", lambda: self._open_uri("ms-settings:display"))
             menu.addAction("个性化（桌面背景）",
@@ -1440,6 +1492,18 @@ class DesktopWindow(QWidget):
     def _set_icon_size(self, px: int):
         self.storage.set_setting("icon_size", int(px))
         self.rebuild(stagger=True)
+
+    def _set_icon_tier(self, tier: str):
+        """右键「图标大小」三档（v6 A2，指导文档 §2.2）：档位 × 当前 cell，
+        与 icon_size/icon_scale 解钩——网格模式下 widget 整体按比例渲染。"""
+        from . import grid_sizing
+        self.storage.set_setting("icon_tier", grid_sizing.parse_tier(tier))
+        self.rebuild(stagger=True)
+
+    def _toggle_auto_arrange(self, checked: bool):
+        """自动排序开关（v6 §3.2）：False=自由移动（落 target 原位留空，
+        不走 reflow_moves——用户默认）；True=拖动后 reflow 递进。"""
+        self.storage.set_setting("auto_arrange", bool(checked))
 
     @staticmethod
     def _open_uri(uri: str):

@@ -171,9 +171,12 @@ def main():
     x, y = grid_flow.snap_point(st, ox + cw * 2 + cw // 3, oy + ch * 1 + ch // 3, (1920, 1080))
     check("snap_point 对齐列", x == ox + cw * 2)
     check("snap_point 对齐行", y == oy + ch * 1)
-    # 半格之外：四舍五入到邻近格
+    # 格内任意位置（含 75%）仍判本格（v6 floor 语义：指针所在格）；
+    # 越过格边（下一格 1/3 处）才到下一列
     x2, _ = grid_flow.snap_point(st, ox + cw * 2 + cw * 0.75, oy, (1920, 1080))
-    check("snap_point 越过半格吸附到下一列", x2 == ox + cw * 3)
+    check("snap_point 格内 75% 仍判本列", x2 == ox + cw * 2)
+    x2b, _ = grid_flow.snap_point(st, ox + cw * 3 + cw // 3, oy, (1920, 1080))
+    check("snap_point 越过格边到下一列", x2b == ox + cw * 3)
     # 越界保护
     x3, y3 = grid_flow.snap_point(st, -5000, -5000, (1920, 1080))
     check("snap_point 左上不越界", x3 >= 0 and y3 >= 0)

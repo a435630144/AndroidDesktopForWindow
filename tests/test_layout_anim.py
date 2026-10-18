@@ -49,12 +49,14 @@ def settle(app, ms=400):
     loop.exec()
 
 
-def make_state(spec, widgets=()):
+def make_state(spec, widgets=(), settings=None):
     if STATE.exists():
         STATE.unlink()
     st = Storage(path=str(STATE))
     st._data["settings"]["hide_native_icons"] = False
     st._data["settings"]["auto_clone_desktop"] = False
+    for k, v in (settings or {}).items():
+        st._data["settings"][k] = v
     st._data["widgets"] = [dict(w) for w in widgets]
     st._data["layout"] = [
         {"id": i, "type": "app",
@@ -79,17 +81,30 @@ def cells_of(st):
 
 def main(app):
     # ---------- T1：无预览直达 drop 不再 rebuild ----------
+    # v6 §3.2：默认 auto_arrange=False（自由移动）——无预览直达走交换
+    # 语义（a→(2,0)，c 交换到源格 (0,0)，b 不动）；递进行为显式设
+    # auto_arrange=True 验证（T1b）。
     st = make_state([("a", 0, 0), ("b", 1, 0), ("c", 2, 0)])
     w = new_window(app, st)
     ids_before = {eid: id(ic) for eid, ic in w.icons.items()}
     w._on_drag_started()
     w._reflow_commit_or_compute("a", (2, 0))   # 无预览直达：a 落到 c 的格
     b = cells_of(st)
-    # reflow_moves 精确让位（M2 语义）：a→(2,0)，run=(d,p] 内 b/c 各前移一格
-    check("T1 无预览直达：a 精确落到 (2,0)、b/c 前移补位",
-          b["a"] == (2, 0) and b["b"] == (0, 0) and b["c"] == (1, 0), "%s" % b)
+    check("T1 无预览直达（free 交换）：a=(2,0)、c=(0,0)、b 不动",
+          b["a"] == (2, 0) and b["b"] == (1, 0) and b["c"] == (0, 0), "%s" % b)
     same = all(id(w.icons.get(eid)) == i for eid, i in ids_before.items())
     check("T1 无预览直达：AppIcon 实例不变（不 rebuild）", same)
+
+    # ---------- T1b：auto_arrange=True 递进（旧 M2 语义保留）----------
+    st2 = make_state([("a", 0, 0), ("b", 1, 0), ("c", 2, 0)],
+                     settings={"auto_arrange": True})
+    w2 = new_window(app, st2)
+    w2._on_drag_started()
+    w2._reflow_commit_or_compute("a", (2, 0))
+    b2 = cells_of(st2)
+    check("T1b 自动排序递进：a=(2,0)、b=(0,0)、c=(1,0)",
+          b2["a"] == (2, 0) and b2["b"] == (0, 0) and b2["c"] == (1, 0),
+          "%s" % b2)
     settle(app, 300)
     check("T1 图标动画到位（a 在 (2,0) 的像素位）",
           abs(w.icons["a"].x() - w._entry_pos(st.find_entry("a"))[0]) <= 2

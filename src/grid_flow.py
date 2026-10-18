@@ -385,12 +385,17 @@ def pos_cell(storage, x: int, y: int) -> Cell:
     与 cell_pos 互逆（当前页内 round-trip）。局部行夹 [0, rpp-1]：
     落点限当前页（指导文档 §2.3「target 行夹紧在当前页，reflow 不
     跨页」）——拖到屏幕上/下边缘不会把目标落到邻页。
+
+    2026-10-19 v6（F5 测试抓到的产品级缺陷）：格子判定从 round 改为
+    **floor**——round 在格子中心（奇数格 1.5 处）会落到下一格
+    （round(1.5)=2），指针所在格与判定格不一致；floor 即"指针落在
+    哪格算哪格"（与 v6 §5.2 面积判定同向，面积判定留批次 C）。
     """
     cw, ch = cell_size(storage)
     ox, oy = origin()
     cols = storage.columns
-    col = int(round((x - ox) / max(1, cw)))
-    local = int(round((y - oy) / max(1, ch)))
+    col = int((x - ox) / max(1, cw)) if x >= ox else -1
+    local = int((y - oy) / max(1, ch)) if y >= oy else -1
     local = max(0, min(local, rows_per_page() - 1))
     col = max(0, min(col, cols - 1))
     return col, current_page() * rows_per_page() + local

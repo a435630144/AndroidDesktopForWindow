@@ -311,8 +311,39 @@ class Storage:
         self.save()
         return added
 
+    def pack_layout(self):
+        """阅读序紧凑重排（v6 §3.1，播种铺满）。
+
+        所有条目按 (row, col) 排序后从第 0 页起点依次填满，不留空洞；
+        组件占位格自动避开。**仅播种 /「重新扫描桌面文件」时调用**——
+        加载时不调用，尊重用户自由移动后的留空（§3.2：auto_arrange
+        =False 默认，拖完的空格是用户的，不是缺陷）。
+        """
+        from . import grid_flow  # 延迟导入，避免模块级循环依赖
+        cols = max(2, int(self.columns))
+        used = set(grid_flow.widget_cells(self))   # 组件占位（不可覆盖）
+        entries = sorted(self._data["layout"],
+                         key=lambda e: (int(e.get("row", 0) or 0),
+                                        int(e.get("col", 0) or 0)))
+        col = row = 0
+        for e in entries:
+            while (col, row) in used:
+                col += 1
+                if col >= cols:
+                    col, row = 0, row + 1
+            e["col"], e["row"] = col, row
+            col += 1
+            if col >= cols:
+                col, row = 0, row + 1
+        return len(entries)
+
     def rescan_desktop(self) -> int:
-        """重新扫描桌面：补新增、清丢失（同名路径哈希消失的条目）。"""
+        """重新扫描桌面：补新增、清丢失（同名路径哈希消失的条目）。
+
+        2026-10-19 v6 §3.1：末尾从 compact_layout（最小修正）改为
+        pack_layout（阅读序铺满）——「重新扫描」是用户主动要求的整齐
+        操作，与加载时的"尊重留空"区分开。
+        """
         from . import appsource
         live = {f["id"] for f in appsource.scan_desktop_files()}
         before = len(self._data["layout"])
@@ -323,7 +354,7 @@ class Storage:
                     and e.get("id") not in live)
         ]
         added = self.seed_desktop_clone()
-        self.compact_layout()
+        self.pack_layout()
         self.save()
         return added, before - (len(self._data["layout"]) - added)
 

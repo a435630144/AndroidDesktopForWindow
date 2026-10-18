@@ -2,8 +2,9 @@
 """设置对话框：深色主题；开机自启 / 图标大小 / 列数 / 不透明度 / 小组件 /
 原生图标 / 重新扫描 / 托盘行为 / 重置布局。所有项实时生效。"""
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
-                               QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout,
+                               QHBoxLayout, QLabel, QMessageBox, QPushButton,
+                               QSlider, QSpinBox, QVBoxLayout)
 
 from . import autostart
 from . import grid_flow
@@ -35,32 +36,33 @@ class SettingsDialog(QDialog):
         self.chk_autostart.toggled.connect(self._apply_autostart)
         form.addRow("启动：", self.chk_autostart)
 
-        self.sld_icon = QSlider(Qt.Horizontal)
-        self.sld_icon.setRange(48, 128)
-        self.sld_icon.setSingleStep(8)
-        self.sld_icon.setPageStep(8)
-        self.sld_icon.setValue(int(self.storage.get_setting("icon_size")))
-        self.lbl_icon = QLabel("%d px" % self.sld_icon.value())
-        self.lbl_icon.setStyleSheet(lbl_style)
-        self.sld_icon.valueChanged.connect(self._apply_icon_size)
-        icon_row = QHBoxLayout()
-        icon_row.addWidget(self.sld_icon)
-        icon_row.addWidget(self.lbl_icon)
-        form.addRow("图标大小：", icon_row)
+        # 图标三档（v6 A2，指导文档 §2.2/§2.4）：删除旧「图标缩放比例」
+        # 滑条（icon_scale）；「图标大小」滑条改三选一。网格模式下 widget
+        # 整体 = 档位 × cell（与 icon_size 解钩）；无界模式用像素输入
+        # （icon_px，仅无界模式生效）。
+        self.cmb_tier = QComboBox()
+        for label, tier in (("小", "small"), ("中", "medium"), ("大", "large")):
+            self.cmb_tier.addItem(label, tier)
+        cur_tier = self.storage.icon_tier()
+        idx = max(0, self.cmb_tier.findData(cur_tier))
+        self.cmb_tier.setCurrentIndex(idx)
+        self.cmb_tier.currentIndexChanged.connect(self._apply_icon_tier)
+        tier_row = QHBoxLayout()
+        tier_row.addWidget(self.cmb_tier)
+        tier_row.addStretch(1)
+        form.addRow("图标大小（网格模式档位）：", tier_row)
 
-        # 图标缩放比例：DPI 感知之上的用户微调（2026-10-18 用户要求）
-        self.sld_scale = QSlider(Qt.Horizontal)
-        self.sld_scale.setRange(60, 200)
-        self.sld_scale.setSingleStep(5)
-        self.sld_scale.setPageStep(10)
-        self.sld_scale.setValue(int(round(float(self.storage.get_setting("icon_scale")) * 100)))
-        self.lbl_scale = QLabel()
-        self.lbl_scale.setStyleSheet(lbl_style)
-        self.sld_scale.valueChanged.connect(self._apply_icon_scale)
-        scale_row = QHBoxLayout()
-        scale_row.addWidget(self.sld_scale)
-        scale_row.addWidget(self.lbl_scale)
-        form.addRow("图标缩放比例：", scale_row)
+        # 无界模式图标像素（v6 §2.3）：仅无界模式生效；网格模式置灰。
+        self.spin_icon_px = QSpinBox()
+        self.spin_icon_px.setRange(60, 256)
+        self.spin_icon_px.setValue(int(self.storage.get_setting("icon_px") or 96))
+        self.spin_icon_px.valueChanged.connect(self._apply_icon_px)
+        self.lbl_icon_px = QLabel("（网格模式下由档位决定，此输入仅无界模式生效）")
+        self.lbl_icon_px.setStyleSheet("color: rgb(140,146,155); font-size: 12px;")
+        px_row = QHBoxLayout()
+        px_row.addWidget(self.spin_icon_px)
+        px_row.addWidget(self.lbl_icon_px)
+        form.addRow("图标像素（无界模式）：", px_row)
         self._refresh_icon_labels()
 
         # 每行图标数：auto（M1 GridMetrics 四边等距铺满）或手动覆盖。
@@ -150,24 +152,29 @@ class SettingsDialog(QDialog):
         self.storage.set_setting("autostart", bool(checked))
 
     def _refresh_icon_labels(self):
-        """图标大小 / 缩放标签：显示 基准 × 系统DPI × 用户缩放 = 实际像素。"""
-        from . import theme
-        base = int(self.storage.get_setting("icon_size"))
-        scale = int(round(float(self.storage.get_setting("icon_scale")) * 100))
-        self.lbl_icon.setText("%d px" % base)
-        self.lbl_scale.setText("%d%%（系统 %d%% × %d%% = 实际 %d px）"
-                               % (scale, round(theme.screen_dpr() * 100),
-                                  scale, self.storage.icon_metric()))
+        """图标档位说明：显示当前档位 × cell 推导出的 widget / 图标像素。"""
+        from . import grid_flow, grid_sizing
+        m = grid_flow.current_metrics()
+        tier = self.storage.icon_tier()
+        if m is not None:
+            lay = grid_sizing.icon_layout(m.cw, m.ch, tier)
+            self.lbl_icon_px.setText(
+                "（当前 %s 档：widget %dx%d / 图标 %dpx；仅无界模式生效）"
+                % (tier, lay.widget_w, lay.widget_h, lay.icon_box))
+        else:
+            self.lbl_icon_px.setText("（仅无界模式生效）")
 
-    def _apply_icon_size(self, value):
-        self.storage.set_setting("icon_size", int(value))
+    def _apply_icon_tier(self, _index):
+        tier = self.cmb_tier.currentData()
+        if not tier:
+            return
+        self.storage.set_setting("icon_tier", tier)
         self._refresh_icon_labels()
         self.window.rebuild()
 
-    def _apply_icon_scale(self, value):
-        self.storage.set_setting("icon_scale", value / 100.0)
-        self._refresh_icon_labels()
-        self.window.rebuild()
+    def _apply_icon_px(self, value):
+        """无界模式图标像素（v6 §2.3）：网格模式置灰不生效。"""
+        self.storage.set_setting("icon_px", int(value))
 
     def _apply_columns(self, value):
         if self.chk_auto_cols.isChecked():
