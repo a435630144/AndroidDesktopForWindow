@@ -374,6 +374,51 @@ def main():
     check("C5 负行夹到页首",
           grid_flow.clamp_widget_cell(st, 0, -3, 2, 2) == (0, 0))
 
+    # ---------- §15 cell_by_overlap（v6 §5.2 面积判定） ----------
+    # 无 GridMetrics 快照：几何走 cell_size/origin 的回退派生（动态取值，
+    # 不写死像素——与 test_layout_anim T5c 同策）。rect = (x, y, w, h)
+    # 窗口控件坐标。候选 = 当前页全部单元格。
+    class _St2:
+        def __init__(self, cols=10, metric=48, chrome=1.0):
+            self._cols, self._metric, self._chrome = cols, metric, chrome
+
+        @property
+        def columns(self):
+            return self._cols
+
+        def icon_metric(self):
+            return self._metric
+
+        def icon_chrome_scale(self):
+            return self._chrome
+
+    st2 = _St2()
+    cw, ch = grid_flow.cell_size(st2)
+    ox, oy = grid_flow.origin()
+    rpp = grid_flow.rows_per_page()
+    # O1 完全在格内 -> 该格
+    check("O1 图标完全在格内 -> 精确落该格",
+          grid_flow.cell_by_overlap(st2, (ox + 2 * cw, oy + ch, cw, ch)) == (2, 1))
+    # O2 跨 (1,0)/(2,0) 边界 3:1 -> 面积大者 (1,0)
+    check("O2 跨格 3:1 -> 重叠面积大者",
+          grid_flow.cell_by_overlap(
+              st2, (ox + cw + cw // 4, oy, cw, ch)) == (1, 0))
+    # O3 完全在网格左侧外 -> 面积全 0 并列 -> 中心点格（col 夹紧 0）
+    check("O3 网格外（全 0 并列）-> 中心点格",
+          grid_flow.cell_by_overlap(st2, (ox - 100, oy + ch, cw, ch)) == (0, 1))
+    # O4 完全在网格下方 -> 中心点行夹紧到页底
+    check("O4 网格下方 -> 中心点格夹紧页底",
+          grid_flow.cell_by_overlap(
+              st2, (ox + cw, oy + rpp * ch + 50, cw, ch)) == (1, rpp - 1))
+    # O5 跨边界正中（面积相等）-> 中心点恰在边界，floor 取右格
+    check("O5 等分并列 -> 中心点所在格（边界 floor 取右）",
+          grid_flow.cell_by_overlap(
+              st2, (ox + 2 * cw - cw // 2, oy, cw, ch)) == (2, 0))
+    # O6 与 pos_cell 的关系：指针格 ⊆ 面积格——图标完全在指针格内时一致
+    check("O6 完全在格内时与 pos_cell 一致",
+          grid_flow.cell_by_overlap(st2, (ox + cw, oy, cw, ch))
+          == grid_flow.pos_cell(st2, ox + cw + cw // 2, oy + ch // 2) == (1, 0))
+
     print("-" * 56)
     if failures:
         print("FAILED %d: %s" % (len(failures), failures))

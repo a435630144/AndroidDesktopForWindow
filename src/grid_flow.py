@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """图标网格让位引擎（Live Reflow）——纯逻辑，零 Qt 依赖，可离线单测。
 
-三个求解入口（2026-10-18 M2 起 preview 走 reflow_moves；2026-10-19 v6
-§5.0 起多选拖动走 multi_move）：
+四个求解入口（2026-10-18 M2 起 preview 走 reflow_moves；2026-10-19 v6
+§5.0 起多选拖动走 multi_move；v6 §5.2 起松手/预览落点走
+cell_by_overlap）：
 
 1. **reflow_moves（位移清单，指导文档 §2.2，单选主路径）**：
    iOS 局部让位——dragged 精确落到 target（含空格，修复 P2 病根 1），
@@ -17,12 +18,19 @@
    整块刚性平移——主条目落指针 cell（组件占位则行优先顺延），成员保持
    相对偏移，bbox 夹紧不聚列；非选中占据者交换到源格，绝不丢条目。
 
+4. **cell_by_overlap（落点判定，v6 §5.2）**：
+   拖动图标框 vs 当前页全部 cell 的相交面积最大者；并列（含拖出
+   网格的全 0）取图标中心点所在格——替换"指针在哪格算哪格"的
+   半截判定（反馈 7a）。
+
 性质（tests/test_grid_flow.py + tests/test_multi_move.py 全量断言）：
   - reflow_moves：精确落点 / 最小位移 / 无重叠 / 无丢失 /
     占用集合 = 旧集合 - 老格 + target
   - reflow_order：占用格集合守恒 / 跨行 / 空格 / 占用格 / 原地统一处理
   - multi_move：形状保持 / 无叠格 / 数量守恒 / 边缘夹紧不聚列 /
     组件占位顺延 / 占据者交换不丢
+  - cell_by_overlap：格内精确 / 跨格面积最大 / 并列走中心点 /
+    网格外夹紧
   - O(n log n)，每次 dragMove 全量重算无压力
 
 与 DesktopWindow 的关系：_cell()/_origin() 已下沉到本模块（cell_size/origin），
@@ -556,6 +564,43 @@ def pos_cell(storage, x: int, y: int) -> Cell:
     local = max(0, min(local, rows_per_page() - 1))
     col = max(0, min(col, cols - 1))
     return col, current_page() * rows_per_page() + local
+
+
+def cell_by_overlap(storage, rect) -> Cell:
+    """v6 §5.2（反馈 7a）：拖动图标框与候选 cell 的**相交面积最大**者；
+    面积并列（含全 0，图标被拖出网格）时取图标**中心点**所在格。
+
+    rect = (x, y, w, h) 窗口控件坐标（与 cell_pos 同坐标系）。
+    候选 = 当前页全部单元格（cols × rpp 穷举，常量级——比"只查指针
+    邻域"更贴规格字面「所有候选 cell」，且天然覆盖拖出网格的场景）。
+
+    与 pos_cell 的分工：pos_cell 答「指针在哪格」（无拖影的合成 drop /
+    外部文件拖入的退化路径），本函数答「图标框压哪格」（松手判定 +
+    实时预览落点）。二者在"图标完全在格内"时一致（O6）。
+    """
+    cols = int(storage.columns)
+    cw, ch = cell_size(storage)
+    ox, oy = origin()
+    rpp = rows_per_page()
+    lo, hi = page_row_range(current_page(), rpp, 1)
+    x, y, w, h = rect
+    best, best_area, ties = None, -1, 1
+    for row in range(lo, hi + 1):
+        cy = oy + (row - lo) * ch
+        for col in range(cols):
+            cx = ox + col * cw
+            # 相交面积（QRect.intersected 的元组版——本模块零 Qt 依赖）
+            iw = min(x + w, cx + cw) - max(x, cx)
+            ih = min(y + h, cy + ch) - max(y, cy)
+            area = iw * ih if (iw > 0 and ih > 0) else 0
+            if area > best_area:
+                best, best_area, ties = (col, row), area, 1
+            elif area == best_area:
+                ties += 1
+    if best is None or ties > 1:
+        # 并列：中心点所在格（pos_cell 内部夹紧进当前页）
+        return pos_cell(storage, x + w // 2, y + h // 2)
+    return best
 
 
 def first_free_cell_in_page(storage, page: int):

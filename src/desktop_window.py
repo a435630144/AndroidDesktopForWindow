@@ -53,6 +53,8 @@ class DesktopWindow(QWidget):
         self._band_start = None     # 橡皮筋起点（控件坐标）
         self._band_rect = None
         self._band_moved = False
+        # v6 §5.2：拖动中目标 cell 红框高亮（判定结果可见、可预期）
+        self._hl_cell = None
         self.icons = {}
         # v6 §4：图标当前构建所用的 IconLayout 签名（快照就绪前后 cell
         # 变化时检测到即重建——启动时 rebuild 早于 GridMetrics，旧 chrome
@@ -208,6 +210,7 @@ class DesktopWindow(QWidget):
                 self._update_grid_metrics()
 
     def paintEvent(self, event):
+        hl = self._hl_cell is not None
         if self.attached:
             # 命中填充：分层窗口（WA_TranslucentBackground + WS_EX_LAYERED）的
             # 逐像素 alpha 命中测试会跳过全透明像素——WM_NCHITTEST 根本发不到
@@ -225,6 +228,8 @@ class DesktopWindow(QWidget):
                 if self._dev_mode():
                     self._paint_grid_debug()
                 self._paint_dots()
+            if hl:
+                self._paint_highlight(event)   # v6 §5.2：目标格红框置顶
             return  # 除上述元素外全透明，融入壁纸
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -238,6 +243,20 @@ class DesktopWindow(QWidget):
             if self._dev_mode():
                 self._paint_grid_debug()
             self._paint_dots()
+        if hl:
+            self._paint_highlight(event)
+
+    def _paint_highlight(self, event):
+        """v6 §5.2：目标 cell 红框（2px 描边 + 8% 红填充，圆角与网格语言一致）。"""
+        col, row = self._hl_cell
+        x, y = grid_flow.cell_pos(self.storage, col, row)
+        cw, ch = grid_flow.cell_size(self.storage)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(theme.DANGER, 2))
+        p.setBrush(QColor(theme.DANGER.red(), theme.DANGER.green(),
+                          theme.DANGER.blue(), 20))
+        p.drawRoundedRect(QRect(x + 1, y + 1, cw - 2, ch - 2), 8, 8)
 
     def _paint_hit_fill(self):
         """全窗 alpha=2 命中填充（视觉不可见，使透明像素也可被系统命中测试选中）。"""
@@ -422,6 +441,30 @@ class DesktopWindow(QWidget):
     def _cell_at(self, pos):
         # M6：反算含当前页偏移（页内 y -> 全局 row），委托 grid_flow
         return grid_flow.pos_cell(self.storage, pos.x(), pos.y())
+
+    def _drag_cell(self, fallback: QPoint):
+        """v6 §5.2 落点判定：拖动图标框（浮动拖影矩形）vs 候选 cell 面积最大。
+
+        拖影是拖动图标的视觉化身（位置 = 光标 - 抓取偏移），它的矩形
+        就是规格说的「拖动图标框」。无拖影时退化为指针所在格
+        （_cell_at 旧语义）——合成 drop / 外部文件 OLE 拖入 / 探针
+        直调都走这条，保持既有行为不变。
+        """
+        icon = self.icons.get(self._drag_entry_id or "")
+        ghost = getattr(icon, "_drag_ghost_w", None) if icon is not None else None
+        if ghost is None:
+            return self._cell_at(fallback)
+        g = ghost.geometry()                # frameless 顶层：全局矩形
+        tl = self.mapFromGlobal(g.topLeft())
+        return grid_flow.cell_by_overlap(
+            self.storage, (tl.x(), tl.y(), g.width(), g.height()))
+
+    def _set_highlight(self, cell):
+        """v6 §5.2：目标 cell 红框。只在跨格时重绘——dragMove 是高频
+        事件，全屏窗口每次 update() 都贵，跨格才换目标。"""
+        if cell != self._hl_cell:
+            self._hl_cell = cell
+            self.update()
 
     # ---------- 分页（M6，指导文档 §7-M6） ----------
     # _page 委托 grid_flow 运行时页（单一状态源）：所有位置换算
@@ -805,6 +848,7 @@ class DesktopWindow(QWidget):
         self._drag_active = False
         self._drag_entry_id = None
         self._drag_multi = False
+        self._hl_cell = None            # v6 §5.2：红框随拖拽结束撤下
         if self._preview_moves is not None:
             # 没有落点（拖到窗外 / 拖到资源管理器 / 按 Esc 取消）-> 回退
             self._cancel_preview()
@@ -832,15 +876,22 @@ class DesktopWindow(QWidget):
             return
         e.acceptProposedAction()
         dragged = e.mimeData().data(MIME_TYPE).data().decode()
-        self._reflow_preview(dragged, self._cell_at(e.position().toPoint()))
+        cell = self._drag_cell(e.position().toPoint())
+        self._set_highlight(cell)       # v6 §5.2：红框跟随面积判定结果
+        self._reflow_preview(dragged, cell)
 
     def _on_reflow_hover(self, dragged: str, gx: int, gy: int):
         """拖动悬停（2026-10-18 M2：参数是指针全局坐标，非图标格点）。
 
         目标格只从指针全局位置反算——预览会改写 entry，读移动中的
-        entry 等于追逐漂移（指导文档 §2.3 病根 3）。
+        entry 等于追逐漂移（指导文档 §2.3 病根 3）。2026-10-19 v6
+        §5.2：反算升级为拖影矩形的面积判定（_drag_cell），指针位置
+        仅作无拖影时的退化输入。
         """
-        self._reflow_preview(dragged, self._cell_at(self.mapFromGlobal(QPoint(gx, gy))))
+        pos = self.mapFromGlobal(QPoint(gx, gy))
+        cell = self._drag_cell(pos)
+        self._set_highlight(cell)
+        self._reflow_preview(dragged, cell)
 
     def _on_reflow_drop(self, dragged: str, gx: int, gy: int):
         """在图标上松手且未武装合并：直接走让位提交。
@@ -852,13 +903,14 @@ class DesktopWindow(QWidget):
         把 "a,b" 当时条目 id 传给 _reflow_commit_or_compute，查不到 →
         整个 drop 被吞（多选落图标 = 无操作）。改路由 _drop_internal 的
         multi_move 分支，与空白格 drop 同一条语义。
+
+        2026-10-19 v6 §5.2：落点格走拖影矩形面积判定（_drag_cell）。
         """
+        pos = self.mapFromGlobal(QPoint(gx, gy))
         if self._drag_multi:
-            self._drop_internal(dragged,
-                                self.mapFromGlobal(QPoint(gx, gy)))
+            self._drop_internal(dragged, pos)
             return
-        self._reflow_commit_or_compute(dragged,
-                                       self._cell_at(self.mapFromGlobal(QPoint(gx, gy))))
+        self._reflow_commit_or_compute(dragged, self._drag_cell(pos))
 
     # ---------- 锚定小组件占位（widget 是网格一等公民） ----------
     def _widget_cells(self):
@@ -1531,7 +1583,7 @@ class DesktopWindow(QWidget):
 
         if len(entries) == 1 and not self._drag_multi:
             # 单选：走让位（拖动期间已生成预览 -> 直接提交）
-            self._reflow_commit_or_compute(entries[0]["id"], self._cell_at(pos))
+            self._reflow_commit_or_compute(entries[0]["id"], self._drag_cell(pos))
             return
 
         # 多选：整体平移语义（v6 §5.0 multi_move——不叠格/形状保持/
@@ -1548,7 +1600,7 @@ class DesktopWindow(QWidget):
                 primary = entries[0]["id"]
             moves = grid_flow.multi_move(self.storage.layout,
                                          self.storage.columns, primary,
-                                         self._cell_at(pos), set(ids),
+                                         self._drag_cell(pos), set(ids),
                                          extra_occupied=self._widget_cells())
             if moves:
                 by_id = {e.get("id"): e for e in self.storage.layout}

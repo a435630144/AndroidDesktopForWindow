@@ -43,6 +43,10 @@ MIME_TYPE = "application/x-desktoporg-item"
 # 悬停足够久图标高亮后松手 -> 合并文件夹。两套手势由此分流。
 DWELL_MERGE_MS = 450
 
+# v6 §5.1（反馈 6）：拖动浮影 = 当前图标的 render 快照，半透明 0.8——
+# 替换旧 QDrag 的白块占位，拖动中保留原始样式（图标 + 标签 + 状态）。
+GHOST_OPACITY = 0.8
+
 
 class _DragGhost(QWidget):
     """浮动拖影：frameless + 半透明背景 + 对鼠标事件透明。
@@ -557,6 +561,27 @@ class AppIcon(QWidget):
         super().keyPressEvent(e)
 
     # ---------- 自管理拖拽循环（替代 QDrag.exec 的 OLE DoDragDrop） ----------
+    def _drag_snapshot(self) -> QPixmap:
+        """当前图标的 render 快照，烘焙 GHOST_OPACITY 半透明（v6 §5.1）。
+
+        必须在 set_drag_ghost(True) **之前**调用——虚影态下 paintEvent
+        早退（本格视觉让出），render 出来是全透明空图。alpha 烘焙进
+        pixmap（而非拖影 paintEvent 里 setOpacity）：单一来源，拖影
+        部件保持无脑 drawPixmap。
+        """
+        pm = QPixmap(self.size())
+        pm.fill(Qt.transparent)
+        self.render(pm)
+        if GHOST_OPACITY >= 1.0:
+            return pm
+        faded = QPixmap(pm.size())
+        faded.fill(Qt.transparent)
+        p = QPainter(faded)
+        p.setOpacity(GHOST_OPACITY)
+        p.drawPixmap(0, 0, pm)
+        p.end()
+        return faded
+
     def _exec_drag(self):
         """启动拖拽：grabMouse + 浮动拖影 + 合成 Qt 拖放事件。
 
@@ -576,14 +601,15 @@ class AppIcon(QWidget):
         # 提拉感：拖动源放大 1.06。自管理循环不阻塞 Qt 定时器，
         # 动画照常驱动，这里仍直接置位保证即时反馈。
         self._set_press_scale(1.06)
+        # 快照必须先取：set_drag_ghost(True) 之后 paintEvent 早退
+        # （本格视觉让出），再 render 抓到的是全透明空图——拖影一片
+        # 空白，用户看不到自己拖的是什么（v6 §5.1 顺序病根）。
+        pm = self._drag_snapshot()
         # 虚影：本格子在拖动期间视觉让出（其他图标滑入填充），
         # 不 hide()——不动 geometry 与命中测试，撤销只翻一个标志位
         self.set_drag_ghost(True)
         self._drag_mime = QMimeData()
         self._drag_mime.setData(MIME_TYPE, payload.encode())
-        pm = QPixmap(self.size())
-        pm.fill(Qt.transparent)
-        self.render(pm)
         self._drag_ghost_w = _DragGhost(pm)
         self._drag_ghost_w.show()
         self._drag_target = None

@@ -14,6 +14,7 @@
   T5d 多选目标占据者交换到源格
   T5e 多选实时预览（_reflow_preview multi）+ 取消回退
   T5f 陈旧 payload drop 回退在飞预览（probe15 G11c 病根：半截预览态）
+  T9  v6 §5.2 落点面积判定（拖影框 vs cell 相交面积）+ 红框高亮
   T6  merge 结构同步：条目与 icons 对齐，类型变化的图标不重建（is_folder 动态）
   T7  widget 拖动实时预览：hover 按新占位矩形挤走图标，drop 回退
   T8  _sync_structure 幂等：无变化时不动任何实例
@@ -265,6 +266,51 @@ def main(app):
     check("T5f 图标控件回到拖动前位置", ok5f,
           "%s" % {eid: (w5f.icons[eid].pos(), pos5f[eid])
                   for eid in pos5f if w5f.icons[eid].pos() != pos5f[eid]})
+
+    # ---------- T9：v6 §5.2 面积判定 + 红框高亮 ----------
+    # 落点从「指针在哪格」升级为「拖动图标框压哪格」：拖影横跨两格
+    # 3:1 时落重叠大者；完全拖出网格（全 0 并列）走中心点格；拖动中
+    # 目标格红框实时高亮，松手撤下。
+    st9 = make_state([("a", 0, 0), ("b", 1, 0), ("c", 2, 0)])
+    w9 = new_window(app, st9)
+    icon9 = w9.icons["a"]
+    w9._drag_entry_id = "a"
+    icon9._press_pos = QPoint(10, 10)
+    icon9.grabMouse = lambda: None      # offscreen 不真抓鼠标
+    icon9.setFocus = lambda: None
+    icon9._exec_drag()                  # 真路径：拖影 = 0.8 半透快照
+    ghost9 = icon9._drag_ghost_w
+    check("T9 拖影已创建（§5.1 快照路径）", ghost9 is not None)
+    cw, ch = grid_flow.cell_size(st9)
+    ox, oy = grid_flow.origin()
+    if ghost9 is not None:
+        # 拖影横跨 (1,0)/(2,0) 边界 3:1（左缘落在 1 格右侧 1/4 处）
+        ghost9.move(ox + cw + cw // 4, oy)
+        cell9 = w9._drag_cell(QPoint(ox + cw + cw // 4, oy))
+        check("T9 跨格 3:1 -> 落重叠面积大者 (1,0)", cell9 == (1, 0),
+              "%s" % (cell9,))
+        # 完全拖出网格左侧：面积全 0 并列 -> 中心点格（列夹紧 0）
+        ghost9.move(ox - 200, oy)
+        cell9b = w9._drag_cell(QPoint(0, 0))
+        check("T9 网格外全 0 并列 -> 中心点格", cell9b[0] == 0, "%s" % (cell9b,))
+        # 红框高亮：hover 驱动 -> _hl_cell 跟进面积判定结果
+        gc = ghost9.mapToGlobal(QPoint(ghost9.width() // 2, ch // 2))
+        w9._on_reflow_hover("a", gc.x(), gc.y())
+        check("T9 红框高亮跟进面积判定", w9._hl_cell == cell9b,
+              "hl=%s cell=%s" % (w9._hl_cell, cell9b))
+        # 绘制级：窗口 render 里目标格区域出现红色像素
+        img = w9.grab().toImage()
+        hx, hy = grid_flow.cell_pos(st9, *cell9b)
+        red = sum(1 for yy in range(hy, min(hy + ch, img.height()))
+                  for xx in range(hx, min(hx + cw, img.width()))
+                  if img.pixelColor(xx, yy).red() > 150
+                  and img.pixelColor(xx, yy).green() < 130)
+        check("T9 目标格红框已绘制", red > 20, "red=%d" % red)
+        # 松手撤下高亮
+        w9._on_drag_finished()
+        check("T9 拖拽结束红框撤下", w9._hl_cell is None)
+        ghost9.close()
+    icon9.set_drag_ghost(False)
 
     # ---------- T6：merge 结构同步 ----------
     st6 = make_state([("a", 0, 0), ("b", 1, 0), ("c", 2, 0)])
