@@ -331,53 +331,62 @@ def shortcut_target_path(app: dict):
     return None
 
 
-def shortcut_badge_size(icon_size: int) -> int:
-    """徽标边长 = 图标边长的 25%（规格：原生只是小角标；壳层 overlay
-    在大图标上占到 ~35% 且发虚）。最小 6px 保证小尺寸可辨。"""
-    return max(6, int(round(icon_size * 0.25)))
+def shortcut_icon_source(app: dict):
+    """.url 文件内部 IconFile / IconIndex 指定的图标（返回 (路径, 序号) / None）。
 
-
-def _paint_shortcut_badge(pm: QPixmap, logical_size: int, dpr: float):
-    """在图标 pixmap 左下角逐绘 25% 锐利箭头徽标（§7.1 反馈 10）。
-
-    crisp 三原则（对应规格"锐利渲染，去模糊"）：实心亮白填充 + 1.2px
-    深色硬描边，**无阴影无高斯**；Antialiasing 只走边缘抗锯齿。形状取
-    经典弯箭头（左下起杆 → 90° 折向右 → 右指箭头），任意壁纸/图标底色
-    上都可辨。单位盒 0.06..0.94 留描边余量，不越徽标盒。
+    2026-10-19 用户反馈："雀魂麻将 和 异形工厂2 的图标丢失图像、变成空白"。
+    这两个都是 Steam 的 `.url`：
+        [InternetShortcut]
+        URL=steam://rungameid/1329410
+        IconFile=D:\\...\\Steam\\steam\\games\\<hash>.ico
+        IconIndex=0
+    壳层对 `.url` 只会给一张通用"链接"白页图，看着就像空白图标；真实图标
+    写在 IconFile 里（Steam 把游戏图标缓存成 .ico）。这里先解析出来再取。
+    IconIndex 不为 0 时 QIcon 无法按序号取，交由调用方回退壳层。
     """
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing)
-    s = shortcut_badge_size(logical_size) * dpr       # 物理像素
-    inset = max(1.0, logical_size * 0.02 * dpr)
-    x0 = inset
-    y0 = pm.height() - inset - s
-    stem_w = 0.30 * s
-    outline = max(1.0, 1.2 * dpr)
-    dark = QColor(22, 24, 30, 240)
-    white = QColor(245, 247, 252, 255)
-    # 弯箭头中心线（单位盒，y 向下）：左下起向上，90° 折向右
-    path = QPainterPath()
-    path.moveTo(x0 + 0.32 * s, y0 + 0.80 * s)
-    path.lineTo(x0 + 0.32 * s, y0 + 0.42 * s)
-    path.lineTo(x0 + 0.56 * s, y0 + 0.42 * s)
-    p.setPen(QPen(dark, stem_w + outline * 2, Qt.SolidLine,
-                  Qt.RoundCap, Qt.RoundJoin))
-    p.drawPath(path)
-    p.setPen(QPen(white, stem_w, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-    p.drawPath(path)
-    # 箭头头部：右指三角（先深色描边底，再白填充）
-    head = QPainterPath()
-    head.moveTo(x0 + 0.54 * s, y0 + 0.14 * s)
-    head.lineTo(x0 + 0.93 * s, y0 + 0.42 * s)
-    head.lineTo(x0 + 0.54 * s, y0 + 0.70 * s)
-    head.closeSubpath()
-    p.setPen(QPen(dark, outline * 2))
-    p.setBrush(QBrush(dark))
-    p.drawPath(head)
-    p.setPen(Qt.NoPen)
-    p.setBrush(QBrush(white))
-    p.drawPath(head)
-    p.end()
+    p = app.get("icon_path") or app.get("target") or ""
+    if not p.lower().endswith(".url"):
+        return None
+    text = _read_shortcut_text(p)
+    if not text:
+        return None
+    icon_file, index = None, 0
+    for line in text.splitlines():
+        key, sep, val = line.partition("=")
+        if not sep:
+            continue
+        key = key.strip().lower()
+        val = val.strip()
+        if key == "iconfile":
+            icon_file = val
+        elif key == "iconindex":
+            try:
+                index = int(val)
+            except ValueError:
+                index = 0
+    if not icon_file:
+        return None
+    return (_expand(os.path.expandvars(icon_file)), index)
+
+
+def _read_shortcut_text(path: str) -> str:
+    """读 .url/.lnk 文本：先按 BOM 判 UTF-16，再依次尝试 utf-8 / gbk。"""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(64 * 1024)
+    except OSError:
+        return ""
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        try:
+            return raw.decode("utf-16")
+        except UnicodeDecodeError:
+            return ""
+    for enc in ("utf-8-sig", "gbk", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return ""
 
 
 def _qicon_for(app: dict) -> QIcon:
@@ -386,14 +395,28 @@ def _qicon_for(app: dict) -> QIcon:
 
     v6 §7.1：快捷方式取**目标**的图标——壳层 .lnk 图标烘焙了超大软箭头
     overlay（见 is_shortcut 注释）；目标解析失败才用 .lnk 本身。
+    v6e：`.url` 先看文件内的 IconFile（Steam 游戏图标在那里）。
     """
     path = _expand(app.get("icon_path") or app.get("target", ""))
     if not path:
         return QIcon()
     if is_shortcut(app):
-        tgt = shortcut_target_path(app)
-        if tgt:
-            path = _expand(tgt)
+        if path.lower().endswith(".url"):
+            spec = shortcut_icon_source(app)
+            if spec and spec[1] == 0 and spec[0] and _path_exists(spec[0]):
+                # IconFile 本身就是图标资源（Steam 的 .ico）：直接加载能拿到
+                # 全部内嵌尺寸（16..256），比绕壳层再缩放清晰得多
+                key = (spec[0],)
+                if key not in _ICON_CACHE:
+                    ic = QIcon(spec[0])
+                    _ICON_CACHE[key] = ic
+                if not _ICON_CACHE[key].isNull():
+                    return _ICON_CACHE[key]
+                path = spec[0]
+        else:
+            tgt = shortcut_target_path(app)
+            if tgt:
+                path = _expand(tgt)
     key = (path,)
     if key in _ICON_CACHE:
         return _ICON_CACHE[key]
@@ -409,18 +432,36 @@ def _qicon_for(app: dict) -> QIcon:
 
 
 def icon_for(app: dict, size: int = 48) -> QIcon:
-    """取应用图标（QIcon）。优先系统图标，失败时字母占位。
-
-    v6 §7.1：可解析快捷方式走 pixmap 通道带回自绘徽标（QIcon 通道带
-    不上徽章）——挑选列表（添加应用 / 面板文件夹行）与桌面视觉一致。
-    """
-    if is_shortcut(app) and shortcut_target_path(app):
-        return QIcon(icon_pixmap(app, size))
+    """取应用图标（QIcon）。优先系统图标，失败时字母占位。"""
     icon = _qicon_for(app)
     if not icon.isNull():
         return icon
-    letter = QIcon(_letter_pixmap(app.get("name", "?")[:1], size))
-    return letter
+    return QIcon(_letter_pixmap(app.get("name", "?")[:1], size))
+
+
+def _source_pixmap_for(icon: QIcon, target_px: int) -> QPixmap:
+    """挑「够用的最小一档」源 pixmap（v6e 清晰度）。
+
+    旧实现永远取 max(sizes)（256 jumbo）再 Smooth 缩到 55px 左右——
+    4~5 倍下采样，边缘被插值糊掉，用户反馈"不如原图标清晰"。
+    Windows 自己是挑不小于目标、且最接近的那一档（图标为每个尺寸单独
+    调过墨量），所以这里按物理宽度升序找第一个 ≥ target×0.8 的档——
+    0.8 对应 1.25 倍放大上限（125% 缩放下 Windows 正是这样用 48 档画
+    60px）。全都小于目标时才退回最大档。
+    """
+    sizes = sorted(icon.availableSizes(), key=lambda s: (s.width(), s.height()))
+    if not sizes:
+        return icon.pixmap(QSize(target_px, target_px))
+    floor_px = target_px * 0.8
+    fallback = None
+    for s in sizes:
+        pm = icon.pixmap(s)
+        if pm.isNull():
+            continue
+        fallback = pm
+        if pm.width() >= floor_px:
+            return pm
+    return fallback if fallback is not None else icon.pixmap(QSize(target_px, target_px))
 
 
 def icon_pixmap(app: dict, logical_size: int, dpr: float = 1.0) -> QPixmap:
@@ -428,7 +469,8 @@ def icon_pixmap(app: dict, logical_size: int, dpr: float = 1.0) -> QPixmap:
 
     QIcon.pixmap(size) 在 Windows 上对大图标源会返回带 devicePixelRatio 的
     jumbo（256）pixmap，若调用方按物理宽度计算布局就会错位——这里统一归一化：
-    取最大可用源 -> 缩放到目标物理像素 -> 设置 DPR，绘制时按逻辑尺寸居中即 crisp。
+    取**够用的最小档**（见 _source_pixmap_for）-> 缩放到目标物理像素 ->
+    设置 DPR，绘制时按逻辑尺寸居中即 crisp。
     """
     key = (app.get("icon_path") or app.get("target", ""), app.get("name", ""),
            logical_size, round(dpr, 2))
@@ -439,12 +481,7 @@ def icon_pixmap(app: dict, logical_size: int, dpr: float = 1.0) -> QPixmap:
     icon = _qicon_for(app)
     pm = QPixmap()
     if not icon.isNull():
-        sizes = icon.availableSizes()
-        if sizes:
-            best = max(sizes, key=lambda s: s.width())  # 通常是 256/320（jumbo）
-            src = icon.pixmap(best)
-        else:
-            src = icon.pixmap(QSize(target_px, target_px))
+        src = _source_pixmap_for(icon, target_px)
         if not src.isNull():
             if src.width() != target_px:
                 src = src.scaled(target_px, target_px,
@@ -454,10 +491,8 @@ def icon_pixmap(app: dict, logical_size: int, dpr: float = 1.0) -> QPixmap:
     if pm.isNull():
         pm = _letter_pixmap(app.get("name", "?")[:1], target_px)
         pm.setDevicePixelRatio(dpr)
-    if is_shortcut(app) and shortcut_target_path(app):
-        # §7.1：拿到了干净目标图标才自绘徽标——壳层 overlay 图标上再画
-        # 会成双箭头（解析失败的回退路径见 shortcut_target_path）
-        _paint_shortcut_badge(pm, logical_size, dpr)
+    # v6e（用户："左下角好像有快捷方式的箭头，不需要"）：不再自绘任何徽标。
+    # 图标就是图标本身——桌面视觉统一，也省掉一层绘制。
     _PIXMAP_CACHE[key] = pm
     return pm
 
