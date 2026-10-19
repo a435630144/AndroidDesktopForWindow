@@ -14,6 +14,7 @@
 import ctypes
 import os
 import sys
+import threading
 import time
 from ctypes import wintypes
 from pathlib import Path
@@ -80,36 +81,124 @@ def dpr():
 
 
 def phys(pt_logical):
+    """Qt 坐标 -> 物理屏幕坐标（SetCursorPos / WM_NCHITTEST 用）。
+
+    2026-10-19 实测本机：屏幕物理 1536x864、窗口宽 1536、但 DPR=1.25。
+    即 Qt 的窗口几何**已经是物理像素**，此时再乘 DPR 会跑到图标之外
+    （表现为「图标区命中测试=HTTRANSPARENT」的假失败）。判据：Qt 报告的
+    屏幕宽度与 GetSystemMetrics 一致时，坐标即物理坐标，不再缩放。
+    """
     d = dpr()
+    if d == 1.0:
+        return int(pt_logical.x()), int(pt_logical.y())
+    qt_w = QApplication.primaryScreen().geometry().width()
+    if abs(qt_w - u32.GetSystemMetrics(0)) <= 1:
+        return int(pt_logical.x()), int(pt_logical.y())
     return int(pt_logical.x() * d), int(pt_logical.y() * d)
 
 
+def _run_injected(job, timeout=12.0):
+    """在**后台线程**注入鼠标，主线程泵事件直到注入结束。
+
+    两条硬约束（2026-10-19 用 tools/probe_mouse.py 逐层实测确认）：
+    1) 注入期间主线程必须一直泵消息，否则 Windows 会把堆积的
+       WM_MOUSEMOVE 合并成最后一条——拖动只走一两步甚至被判定为点击。
+    2) 注入**不能**跑在主线程：图标按下后会进 QDrag.exec() 嵌套循环，
+       若注入器自己在嵌套的泵消息调用里，就永远走不到 mouse up，
+       OLE 拖放表现为「进了 dragEnter 但永不 drop」并卡死进程。
+    """
+    th = threading.Thread(target=job, daemon=True)
+    th.start()
+    t0 = time.time()
+    while th.is_alive() and time.time() - t0 < timeout:
+        QTest.qWait(50)
+    QTest.qWait(120)
+    return not th.is_alive()
+
+
 def click_at(x, y):
-    """真实鼠标点击（物理坐标）：SetCursorPos 定位 + 左键下/抬。
-    注意：mouse_event 不带 MOUSEEVENTF_ABSOLUTE 时 dx/dy 是相对位移，
-    必须先用 SetCursorPos（原始像素）把光标移到目标位置。"""
-    u32.SetCursorPos(x, y)
-    time.sleep(0.05)
-    u32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, None)
-    time.sleep(0.05)
-    u32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, None)
-    time.sleep(0.15)
+    """真实鼠标点击（物理坐标）：SetCursorPos 定位 + 左键下/抬。"""
+    def job():
+        u32.SetCursorPos(x, y)
+        time.sleep(0.08)
+        u32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, None)
+        time.sleep(0.06)
+        u32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, None)
+    _run_injected(job, 6)
+
+
+def wait_stable(window, timeout=2500):
+    """等图标位置稳定（rebuild 的 stagger 入场动画期间几何还在变）。
+
+    实机踩坑：phase4 rebuild 后立刻按 500ms 延时拖动，图标仍在弹簧
+    入场动画中，注入的按下按的是"动画中的旧位置"，落点自然无效——
+    表现为单拖偶发失败、框选却正常。
+    """
+    last, stable, t0 = None, 0, time.time()
+    while time.time() - t0 < timeout / 1000.0:
+        cur = tuple((eid, ic.x(), ic.y()) for eid, ic in sorted(window.icons.items()))
+        if cur == last and cur:
+            stable += 1
+            if stable >= 2:
+                return True
+        else:
+            stable = 0
+            last = cur
+        QTest.qWait(120)
+    return False
+
+
+def wait_clickable(win, pt, timeout=4000):
+    """等某个物理坐标真的落在测试窗口上（含其子窗口）。
+
+    rebuild / show_desktop 之后，窗口要重新插回 Progman 之上；这段
+    时间里的命中测试会落到 Progman（WindowFromPoint 返回 65938），
+    注入的按下就此凭空消失——表现为"重建后第一次拖动必失败"。
+    """
+    hw = int(win.winId())
+    t0 = time.time()
+    while time.time() - t0 < timeout / 1000.0:
+        h = int(u32.WindowFromPoint(wintypes.POINT(pt[0], pt[1])))
+        if h == hw or int(u32.GetParent(h)) == hw:
+            return True
+        QTest.qWait(100)
+    return False
+
+
+def topmost(win, on=True):
+    """把测试窗口临时置顶。
+
+    桌面窗口按设计挂在桌面带（Progman）里，任何前台窗口都会盖住它。
+    实机验证时若目标区域被别的窗口遮挡，注入的按下会落到那个窗口上
+    （2026-10-19 实测：Chrome 窗口盖住右侧 2/3，多选拖动全落到浏览器）。
+    置顶只在本脚本运行期间，cleanup 立即还原。
+    """
+    try:
+        u32.SetWindowPos(int(win.winId()), -1 if on else -2, 0, 0, 0, 0,
+                         0x0001 | 0x0002 | 0x0010)   # NOSIZE|NOMOVE|NOACTIVATE
+    except Exception:
+        pass
 
 
 def drag_between(p1, p2, steps=20):
     """真实鼠标拖拽（物理坐标）：定位 -> 按下 -> 分步移动 -> 抬起。"""
-    u32.SetCursorPos(p1[0], p1[1])
-    time.sleep(0.05)
-    u32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, None)
-    time.sleep(0.08)
-    for i in range(1, steps + 1):
-        t = i / steps
-        u32.SetCursorPos(int(p1[0] + (p2[0] - p1[0]) * t),
-                         int(p1[1] + (p2[1] - p1[1]) * t))
-        time.sleep(0.03)
-    time.sleep(0.1)
-    u32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, None)
-    time.sleep(0.3)
+    def job():
+        u32.SetCursorPos(p1[0], p1[1])
+        time.sleep(0.10)
+        u32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, None)
+        time.sleep(0.12)
+        cur = p1
+        for i in range(1, steps + 1):
+            tx = int(round(p1[0] + (p2[0] - p1[0]) * i / float(steps)))
+            ty = int(round(p1[1] + (p2[1] - p1[1]) * i / float(steps)))
+            mx, my = tx - cur[0], ty - cur[1]
+            if mx or my:
+                u32.mouse_event(MOUSEEVENTF_MOVE, mx, my, 0, None)
+                cur = (tx, ty)
+            time.sleep(0.04)
+        time.sleep(0.12)
+        u32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, None)
+    _run_injected(job, 14)
 
 
 def grab_cell_opaque(pm, x, y, w, h):
@@ -155,6 +244,12 @@ def main():
     if lnk:
         storage.add_app(appsource.desktop_file_entry(lnk), col=1, row=0)
     storage.add_app({"id": "sys-pc", "name": "此电脑", "target": clsid, "builtin": True}, col=2, row=0)
+    # 拖动 / 框选阶段需要 >=3 个条目：桌面上没有 jpg 时用回收站补位
+    # （只用 CLSID，不依赖用户文件存在与否，测试可重复）
+    if len(storage.layout) < 3:
+        storage.add_app({"id": "sys-bin", "name": "回收站",
+                         "target": "::{645FF040-5081-101B-9F08-00AA002F954E}",
+                         "builtin": True}, col=3, row=0)
     storage.save()
 
     window = DesktopWindow(storage)
@@ -165,9 +260,9 @@ def main():
         print("\n==== 阶段1：原生模式（问题2/5） ====", flush=True)
         # 2026-10-18：migrate_to_native_mode() 自路线A（默认整理模式）后
         # 已是空实现——这里显式切原生模式，保持本阶段断言的有效性
-        storage.set_setting("hide_native_icons", False)
+        storage.set_takeover(False)
         window.apply_native_icons_setting()
-        time.sleep(0.4)
+        QTest.qWait(400)
         ok("整理窗口已挂载桌面带", window.attached)
         ok("原生图标可见（DefView 未隐藏）", win32_layer.native_icons_hidden() is False)
         hwnd = int(window.winId())
@@ -237,11 +332,14 @@ def main():
 
     def phase4_organize():
         print("\n==== 阶段4：整理模式（问题3/4/5） ====", flush=True)
-        storage.set_setting("hide_native_icons", True)
+        storage.set_takeover(True)
         storage.set_setting("auto_clone_desktop", True)
         window.apply_native_icons_setting()
-        time.sleep(0.4)
+        QTest.qWait(400)
         ok("整理模式下原生图标已隐藏", win32_layer.native_icons_hidden() is True)
+        # 拖动/框选阶段：临时置顶，避免前台窗口遮挡导致注入落到别的窗口
+        topmost(window, True)
+        QTest.qWait(200)
         hwnd = int(window.winId())
         empty = QPoint(window.width() - 80, window.height() - 80)
         ex, ey = phys(empty)
@@ -251,6 +349,7 @@ def main():
         QTimer.singleShot(500, phase5_drag)
 
     def phase5_drag():
+        wait_stable(window)
         ids = list(window.icons.keys())
         ok("拖动测试条目足够", len(ids) >= 3, "icons=%d" % len(ids))
         if len(ids) < 3:
@@ -263,6 +362,7 @@ def main():
         origin = window._origin()
         p2 = phys(QPoint(origin[0] + 2 * cell[0] + cell[0] // 2,
                          origin[1] + 1 * cell[1] + 20))
+        wait_clickable(window, p1)
         drag_between(p1, p2)
         e = storage.find_entry(ids[0])
         ok("真实拖动后图标位置改变", (e.get("col"), e.get("row")) != old,
@@ -270,6 +370,7 @@ def main():
         QTimer.singleShot(300, phase6_multidrag)
 
     def phase6_multidrag():
+        wait_stable(window)
         window._selected.clear()
         ids = list(window.icons.keys())[:3]
         icons = [window.icons[i] for i in ids]
@@ -277,6 +378,7 @@ def main():
         y0 = min(i.y() for i in icons)
         x1 = max(i.x() + i.width() for i in icons)
         y1 = max(i.y() + i.height() for i in icons)
+        wait_clickable(window, phys(QPoint(x0 - 6, y0 - 6)))
         drag_between(phys(QPoint(x0 - 6, y0 - 6)), phys(QPoint(x1 + 6, y1 + 6)), steps=15)
         ok("橡皮筋框选选中多个", len(window._selected) >= 3,
            "selected=%d" % len(window._selected))
@@ -290,6 +392,7 @@ def main():
         cell = window._cell()
         origin = window._origin()
         p2 = phys(QPoint(origin[0] + 5 * cell[0] + cell[0] // 2, origin[1] + 4 * cell[1] + 20))
+        wait_clickable(window, p1)
         drag_between(p1, p2)
         after = [(storage.find_entry(i).get("col"), storage.find_entry(i).get("row"))
                  for i in window._selected]
@@ -300,10 +403,10 @@ def main():
     def phase7_rightclick():
         print("\n==== 阶段5：右键菜单（问题5） ====", flush=True)
         ok("整理模式右键菜单代码路径存在", hasattr(window, "contextMenuEvent"))
-        storage.set_setting("hide_native_icons", False)
+        storage.set_takeover(False)
         storage.set_setting("auto_clone_desktop", False)
         window.apply_native_icons_setting()
-        time.sleep(0.4)
+        QTest.qWait(400)
         ok("恢复原生模式后 DefView 可见", win32_layer.native_icons_hidden() is False)
         QTimer.singleShot(300, finish)
 
@@ -316,6 +419,10 @@ def main():
         """
         try:
             window._band_guard.untrack(window)
+        except Exception:
+            pass
+        try:
+            topmost(window, False)
         except Exception:
             pass
         try:

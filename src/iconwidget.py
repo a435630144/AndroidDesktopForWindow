@@ -642,11 +642,19 @@ class AppIcon(QWidget):
     def _hit_target(self, gpos):
         """光标下的本应用部件；排除拖影与拖动源自身。
 
-        光标落在拖影上时（拖影热点即光标），退化为用拖影中心
-        （图标的视觉中心）找目标——用户感知的落点是图标位置而非热点。
+        落点三态：
+        - 命中其它部件 -> 原样返回（图标 = 合并/入文件夹，桌面窗口 = 移动）
+        - 命中拖影或自身 -> 用拖影中心（图标视觉中心）再判一次
+        - 仍然判不出（拖影遮挡 / 空白区无子部件）-> 退化为宿主桌面窗口
+
+        第三种是实机病根（2026-10-19 verify_live 抓到）：拖影是
+        Qt.ToolTip 顶层窗口且 WA_TransparentForMouseEvents，光标压在
+        拖影上时 QApplication.widgetAt() 直接返回 None；DesktopWindow
+        空白区没有子部件时 childAt 也返回 None。旧实现就此把落点判成
+        "无目标"，松手什么都不发生——图标永远拖不动。
         """
-        target = QApplication.widgetAt(gpos)
         ghost = self._drag_ghost_w
+        target = QApplication.widgetAt(gpos)
         if target is ghost or target is self:
             if ghost is not None:
                 gc = ghost.mapToGlobal(QPoint(ghost.width() // 2,
@@ -654,7 +662,15 @@ class AppIcon(QWidget):
                 t2 = QApplication.widgetAt(gc)
                 if t2 is not ghost and t2 is not self:
                     return t2
-            return None
+            target = None
+        if target is None:
+            win = self.window()
+            if win is not None and win is not self:
+                try:
+                    if win.rect().contains(win.mapFromGlobal(gpos)):
+                        return win
+                except RuntimeError:      # 窗口已销毁（rebuild 竞态）
+                    return None
         return target
 
     def _send_drag_event(self, widget, event):

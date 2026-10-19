@@ -94,6 +94,66 @@ def main(app):
     if ghost is not None:
         ghost.close()
 
+    # ---------- D4-D7：落点判定（_hit_target）----------
+    # 实机病根（2026-10-19 verify_live 抓到）：拖影是 Qt.ToolTip 顶层窗口，
+    # 且对鼠标透明（WA_TransparentForMouseEvents）——光标正好压在拖影上时
+    # QApplication.widgetAt() 返回 None。旧实现就此把落点判为"无目标"，
+    # 松手什么都不发生（图标永远拖不动）。空白区（无子部件）同理返回 None。
+    import src.iconwidget as iw
+    from PySide6.QtWidgets import QWidget
+
+    host = QWidget()
+    host.setGeometry(0, 0, 400, 300)
+    host.show()
+    ic2 = AppIcon(folder_entry(), 0, layout=lay)
+    ic2.setParent(host)
+    ic2.move(50, 50)
+    ic2.show()
+    app.processEvents()
+
+    class _StubQA:
+        """替换 iconwidget 里的 QApplication，控制 widgetAt 返回值。"""
+        result = None
+
+        @staticmethod
+        def widgetAt(pt):
+            return _StubQA.result
+
+    real_qa = iw.QApplication
+    iw.QApplication = _StubQA
+    try:
+        # D4：widgetAt 返回 None（拖影遮挡 / 空白区）-> 落到宿主窗口
+        _StubQA.result = None
+        t4 = ic2._hit_target(QPoint(200, 200))
+        check("D4 光标下无 Qt 子部件时落点=宿主桌面窗口（拖影遮挡不丢落点）",
+              t4 is host, "got=%r" % (type(t4).__name__,))
+
+        # D5：widgetAt 返回拖影本身 -> 退化为拖影中心再判定，仍无 -> 宿主窗口
+        ghost2 = iw._DragGhost(QPixmap(10, 10))
+        ghost2.show()
+        ic2._drag_ghost_w = ghost2
+        _StubQA.result = ghost2
+        t5 = ic2._hit_target(QPoint(200, 200))
+        check("D5 光标压在拖影上时落点=宿主窗口", t5 is host,
+              "got=%r" % (type(t5).__name__,))
+        ghost2.close()
+        ic2._drag_ghost_w = None
+
+        # D6：正常命中其它部件时原样返回（不抢走 drop 目标）
+        other = QWidget()
+        _StubQA.result = other
+        t6 = ic2._hit_target(QPoint(200, 200))
+        check("D6 命中其它部件时原样返回", t6 is other)
+
+        # D7：窗口外 -> None（外部区域不该被当成内部落点）
+        _StubQA.result = None
+        t7 = ic2._hit_target(QPoint(900, 900))
+        check("D7 光标在桌面窗口之外 -> 无落点", t7 is None,
+              "got=%r" % (type(t7).__name__,))
+    finally:
+        iw.QApplication = real_qa
+        host.close()
+
     print("-" * 56)
     if failures:
         print("FAILED %d: %s" % (len(failures), failures))
