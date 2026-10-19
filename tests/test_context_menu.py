@@ -161,6 +161,39 @@ def main(app):
     texts2 = menu_texts(w2._build_context_menu())
     check("M9 未接管时不出现自绘「新建」", "新建" not in texts2, "%s" % texts2)
 
+    # ---------- M10：「查看 ▸ 自动排列图标」是持久开关（反馈 3） ----------
+    # 用户："应该先右键-查看-自动排列图标，再总是生效"——即资源管理器那套
+    # 语义：勾选后一直按阅读序递进，未勾选时保留空格自由摆放。
+    m3 = w._build_context_menu()
+    view = None
+    for act in m3.actions():
+        if act.text() == "查看":
+            view = act.menu()
+            break
+    check("M10 右键菜单有「查看」子菜单", view is not None)
+    if view is not None:
+        acts = {a.text(): a for a in view.actions()}
+        auto = acts.get("自动排列图标")
+        check("M10 查看下有「自动排列图标」", auto is not None,
+              "%s" % list(acts))
+        check("M10 该项是可勾选开关", auto is not None and auto.isCheckable())
+        check("M10 勾选态来自 storage.auto_arrange",
+              auto is not None
+              and auto.isChecked() == bool(w.storage.get_setting("auto_arrange")),
+              "act=%s storage=%s" % (auto.isChecked() if auto else None,
+                                     w.storage.get_setting("auto_arrange")))
+        check("M10 查看下有「立即整理」", any("立即整理" in t for t in acts),
+              "%s" % list(acts))
+        # 触发一次：勾上 -> 落 setting
+        if auto is not None:
+            was = bool(w.storage.get_setting("auto_arrange"))
+            auto.trigger()
+            settle(app)
+            check("M10 勾选后立刻落 storage.auto_arrange",
+                  bool(w.storage.get_setting("auto_arrange")) is True)
+            # 复原，避免影响后续断言
+            w.storage.set_setting("auto_arrange", was)
+
     w2.close()
     w.close()
     print("-" * 56)

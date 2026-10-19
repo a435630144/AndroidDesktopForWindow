@@ -26,6 +26,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QWidget
 from . import effects
 from . import grid_flow
 from . import theme
+from . import win32_layer
 from .win32_layer import attach_to_desktop
 
 
@@ -189,7 +190,12 @@ class FloatingWidget(QWidget):
         super().showEvent(e)
         # 挂载到桌面带（Progman 正上方）：失败则保持普通无边框窗口（不置顶）。
         # 每次重新显示都重新插入：隐藏再显示后 Windows 可能已改变 z-order。
-        self.attached = attach_to_desktop(self)
+        # 层号 = WIDGET：组件必须**压在整理窗口之上**，否则接管模式下全屏
+        # 桌面窗口的 HTCLIENT 会吞掉组件上的点击与右键（反馈 1 根因）。
+        self.attached = attach_to_desktop(
+            self, layer=win32_layer.BAND_LAYER_WIDGET)
+        if self.attached:
+            win32_layer.enforce_band_order()
         # 进场淡入（开机 / 托盘再次显示都走这里；苹果进出场同路径）
         if not self._closing:
             self.setWindowOpacity(0.0)
@@ -274,8 +280,10 @@ class FloatingWidget(QWidget):
     def _handle_rects(self):
         """八个控制点矩形（部件内坐标）；非编辑态 / 无界模式返回 {}。
 
-        全部画在部件**内部**（外扩一半会落在窗口外，鼠标收不到事件），
-        视觉上用描边 + 半透明填充贴近 iOS/安卓编辑框的观感。
+        控制点**圆心压在虚线上**（2026-10-19 用户反馈 2）：虚线框是
+        rect().adjusted(2,2,-2,-2)，所以控制点中心 = 该框的四角/四边中点，
+        圆点一半在内一半在外——安卓小组件编辑框的观感。旧实现把中心
+        内缩了半个点宽，看起来"浮在框里"。
         """
         if not self._edit_mode or not self.anchored:
             return {}
@@ -283,13 +291,14 @@ class FloatingWidget(QWidget):
             return {}
         s = self._handle_size()
         w, h = self.width(), self.height()
-        inset = s // 2 + 1
+        line = 2                      # 与 paintEvent 的虚线框内缩一致
+        left, top, right, bottom = line, line, w - line, h - line
         pts = {
-            "nw": (inset, inset), "n": (w // 2, inset),
-            "ne": (w - inset, inset),
-            "w": (inset, h // 2), "e": (w - inset, h // 2),
-            "sw": (inset, h - inset), "s": (w // 2, h - inset),
-            "se": (w - inset, h - inset),
+            "nw": (left, top), "n": (w // 2, top),
+            "ne": (right, top),
+            "w": (left, h // 2), "e": (right, h // 2),
+            "sw": (left, bottom), "s": (w // 2, bottom),
+            "se": (right, bottom),
         }
         return {k: QRect(x - s // 2, y - s // 2, s, s)
                 for k, (x, y) in pts.items()}

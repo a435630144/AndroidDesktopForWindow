@@ -23,6 +23,11 @@ from .win32_layer import attach_to_desktop
 WM_NCHITTEST = 0x84
 HTTRANSPARENT, HTCLIENT = -1, 1
 
+# 拥挤推让的悬停时长（ms）：拖到别人格子上停这么久，对方实时让开。
+# 比合并武装（450ms）短——"挤走"是边缘轻触的即时反馈，"建文件夹"是
+# 压在中心静止一会儿的郑重手势，两者不该同时触发。
+PUSH_DWELL_MS = 260
+
 
 class DesktopWindow(QWidget):
     visibilityChanged = Signal(bool)
@@ -75,6 +80,16 @@ class DesktopWindow(QWidget):
         #   _widget_preview_rect  组件新占位矩形（变化检测，防抖）
         self._widget_snap = None
         self._widget_preview_rect = None
+        # 拥挤推让（2026-10-19 反馈 9）：拖到**别人的格子**上停一会儿，对方
+        # 实时让开（手机 launcher 的"边缘重叠 → 挤走"）；停在图标中心则
+        # 由目标图标自己 450ms 武装合并提示（AppIcon._dwell）。两个手势靠
+        # 拖影与目标的重叠比例分流，见 iconwidget._drag_move。
+        self._push_timer = QTimer(self)
+        self._push_timer.setSingleShot(True)
+        self._push_timer.setInterval(PUSH_DWELL_MS)
+        self._push_timer.timeout.connect(self._push_occupied)
+        self._push_cell = None
+        self._push_dragged = None
         # WindowDoesNotAcceptFocus(WS_EX_NOACTIVATE)：永不被激活，
         # 保证桌面带窗口永远压在应用窗口之下，不会抢焦点 / 置顶。
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
@@ -124,9 +139,9 @@ class DesktopWindow(QWidget):
         self.show()
         self.update()  # 强制全窗重绘：命中填充（alpha=2）立即进入 surface
         self._sync_native_icons()
-        if attach_to_desktop(self):
+        if attach_to_desktop(self, layer=win32_layer.BAND_LAYER_DESKTOP):
             self.attached = True
-            self._band_guard.track(self)
+            self._band_guard.track(self, layer=win32_layer.BAND_LAYER_DESKTOP)
             # M1：几何确定后重算网格（WidgetLayer 随后按新 origin 落位）
             self._update_grid_metrics()
             self.visibilityChanged.emit(True)
@@ -168,7 +183,8 @@ class DesktopWindow(QWidget):
         self.update()  # 强制全窗重绘：命中填充（alpha=2）立即进入 surface
         self._sync_native_icons()
         # 重新显示后 Windows 可能改变 z-order，重新插回桌面带
-        attach_to_desktop(self)
+        attach_to_desktop(self, layer=win32_layer.BAND_LAYER_DESKTOP)
+        win32_layer.enforce_band_order()
         self.visibilityChanged.emit(True)
 
     def hide_desktop(self):
@@ -352,9 +368,11 @@ class DesktopWindow(QWidget):
         """
         if self._organize_mode():
             dy = e.angleDelta().y()
-            if abs(dy) >= 15:
-                # 上滚（负 delta）= 上一页；下滚（正 delta）= 下一页
-                self.goto_page(self._page + (-1 if dy < 0 else 1))
+            dx = e.angleDelta().x()
+            # 左右翻页模式下触控板横向滑动同样翻页（y 仍兼容鼠标滚轮）
+            delta = dy if abs(dy) >= abs(dx) else dx
+            if abs(delta) >= 15:
+                self.goto_page(self._page + (-1 if delta < 0 else 1))
             e.accept()
             return
         super().wheelEvent(e)
@@ -388,11 +406,18 @@ class DesktopWindow(QWidget):
             except Exception:
                 return super().nativeEvent(eventType, message)
             if msg.message == WM_NCHITTEST:
-                if self._drag_active or self._ole_active or self._organize_mode():
+                if self._drag_active or self._ole_active:
                     return True, HTCLIENT
                 x = ctypes.c_int16(msg.lParam & 0xFFFF).value
                 y = ctypes.c_int16((msg.lParam >> 16) & 0xFFFF).value
                 pt = QPoint(x, y)
+                # 小组件矩形：让出命中（反馈 1）。带内层号已经保证组件压在
+                # 整理窗口之上，这里是**兜底**——层序尚未生效的那一两百毫秒
+                # 里，也不该让全屏窗口把组件上的点击 / 右键吞掉。
+                if self._hit_widget(pt):
+                    return True, HTTRANSPARENT
+                if self._organize_mode():
+                    return True, HTCLIENT
                 pad = int(round(14 * self.storage.icon_chrome_scale()))
                 for icon in self.icons.values():
                     r = QRect(icon.mapToGlobal(QPoint(0, 0)), icon.size())
@@ -400,6 +425,26 @@ class DesktopWindow(QWidget):
                         return True, HTCLIENT
                 return True, HTTRANSPARENT
         return super().nativeEvent(eventType, message)
+
+    def _hit_widget(self, global_pos) -> bool:
+        """命中点是否落在某个可见小组件窗口内（nativeEvent 兜底放行用）。"""
+        layer = self._widget_layer
+        if layer is None:
+            return False
+        try:
+            items = list(layer.widgets.values())
+        except Exception:
+            return False
+        for w in items:
+            try:
+                if not w.isVisible():
+                    continue
+                r = QRect(w.mapToGlobal(QPoint(0, 0)), w.size())
+                if r.contains(global_pos):
+                    return True
+            except RuntimeError:
+                continue
+        return False
 
     # ---------- 网格几何（几何定义统一在 grid_flow，勿在此重复实现） ----------
     def _cell(self):
@@ -619,6 +664,23 @@ class DesktopWindow(QWidget):
         total = grid_flow.page_count(self.storage)
         if self._page > total - 1:
             self.goto_page(total - 1, animate=False)
+
+    def set_page_axis(self, axis: str):
+        """切换翻页方向（2026-10-19 反馈 5）：horizontal（默认）/ vertical。
+
+        页容量不变，只换页与页之间的滑行轴。切换后立刻按新方向重排——
+        无动画（直接 move），避免"从屏幕外飞进来"的错位感；组件走
+        WidgetLayer.sync_page 与新方向对齐。
+        """
+        axis = "vertical" if str(axis).strip().lower() == "vertical" else "horizontal"
+        self.storage.set_setting("page_axis", axis)
+        for eid, icon in self.icons.items():
+            entry = self.storage.find_entry(eid)
+            if entry is not None:
+                icon.move(*self._entry_pos(entry))
+        if self._widget_layer is not None:
+            self._widget_layer.sync_page(self._page)
+        self.update()
 
     def goto_page(self, page, animate=True):
         """翻到指定页：运行时页同步 + 持久化 + 全体弹簧滑到新页位置。
@@ -997,6 +1059,7 @@ class DesktopWindow(QWidget):
         self._drag_entry_id = None
         self._drag_multi = False
         self._hl_cell = None            # v6 §5.2：红框随拖拽结束撤下
+        self._cancel_push()             # 反馈 9：未触发的推让随松手作废
         if self._preview_moves is not None:
             # 没有落点（拖到窗外 / 拖到资源管理器 / 按 Esc 取消）-> 回退
             self._cancel_preview()
@@ -1095,17 +1158,31 @@ class DesktopWindow(QWidget):
             self._animate_icons_to_layout(moved)
 
     def _displace_from_widgets(self) -> dict:
-        """把落在小组件占位格上的图标挪到第一个空格（排除组件占位）。
-        返回 {id: (col,row)} 位移清单（空 = 无需 displace）。"""
+        """把落在小组件占位格上的图标挪到空格（排除组件占位）。
+        返回 {id: (col,row)} 位移清单（空 = 无需 displace）。
+
+        2026-10-19：改批量分配（grid_flow.displace_cells）——逐个找空格
+        会撞车叠格（反馈 7b）。
+        """
         wc = self._widget_cells()
         if not wc:
             return {}
-        moved = {}
+        rpp = grid_flow.rows_per_page()
+        lo, hi = grid_flow.page_row_range(grid_flow.current_page(), rpp, 1)
+        need = []
         for e in self.storage.layout:
-            if (int(e.get("col", 0)), int(e.get("row", 0))) in wc:
-                col, row = self.storage.first_free_cell(extra_used=wc)
-                e["col"], e["row"] = col, row
-                moved[e["id"]] = (col, row)
+            cell = (int(e.get("col", 0)), int(e.get("row", 0)))
+            if cell in wc:
+                need.append((e, cell))
+        plan = grid_flow.displace_cells([c for _e, c in need], wc,
+                                        self.storage.columns, (lo, hi))
+        moved = {}
+        for e, cell in need:
+            dst = plan.get(cell)
+            if dst is None:
+                continue
+            e["col"], e["row"] = dst
+            moved[e["id"]] = dst
         return moved
 
     # ---------- 锚定组件拖动实时预览（2026-10-18 M4） ----------
@@ -1158,14 +1235,25 @@ class DesktopWindow(QWidget):
             self._restore_snap(self._widget_snap)
         # 其他组件的占位仍要避开；本组件的旧占位释放（图标可回填）
         blocked = rect | (self._widget_cells() - self._widget_entry_rect(entry))
-        moves = {}
+        # 2026-10-19 反馈 7b：批量分配（互不重复）。旧实现逐个
+        # nearest_free_cell 用同一份静态 blocked，两个图标会被分到同一格
+        # ——"排满后再拖组件，图标直接叠在一起"。
+        rpp = grid_flow.rows_per_page()
+        lo, hi = grid_flow.page_row_range(grid_flow.current_page(), rpp, 1)
+        need = []
         for e in self.storage.layout:
             c, r = int(e.get("col", 0)), int(e.get("row", 0))
             if (c, r) in blocked:
-                nc, nr = grid_flow.nearest_free_cell((c, r), blocked,
-                                                     self.storage.columns)
-                e["col"], e["row"] = nc, nr
-                moves[e["id"]] = (nc, nr)
+                need.append((e, (c, r)))
+        plan = grid_flow.displace_cells([c for _e, c in need], blocked,
+                                        self.storage.columns, (lo, hi))
+        moves = {}
+        for e, cell in need:
+            dst = plan.get(cell)
+            if dst is None:
+                continue
+            e["col"], e["row"] = dst
+            moves[e["id"]] = dst
         self._widget_preview_rect = rect
         self._animate_icons_to_layout(moves)
 
@@ -1205,15 +1293,20 @@ class DesktopWindow(QWidget):
             return
         if dragged_id not in self.icons:
             return
-        # 2026-10-19 反馈 4：目标格被**别的图标**占着时不做让位预览。
-        # 旧实现照样跑 _free_moves/reflow 把占用者换走——用户拖着 A 停在 B
-        # 上等合并提示，B 却被瞬间弹走（提示永远出不来）。占用格先让位
-        # 语义改为"松手才换"（commit 路径仍会交换/递进，不丢条目）。
-        # 多选分支不适用（整块平移必须实时预览，见 _reflow_preview_multi）。
+        # 2026-10-19 反馈 4/9：目标格被**别的图标**占着时不立刻让位——
+        # 用户可能想合并（悬停 450ms 出提示）。但也**不能一直不动**：
+        # 手机语义是"边缘重叠并悬浮一会儿 -> 实时把对方挤走"。折中：
+        # 起一个 260ms 的推让计时器，停留够久再算位移（松手/移开即取消）。
+        # 拖动中每次 dragMove 都会重置它，只有真正停住才触发。
         if not self._drag_multi:
             occ = self.storage.occupant(cell[0], cell[1], exclude_id=dragged_id)
             if occ is not None:
+                self._push_cell = cell
+                self._push_dragged = dragged_id
+                self._push_timer.start()
                 return
+        self._push_timer.stop()
+        self._push_cell = None
         if self._auto_arrange():
             cols = self.storage.columns
             # M6：不再传 rows=GridMetrics.rows——那是单屏行数，分页后目标行
@@ -1232,6 +1325,42 @@ class DesktopWindow(QWidget):
     def _auto_arrange(self) -> bool:
         """自动排序开关（v6 §3.2）：False=自由移动（默认）。"""
         return bool(self.storage.get_setting("auto_arrange"))
+
+    def _push_occupied(self):
+        """悬停够久：把占着落点的图标实时挤走（手机 launcher 语义）。
+
+        只在"拖到自己想放的位置并停住"时触发；拖动中不断重置计时器，
+        所以快速划过不会推人。挤走方式跟随自动排列开关：
+          开 -> reflow_moves（递进，后面的图标整体让一格）
+          关 -> 与占位者互换（自由摆放的直觉，不产生空洞链）
+        """
+        cell, dragged = self._push_cell, self._push_dragged
+        self._push_cell = None
+        if cell is None or dragged is None:
+            return
+        if dragged not in self.icons:
+            return
+        occ = self.storage.occupant(cell[0], cell[1], exclude_id=dragged)
+        if occ is None:
+            return  # 已经空出来了（上次推让生效）
+        if self._auto_arrange():
+            moves = grid_flow.reflow_moves(self.storage.layout,
+                                           self.storage.columns, dragged, cell,
+                                           rows=None,
+                                           extra_occupied=self._widget_cells())
+        else:
+            moves = None
+        if not moves:
+            moves = self._free_moves(dragged, cell)
+        if not moves:
+            return
+        self._apply_preview_moves(dragged, moves)
+
+    def _cancel_push(self):
+        """松手/取消：撤掉未触发的推让（避免松手后对方突然跳走）。"""
+        self._push_timer.stop()
+        self._push_cell = None
+        self._push_dragged = None
 
     def _reflow_preview_multi(self, payload: str, cell):
         """多选拖动实时预览（v6 §5.0）：整块刚性平移跟着指针走。
@@ -1322,6 +1451,7 @@ class DesktopWindow(QWidget):
 
     def _commit_preview(self):
         """落点有效：把 preview 写盘。图标已在位上，无需 rebuild。"""
+        self._cancel_push()
         if self._preview_moves is None:
             return
         dragged = self._preview_drag
@@ -1647,7 +1777,8 @@ class DesktopWindow(QWidget):
         # 参照窗口下方——弹窗在整理窗口之下会被其全窗口 HTCLIENT 命中
         # 测试挡住，点不到（2026-10-18 实测）。
         if self.attached:
-            win32_layer.attach_to_desktop(scrim)
+            win32_layer.attach_to_desktop(
+                scrim, layer=win32_layer.BAND_LAYER_SCRIM)
             # v6 §6.2 覆盖性：幕布必须吞掉桌面层所有点击（不穿透）。
             # 只插 Progman 正上方会让幕布落在整理窗口之下——桌面窗口是
             # 全窗口 HTCLIENT，命中测试先收到点击，幕布形同虚设（图标层
@@ -1655,10 +1786,11 @@ class DesktopWindow(QWidget):
             top = win32_layer.band_topmost_hwnd(exclude_hwnd=int(scrim.winId()))
             if top:
                 win32_layer.insert_above_window(int(scrim.winId()), top)
-            self._band_guard.track(scrim)
-            win32_layer.attach_to_desktop(popup)
+            self._band_guard.track(scrim, layer=win32_layer.BAND_LAYER_SCRIM)
+            win32_layer.attach_to_desktop(
+                popup, layer=win32_layer.BAND_LAYER_POPUP)
             popup.attach_above_band()
-            self._band_guard.track(popup)
+            self._band_guard.track(popup, layer=win32_layer.BAND_LAYER_POPUP)
         self._folder_open_icon = icon
         if icon is not None:
             icon.set_folder_open(True)
@@ -1945,7 +2077,14 @@ class DesktopWindow(QWidget):
                 act.triggered.connect(
                     lambda checked=False, t=tier: self._set_icon_tier(t))
             view.addSeparator()
-            view.addAction("自动排列图标", self._tidy)
+            # 2026-10-19 反馈 3：把"自动排列"做成**持久的开关**（与资源
+            # 管理器「查看 ▸ 自动排列图标」同语义）——勾选即立刻整理，
+            # 之后拖动始终递进生效；取消则自由摆放（允许空格）。
+            auto_act = view.addAction("自动排列图标")
+            auto_act.setCheckable(True)
+            auto_act.setChecked(bool(self.storage.get_setting("auto_arrange")))
+            auto_act.triggered.connect(self._toggle_auto_arrange)
+            view.addAction("立即整理（重新排列）", self._tidy)
             dev_act = view.addAction("显示网格调试信息")
             dev_act.setCheckable(True)
             dev_act.setChecked(self._dev_mode())
@@ -1978,10 +2117,6 @@ class DesktopWindow(QWidget):
             if free_now:
                 menu.addAction("添加空白页", self._add_blank_page)
                 menu.addAction("删除当前空白页", self._remove_blank_page)
-            arr_act = menu.addAction("自动排序（拖动后递进）")
-            arr_act.setCheckable(True)
-            arr_act.setChecked(bool(self.storage.get_setting("auto_arrange")))
-            arr_act.triggered.connect(self._toggle_auto_arrange)
             menu.addSeparator()
 
         menu.addAction("添加应用…", self.openAddAppsRequested.emit)
@@ -2114,9 +2249,16 @@ class DesktopWindow(QWidget):
         self.refresh_grid()
 
     def _toggle_auto_arrange(self, checked: bool):
-        """自动排序开关（v6 §3.2）：False=自由移动（落 target 原位留空，
-        不走 reflow_moves——用户默认）；True=拖动后 reflow 递进。"""
-        self.storage.set_setting("auto_arrange", bool(checked))
+        """自动排列开关（反馈 3）：勾选即整理一次，之后始终按阅读序递进。
+
+        语义与资源管理器「查看 ▸ 自动排列图标」一致：**先打开，再总是
+        生效**。未开启时保留空格（自由摆放），拖进空格不会再触发整段
+        平移——这正是用户说的"前方有空格时移动逻辑很混乱"。
+        """
+        on = bool(checked)
+        self.storage.set_setting("auto_arrange", on)
+        if on:
+            self._tidy()
 
     def _toggle_layout_mode(self):
         """v6 §1.3：网格 <-> 无界 切换（桌面右键 / 托盘同一入口）。"""

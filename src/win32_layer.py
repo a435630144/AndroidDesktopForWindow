@@ -189,16 +189,99 @@ def is_above(hwnd: int, other: int) -> bool:
 # 过滤；显式 unregister 供 close 路径调用。
 _BAND_HWNDS = []
 
+# ---------- 桌面带层级（2026-10-19 用户反馈 1/7 的根因） ----------
+# 病根：旧守护只认「紧贴 Progman 上方一位」＝在带内，其余一律重插。桌面窗口、
+# 各小组件、幕布、弹窗同时被跟踪时，每个窗口都只有最底下那个满足该判定，
+# 于是每 1.5s 全体被重插一遍 —— 组件被压到桌面窗口之下（点不到、右键穿透到
+# 桌面菜单）、层级反复抖动（文件夹玻璃闪、焦点被桌面抢回）。
+#
+# 现在改成**显式层号 + 稳定重排**：层号小的在下面；只有相对顺序真的被破坏
+# 时才动 z-order（正常情况零操作，不再抖）。
+BAND_LAYER_DESKTOP = 10   # 全屏整理窗口（图标层）
+BAND_LAYER_WIDGET = 20    # 小组件（必须在图标层之上，否则整窗 HTCLIENT 会吞事件）
+BAND_LAYER_SCRIM = 30     # 文件夹幕布
+BAND_LAYER_POPUP = 40     # 文件夹弹窗（带内最顶）
 
-def register_band_window(hwnd: int):
-    """登记桌面带成员（attach_to_desktop 成功时调用）。"""
+_BAND_LAYERS = {}         # hwnd -> layer
+
+
+def set_band_layer(hwnd: int, layer: int):
+    """登记桌面带成员及其层号（数值越小越靠下）。"""
+    try:
+        hwnd = int(hwnd)
+    except (TypeError, ValueError):
+        return
+    if hwnd:
+        _BAND_LAYERS[hwnd] = int(layer)
+        if hwnd not in _BAND_HWNDS:
+            _BAND_HWNDS.append(hwnd)
+
+
+def band_layer(hwnd: int):
+    return _BAND_LAYERS.get(int(hwnd))
+
+
+def band_order(zorder=None) -> list:
+    """按层号排出我们自己的桌面带窗口（自底向上）。"""
+    wins = list(zorder) if zorder is not None else _enum_zorder()
+    items = [(hw, ly) for hw, ly in _BAND_LAYERS.items()
+             if hw in wins and _user32.IsWindowVisible(hw)]
+    items.sort(key=lambda t: (t[1], wins.index(t[0])))
+    return [hw for hw, _ in items]
+
+
+def enforce_band_order(progman: int = 0, zorder=None) -> bool:
+    """把桌面带窗口按层号重排成「Progman 上方连续一段」。
+
+    只在顺序被破坏时动作（返回 True 表示做了重排）——正常态每轮只枚举一次
+    z-order，零 SetWindowPos，避免旧实现的周期性抖动。
+    """
+    progman = progman or _progman()
+    wins = list(zorder) if zorder is not None else _enum_zorder()
+    if not progman or progman not in wins:
+        return False
+    order = band_order(wins)
+    if not order:
+        return False
+    pidx = wins.index(progman)
+    ok = wins.index(order[0]) == pidx - 1
+    for prev, cur in zip(order, order[1:]):
+        if not ok:
+            break
+        ok = wins.index(cur) == wins.index(prev) - 1
+    if ok:
+        return False
+    prev = 0
+    for hw in order:
+        if prev:
+            insert_above_window(hw, prev)
+        else:
+            _insert_above(hw, progman)
+        prev = hw
+    return True
+
+
+def register_band_window(hwnd: int, layer: int = 0):
+    """登记桌面带成员（attach_to_desktop 成功时调用）。
+
+    layer 缺省时沿用已登记层号；都没有则按「最底层」处理——旧调用点
+    （探针 / 外部脚本）不需要改动。
+    """
     hwnd = int(hwnd)
-    if hwnd and hwnd not in _BAND_HWNDS:
+    if not hwnd:
+        return
+    if layer:
+        set_band_layer(hwnd, layer)
+    elif hwnd not in _BAND_HWNDS:
         _BAND_HWNDS.append(hwnd)
 
 
 def unregister_band_window(hwnd: int):
     """注销桌面带成员（窗口关闭路径调用）。"""
+    try:
+        _BAND_LAYERS.pop(int(hwnd), None)
+    except (TypeError, ValueError):
+        pass
     try:
         _BAND_HWNDS.remove(int(hwnd))
     except ValueError:
@@ -221,7 +304,7 @@ def band_topmost_hwnd(exclude_hwnd: int = 0, zorder=None) -> int:
     return best
 
 
-def attach_to_desktop(widget, below_hwnd: int = 0) -> bool:
+def attach_to_desktop(widget, below_hwnd: int = 0, layer: int = 0) -> bool:
     """把 Qt 窗口放入桌面带（壁纸之上、应用窗口之下）。
 
     调用方必须已经 show() 过该窗口。below_hwnd 可选：给定另一个
@@ -249,11 +332,80 @@ def attach_to_desktop(widget, below_hwnd: int = 0) -> bool:
                 break
             ctypes.windll.kernel32.Sleep(50)
         if is_above(hwnd, progman):
-            register_band_window(hwnd)
+            register_band_window(hwnd, layer)
             return True
         return False
     except Exception:
         return False
+
+
+def native_icon_size(default: int = 48) -> int:
+    """资源管理器当前桌面图标边长（逻辑像素）——「原桌面图标多大」。
+
+    来源（按可靠性排序）：
+      1. `HKCU\\Software\\Microsoft\\Windows\\Shell\\Bags\\1\\Desktop\\IconSize`
+         （explorer 自己记的值，逻辑像素：125% 缩放下 48 会渲染成 60 物理）；
+      2. `SPI_GETICONMETRICS.iIconSize`（老系统 / Bags 缺失时的系统值）；
+      3. 回退 default（Windows 默认「中图标」48）。
+    夹到 [16, 256]，脏值不至于炸掉网格。
+    """
+    raw = 0
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\Shell\Bags\1\Desktop") as k:
+            raw = int(winreg.QueryValueEx(k, "IconSize")[0])
+    except Exception:
+        raw = 0
+    if not (16 <= raw <= 256):
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class _ICONMETRICS(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.UINT),
+                            ("iHorSpacing", ctypes.c_int),
+                            ("iVertSpacing", ctypes.c_int),
+                            ("iIconSize", ctypes.c_int),
+                            ("iMenuFont", ctypes.c_int)]
+
+            m = _ICONMETRICS()
+            m.cbSize = ctypes.sizeof(_ICONMETRICS)
+            ok = _user32.SystemParametersInfoW(0x002B, 0, ctypes.byref(m), 0)
+            if ok and 16 <= int(m.iIconSize) <= 256:
+                raw = int(m.iIconSize)
+        except Exception:
+            raw = 0
+    if not (16 <= raw <= 256):
+        raw = int(default)
+    return max(16, min(256, int(raw)))
+
+
+def native_icon_spacing(default=(75, 75)):
+    """原生桌面的图标水平 / 垂直间距（逻辑像素，ICONMETRICS 单位）。
+
+    仅用于「按原生密度铺网格」的参考；读不到返回 Windows 默认 75x75。
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _ICONMETRICS(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.UINT),
+                        ("iHorSpacing", ctypes.c_int),
+                        ("iVertSpacing", ctypes.c_int),
+                        ("iIconSize", ctypes.c_int),
+                        ("iMenuFont", ctypes.c_int)]
+
+        m = _ICONMETRICS()
+        m.cbSize = ctypes.sizeof(_ICONMETRICS)
+        if _user32.SystemParametersInfoW(0x002B, 0, ctypes.byref(m), 0):
+            h = max(16, int(m.iHorSpacing))
+            v = max(16, int(m.iVertSpacing))
+            return h, v
+    except Exception:
+        pass
+    return int(default[0]), int(default[1])
 
 
 def diagnose_desktop_layer() -> dict:

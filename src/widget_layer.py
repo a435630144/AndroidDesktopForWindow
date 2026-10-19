@@ -4,6 +4,7 @@ from PySide6.QtCore import QObject, QPoint, Signal
 from PySide6.QtWidgets import QApplication
 
 from . import grid_flow
+from . import win32_layer
 from .band_guard import BandGuard
 from .widget_base import FloatingWidget
 from .widgets_clock import ClockWidget
@@ -130,8 +131,11 @@ class WidgetLayer(QObject):
             row = int(entry.get("row", 0) or 0)
             if grid_flow.page_of(row, rpp) != grid_flow.current_page():
                 w.hide()
-        # 小组件同样纳入桌面带守护（防 Win+D 等场景漂移后盖住应用窗口）
-        self._band_guard.track(w)
+        # 小组件同样纳入桌面带守护（防 Win+D 等场景漂移后盖住应用窗口）。
+        # 层号 = WIDGET：必须压在整理窗口之上——整理窗口在接管模式全窗口
+        # HTCLIENT，组件落在它下面会被吞掉全部点击（反馈 1 的根因）。
+        win32_layer.enforce_band_order()
+        self._band_guard.track(w, layer=win32_layer.BAND_LAYER_WIDGET)
 
     def exit_all_edit(self):
         """退出所有组件的编辑态（点桌面空白 / 开右键菜单时调用）。

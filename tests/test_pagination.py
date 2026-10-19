@@ -141,19 +141,22 @@ def main(app):
     grid_flow._current_metrics = saved   # 还原快照
 
     # ---------- T3：cell_pos / pos_cell ----------
+    # 2026-10-19 反馈 5：默认轴改成左右（horizontal），页间滑行沿 x。
+    # 垂直路径由 test_page_axis 的 A3/A5 覆盖，这里只验默认行为。
     ox, oy = grid_flow.origin()
+    shift_x = grid_flow.page_canvas_w(st0)      # = cols * cw
     check("T3 cell_pos 当前页局部映射",
           grid_flow.cell_pos(st0, 2, 3) == (ox + 2 * cw, oy + 3 * ch))
     grid_flow.set_page(1)
-    check("T3 cell_pos 次页行翻页后进屏内",
+    check("T3 cell_pos 次页行翻页后回到屏内正常位置",
           grid_flow.cell_pos(st0, 2, 3 + rpp) == (ox + 2 * cw, oy + 3 * ch),
           "%s" % (grid_flow.cell_pos(st0, 2, 3 + rpp),))
-    check("T3 cell_pos 首页行翻页后滑出屏顶（rel 为负）",
-          grid_flow.cell_pos(st0, 2, 3) == (ox + 2 * cw,
-                                            oy + (3 - rpp) * ch),
+    check("T3 cell_pos 首页行翻页后滑出屏左（x 为负）",
+          grid_flow.cell_pos(st0, 2, 3) == (ox + 2 * cw - shift_x, oy + 3 * ch),
           "%s" % (grid_flow.cell_pos(st0, 2, 3),))
-    check("T3 pos_cell 反算 + 页偏移",
-          grid_flow.pos_cell(st0, ox + 2 * cw, oy + 3 * ch) == (2, 3 + rpp))
+    check("T3 pos_cell 反算（屏幕坐标即当前页坐标）",
+          grid_flow.pos_cell(st0, ox + 2 * cw, oy + 3 * ch) == (2, 3 + rpp),
+          "%s" % (grid_flow.pos_cell(st0, ox + 2 * cw, oy + 3 * ch),))
     grid_flow.set_page(0)
     check("T3 pos_cell page0 反算",
           grid_flow.pos_cell(st0, ox + 2 * cw, oy + 3 * ch) == (2, 3))
@@ -168,17 +171,18 @@ def main(app):
     w = fresh_window(st)
     # 反馈 1：entry_pos 含 icon 在 cell 内的居中留白
     dx, dy = grid_flow.icon_center_offset(st)
+    shift_x = grid_flow.page_canvas_w(st)
     check("T4 page0 条目在屏内",
           w._entry_pos(st.find_entry("p0")) == (ox + dx, oy + dy))
-    check("T4 次页条目在屏外（y = oy + rpp*ch，屏下方）",
-          w._entry_pos(st.find_entry("p1"))[1] == oy + rpp * ch + dy
-          and w._entry_pos(st.find_entry("p2"))[1] == oy + (rpp + 1) * ch + dy,
+    check("T4 次页条目在屏外（x = ox + cols*cw，屏右侧）",
+          w._entry_pos(st.find_entry("p1"))[0] == ox + shift_x + dx
+          and w._entry_pos(st.find_entry("p2"))[0] == ox + cw + shift_x + dx,
           "%s" % (w._entry_pos(st.find_entry("p1")),))
     grid_flow.set_page(1)
     check("T4 翻到 page1 后次页条目进屏内、首页条目出屏",
           w._entry_pos(st.find_entry("p1")) == (ox + dx, oy + dy)
           and w._entry_pos(st.find_entry("p2")) == (ox + cw + dx, oy + ch + dy)
-          and w._entry_pos(st.find_entry("p0"))[1] == oy - rpp * ch + dy,
+          and w._entry_pos(st.find_entry("p0"))[0] == ox - shift_x + dx,
           "%s" % (w._entry_pos(st.find_entry("p0")),))
     grid_flow.set_page(0)
 

@@ -30,6 +30,7 @@ from PySide6.QtWidgets import QApplication
 from src import grid_flow, theme, win32_layer
 from src.desktop_window import DesktopWindow
 from src.folder_popup import BandInputBox, FolderPopup, ScrimWindow
+from src.iconwidget import AppIcon
 from src.storage import Storage
 
 W, H = 1920, 1040
@@ -259,7 +260,7 @@ def main(app):
     real = (win32_layer.attach_to_desktop, win32_layer.insert_above_window,
             win32_layer.band_topmost_hwnd)
 
-    def _fake_attach(widget, below_hwnd=0):
+    def _fake_attach(widget, below_hwnd=0, layer=0):
         fake_z.append(int(widget.winId()))     # 带内最底（Progman 正上方）
         return True
 
@@ -301,6 +302,43 @@ def main(app):
             check("F10 弹窗压在幕布之上（带内最顶）",
                   fake_z.index(phw) < fake_z.index(shw),
                   "z=%s" % (fake_z,))
+
+            # ---------- F11：成员紧凑网格（反馈 6，参照手机文件夹） ----------
+            # 旧实现一上来就 4 列，4 个成员排成一行又稀又长；参考图是
+            # 2×2 / 3×3 的紧凑阵。列数按数量分档，图标比桌面小一档，
+            # 且**不显示文件名**（密度靠去掉标签行换来）。
+            check("F11 1~4 个成员 -> 2 列",
+                  [pop._member_cols(n) for n in (1, 2, 3, 4)] == [2, 2, 2, 2],
+                  "%s" % [pop._member_cols(n) for n in (1, 2, 3, 4)])
+            check("F11b 5~9 个成员 -> 3 列（九宫格）",
+                  [pop._member_cols(n) for n in (5, 6, 9)] == [3, 3, 3],
+                  "%s" % [pop._member_cols(n) for n in (5, 6, 9)])
+            check("F11c 10 个以上 -> 4 列",
+                  [pop._member_cols(n) for n in (10, 13, 20)] == [4, 4, 4],
+                  "%s" % [pop._member_cols(n) for n in (10, 13, 20)])
+            base_icon = int(st3.icon_metric())
+            check("F11d 成员图标比桌面图标小一档",
+                  pop._member_icon_size() < base_icon,
+                  "member=%d desktop=%d" % (pop._member_icon_size(),
+                                            base_icon))
+            members = [c for c in pop.findChildren(AppIcon) if c.in_folder]
+            check("F11e 文件夹内成员已生成", len(members) >= 1,
+                  "n=%d" % len(members))
+            check("F11f 成员不画文件名（紧凑格）",
+                  all(getattr(c, "_no_label", False) for c in members),
+                  "%s" % [getattr(c, "_no_label", None) for c in members])
+            cw0, _ch0 = grid_flow.cell_size(st3)
+            check("F11g 成员间距小于一个桌面格（紧凑）",
+                  pop._member_pitch() < cw0,
+                  "pitch=%d cell_w=%d" % (pop._member_pitch(), cw0))
+            if members:
+                ic0 = members[0]
+                check("F11h 成员控件尺寸 = 成员图标 + 紧凑留白",
+                      ic0.width() == pop._member_box()
+                      and ic0.height() == pop._member_box(),
+                      "got=(%d,%d) box=%d" % (ic0.width(), ic0.height(),
+                                              pop._member_box()))
+
             # 幕布吞点击：点击幕布 -> 发射 clicked 且弹窗关闭
             got_click = []
             scr.clicked.connect(lambda: got_click.append(1))

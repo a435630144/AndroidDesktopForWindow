@@ -29,8 +29,14 @@ DEFAULT_SETTINGS = {
     "icon_tier": "medium",     # 图标三档（网格模式）：small .58 / medium .74 / large 1.0
     "layout_mode": "grid",     # 布局模式：grid 网格（默认）| free 无界
     "icon_px": 96,             # 无界模式图标像素（网格模式置灰，由档位决定）
-    "auto_arrange": False,     # 自动排序：False=自由移动（落 target 原位留空），
-                               # True=拖动后 reflow 递进（旧 M2 行为）
+    "auto_arrange": False,     # 自动排列：False=自由移动（落 target 原位留空），
+                               # True=拖动后 reflow 递进（旧 M2 行为）。
+                               # 2026-10-19 反馈 3：改为右键「查看 ▸ 自动排列
+                               # 图标」的**持久开关**——先打开，再始终生效。
+    # 2026-10-19 用户反馈 4/5（新增）
+    "icon_match_native": True,  # 图标本体对齐系统桌面：读 explorer 的
+                                # IconSize 反推 cell（接管后大小一致）
+    "page_axis": "horizontal",  # 翻页方向：horizontal（默认，左右）| vertical
     "extra_pages": [],         # 无界模式空白页页码列表（如 [3,5]）
     "takeover_desktop": True,  # 「接管系统桌面」合并开关（替代 hide_native_icons
                                # 语义入口；旧键仍兼容读取）

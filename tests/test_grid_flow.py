@@ -386,6 +386,10 @@ def main():
         def columns(self):
             return self._cols
 
+        def get_setting(self, key):
+            # 翻页轴 / 布局模式等设置读口（真实 Storage 同名方法）
+            return {"page_axis": "horizontal", "layout_mode": "grid"}.get(key)
+
         def icon_metric(self):
             return self._metric
 

@@ -36,6 +36,41 @@ from src.tray import SystemTray
 from src.widget_layer import WidgetLayer
 
 
+def _install_crash_logger():
+    """窗口化(--windowed)构建会把 stderr 静默丢弃，启动期/事件循环里的未捕获
+    异常完全看不到，导致「exe 一闪而过 / 静默退出」却查不到原因。
+
+    这里把 traceback 落盘到 crash.log，下次跑 exe 直接看该文件即可定位。
+    """
+    import os
+    import tempfile
+    import traceback
+    import datetime
+
+    base = os.environ.get("APPDATA")
+    d = os.path.join(base, "DesktopOrganizerDemo") if base else tempfile.gettempdir()
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        d = tempfile.gettempdir()
+    log = os.path.join(d, "crash.log")
+
+    def _hook(etype, exc, tb):
+        try:
+            with open(log, "a", encoding="utf-8") as f:
+                f.write("\n=== %s ===\n" % datetime.datetime.now().isoformat())
+                traceback.print_exception(etype, exc, tb, file=f)
+                f.write("crash.log 路径: %s\n" % log)
+        except Exception:
+            pass
+        try:
+            sys.__excepthook__(etype, exc, tb)
+        except Exception:
+            pass
+
+    sys.excepthook = _hook
+
+
 def main() -> int:
     ensure_app_dirs()
 
@@ -113,4 +148,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    _install_crash_logger()
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception:
+        sys.excepthook(*sys.exc_info())
+        raise

@@ -299,8 +299,41 @@ class FolderPopup(QWidget):
     def _members_rect(self):
         """成员网格区域（标题下、工具条上）。"""
         _s, m, pad, title_h, bar_h = self._metrics()
-        return QRect(pad, title_h, self.width() - pad * 2,
+        return QRect(pad // 2, title_h, self.width() - pad,
                      self.height() - title_h - bar_h)
+
+    def _member_icon_size(self):
+        """文件夹内部图标边长（比桌面图标小一档；手机文件夹的密度）。"""
+        base = max(40, int(self.storage.icon_metric()))
+        return max(34, int(round(base * 0.62)))
+
+    def _member_box(self):
+        """单个成员占位方块（含内部留白）边长。"""
+        m = self.storage.icon_chrome_scale()
+        pad = max(2, int(round(4 * m)))
+        return self._member_icon_size() + pad * 2
+
+    def _member_cols(self, n: int) -> int:
+        """成员列数（2026-10-19 反馈 6，参照手机文件夹）：
+
+        1~4 个 -> 2 列（2×2 / 2×1），5~9 个 -> 3 列（九宫格），
+        10 个以上 -> 4 列。旧实现一上来就 4 列，4 个成员排成一行显得
+        又稀又长，和用户给的参考图（2×2 / 3×3）完全不同。
+        """
+        if n <= 0:
+            return 2
+        if n <= 4:
+            return 2
+        if n <= 9:
+            return 3
+        return 4
+
+    def _member_pitch(self):
+        """成员格间距：紧凑，只留一个小间隙（没有文件名行）。"""
+        m = self.storage.icon_chrome_scale()
+        box = self._member_box()
+        gap = max(4, int(round(12 * m)))
+        return box + gap
 
     def _title_rect(self):
         _s, m, pad, title_h, _b = self._metrics()
@@ -331,16 +364,16 @@ class FolderPopup(QWidget):
         self._empty = not members
         self._empty_hint = ("空文件夹\n从桌面拖入，或点底部「＋ 添加」"
                             if self._empty else "")
-        # iOS 文件夹网格：1~2 个成员 2 列（不稀拉）；3 个及以上 4 列
-        # （旧版 min(4, max(2, (n+1)//2)) 让 4 个成员排成 2x2，被用户
-        # 反馈"展开 UI 完全不对"——iOS 是单行 4 列起步）
+        # iOS 文件夹网格：按成员数选 2 / 3 / 4 列（2026-10-19 反馈 6
+        # 参照手机文件夹截图：4 个 = 2×2，5~9 个 = 3×3 紧凑方阵）
         n = len(members)
-        cols = 2 if n <= 2 else 4
+        cols = self._member_cols(n)
         rows = max(1, (len(members) + cols - 1) // cols)
-        pitch_x = icon_size + int(round(22 * m))
-        pitch_y = icon_size + int(round(44 * m))
-        w = pad * 2 + (cols - 1) * pitch_x + icon_size
-        h = pad + title_h + (rows - 1) * pitch_y + (icon_size + int(round(42 * m))) + bar_h + pad - int(round(8 * m))
+        box = self._member_box()
+        pitch = self._member_pitch()
+        w = pad + cols * box + (cols - 1) * max(0, pitch - box)
+        content_h = rows * box + (rows - 1) * max(0, pitch - box)
+        h = title_h + content_h + bar_h + pad
         # 高度不超过可用屏幕的 82%：桌面文件全拖进来的极端情况不顶出屏幕
         # v6 §6.2（指导文档 §6.2 反馈 8/9）：弹窗中心对齐**当前页网格区
         # 中心**——幕布吞掉桌面层点击后弹窗是模态面板，从任意位置的文件夹
@@ -369,15 +402,16 @@ class FolderPopup(QWidget):
         for i, app in enumerate(members):
             member_payload = "M:%s:%d" % (self.entry.get("id"), i)
             entry = {"id": member_payload, "type": "app", "app": app}
-            icon = AppIcon(entry, icon_size, in_folder=True, parent=self,
-                           chrome_scale=m)
+            icon = AppIcon(entry, self._member_icon_size(), in_folder=True,
+                           parent=self, chrome_scale=m, compact=True,
+                           show_label=False)
             icon.drag_payload = member_payload
             icon.dragStarted.connect(self._on_drag_start)
             icon.dragFinished.connect(self._on_drag_finish)
             icon.activated.connect(self.launchApp.emit)
             icon.removeFromFolder.connect(self.removeMember.emit)
-            icon.move(pad + (i % cols) * pitch_x,
-                      pad + title_h + (i // cols) * pitch_y)
+            icon.move(pad // 2 + (i % cols) * pitch,
+                      title_h + (i // cols) * pitch)
             # 弹窗内图标错峰淡入（玻璃涌出后依次浮现）
             icon.appear_in(120 + i * 45)
             icon.show()
@@ -476,11 +510,17 @@ class FolderPopup(QWidget):
         self._regrab_backdrop()
 
     def _regrab_backdrop(self):
-        """背板重抓：隐藏本窗 → 抓屏 → 同帧显示回（避免把自己抓进去）。"""
+        """背板重抓：隐藏本窗 → 抓屏 → 同帧显示回（避免把自己抓进去）。
+
+        重新 show 会改变 z-order（Windows 把刚显示的窗口提到同层前部），
+        必须补一次带内最顶挂载，否则下一次鼠标移动时点到的又是底下的
+        桌面窗口 —— 这是"移动鼠标就丢焦点"的另一半病根。
+        """
         self.hide()
         self._backdrop = effects.glass_backdrop(
             QRect(self.x(), self.y(), self.width(), self.height()))
         self.show()
+        self.attach_above_band()
 
     def attach_above_band(self):
         """挂桌面带后插到**带内最顶**（指导文档 §4.2，决策 D5）：
@@ -668,11 +708,23 @@ class FolderPopup(QWidget):
         # 缩放系数夹紧到合法区间：任何中断残留的中间值都不该让面板缩水
         # （稳态 1.0 = 面板与内容区完全重合，2026-10-19 反馈）
         z = min(1.0, max(0.05, float(self._zoom)))
-        # 玻璃表面：以图标中心为原点缩放着陆（z<1 时小于窗口，
-        # 周围全透明——视觉上就是玻璃从图标位置涌出）
-        w, h = self.width() * z, self.height() * z
-        rect = QRectF(self._zoom_center.x() - w / 2,
-                      self._zoom_center.y() - h / 2, w, h)
+        # 玻璃表面：从图标位置**扩张到整个弹窗**（z<1 时是一个以图标中心
+        # 为心的小矩形，周围全透明——视觉上就是玻璃从图标处涌出）。
+        #
+        # 2026-10-19 反馈 7a（"文件夹的背景也消失了"）根因就在这一行：
+        # 旧实现 rect = (zoom_center - size*z/2, size*z)，无论 z 多大都
+        # **以图标中心为中心**。图标在网格里、弹窗居中于屏幕，两者相距
+        # 几百像素——于是 z=1 时玻璃刚好整块画在窗口外面，paintEvent 里
+        # 只剩标题/×/成员/工具条这些定位在窗口内的控件可见：看起来就是
+        # "文件夹没有背景了"。正确做法是在「图标点」与「窗口矩形」之间
+        # 按 z 线性插值：z=1 恰好等于窗口矩形。
+        cx, cy = self._zoom_center.x(), self._zoom_center.y()
+        full_w, full_h = float(self.width()), float(self.height())
+        left = cx + (0.0 - cx) * z
+        top = cy + (0.0 - cy) * z
+        right = cx + (full_w - cx) * z
+        bottom = cy + (full_h - cy) * z
+        rect = QRectF(left, top, max(0.0, right - left), max(0.0, bottom - top))
         try:
             effects.paint_glass(p, rect, self._backdrop, theme.GLASS_RADIUS * z)
         except Exception:
@@ -810,10 +862,14 @@ class FolderPopup(QWidget):
     _title_hover = False
 
     def focusOutEvent(self, e):
-        # NOACTIVATE 窗口通常不会获得焦点，此回调多为兜底；
-        # 主动关闭路径见 幕布点击 / DesktopWindow 空白点击 / × 按钮。
-        if not self._dragging:
-            self.close()
+        """**不自动关闭**（2026-10-19 用户反馈 7）。
+
+        旧实现一失焦就 close()：弹窗是 NOACTIVATE 桌面带窗口，鼠标一动
+        引起的激活变化（点图标 / 幕布重挂 / 小组件刷新）都会触发 FocusOut，
+        于是"刚展开正常，一动鼠标就收起、背景消失、选不到里面的文件"。
+        关闭路径改为显式三条：幕布点击 / 桌面空白点击 / 右上角 ×。
+        """
+        e.accept()
 
     def closeEvent(self, e):
         self.closed.emit()

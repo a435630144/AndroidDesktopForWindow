@@ -168,6 +168,35 @@ def main(app):
         check("R6 视觉宽度与跨度一致", note.width() == cs * cw,
               "w=%d span=%d×%d" % (note.width(), cs, rs))
 
+        # ---------- R7：控制点圆心压在虚线框上（反馈 2） ----------
+        # 虚线框 = rect().adjusted(2,2,-2,-2)；控制点是圆，圆心必须落在
+        # 那条线上（一半在内一半在外），旧实现内缩半个点宽 -> 看着"浮在框里"。
+        note._enter_edit()
+        hs = note._handle_rects()
+        w, h = note.width(), note.height()
+        line = 2
+        centers = {k: (r.center().x(), r.center().y()) for k, r in hs.items()}
+        check("R7 角控制点圆心落在虚线框四角",
+              abs(centers["nw"][0] - line) <= 1
+              and abs(centers["nw"][1] - line) <= 1
+              and abs(centers["se"][0] - (w - line)) <= 1
+              and abs(centers["se"][1] - (h - line)) <= 1,
+              "nw=%s se=%s line=%d" % (centers["nw"], centers["se"], line))
+        check("R7 边中点圆心落在虚线框边线上",
+              abs(centers["n"][1] - line) <= 1
+              and abs(centers["s"][1] - (h - line)) <= 1
+              and abs(centers["w"][0] - line) <= 1
+              and abs(centers["e"][0] - (w - line)) <= 1,
+              "n=%s s=%s w=%s e=%s" % (centers["n"], centers["s"],
+                                       centers["w"], centers["e"]))
+        check("R7 控制点跨在线上（框内框外都有像素）",
+              all(r.left() < line if k in ("nw", "w", "sw") else True
+                  for k, r in hs.items())
+              and all(r.top() < line if k in ("nw", "n", "ne") else True
+                      for k, r in hs.items()),
+              "%s" % {k: (r.left(), r.top()) for k, r in hs.items()})
+        note._exit_edit()
+
         # ---------- R2b：退出编辑态 ----------
         note._exit_edit()
         check("R2b 退出编辑态后控制点清空", note._handle_rects() == {})

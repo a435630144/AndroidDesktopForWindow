@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-"""拖影只保留原图标（2026-10-19 用户反馈："拖拽还有一个白框，不好看"）。
+"""拖动浮影：**有文件名、没有白框**（2026-10-19 反馈 8）。
 
-病根：`_drag_snapshot()` 直接 `render()` 整个 AppIcon 部件——悬停/选中/
-合并目标态的**背景圆角矩形与标签**一起被烘进拖影，拖动时看到的是一张
-带白框的卡片，而不是手指下那个图标。
+历史：第一版 render() 整个部件 -> 白框（调色板底色 + 选中底色一起烘进去）；
+第二版改成只画图标本体 -> 白框没了，但**文件名也没了**（用户反馈 8）。
+最终契约：透明底 pixmap 上手绘「图标本体 + 标签」，两轮反馈同时满足。
 
-契约：
-  P1 快照尺寸 = 图标绘制区（不含标签行与左右留白）
-  P2 悬停 + 选中态下快照四角全透明（背景框没被烘进去）
-  P3 快照中心仍有内容（图标本体没被裁掉）
-  P4 快照不改动控件自身状态（selected / hover 原样）
-  P5 普通应用图标与文件夹瓷砖都成立
+  P1 快照尺寸 = 整个 widget（图标区 + 标签区）
+  P2 四角全透明（没有卡片底色 / 白框）
+  P3 图标绘制区有内容
+  P4 标签区有内容（文件名没丢）
+  P5 快照不改动控件状态
+  P6 文件夹瓷砖同样成立
 
 运行：python tests/test_drag_ghost_icon_only.py   （offscreen）
 """
@@ -48,51 +48,60 @@ def app_entry():
 
 def corner_alphas(pm):
     img = pm.toImage()
-    w, h = img.width(), img.height()
+    dpr = max(1.0, pm.devicePixelRatio())
+    w, h = int(img.width() / dpr), int(img.height() / dpr)
     return [img.pixelColor(0, 0).alpha(),
             img.pixelColor(w - 1, 0).alpha(),
             img.pixelColor(0, h - 1).alpha(),
             img.pixelColor(w - 1, h - 1).alpha()]
 
 
+def opaque_count(img, x0, y0, x1, y1, step=1):
+    n = 0
+    for y in range(max(0, y0), min(img.height(), y1), step):
+        for x in range(max(0, x0), min(img.width(), x1), step):
+            if img.pixelColor(x, y).alpha() > 8:
+                n += 1
+    return n
+
+
 def main(app):
     lay = gs.icon_layout(83, 102, "medium")
-    box = int(lay.icon_box)
-
-    ic = AppIcon(folder_entry(), 0, layout=lay)
-    # 模拟拖动起点最常见的状态：指针压在上面（悬停）+ 已选中
+    ic = AppIcon(app_entry(), 0, layout=lay)
     ic._hover = True
     ic.selected = True
     snap = ic._drag_snapshot()
+    dpr = max(1.0, snap.devicePixelRatio())
+    w, h = int(snap.width() / dpr), int(snap.height() / dpr)
 
-    check("P1 快照尺寸 = 图标绘制区（无标签行/留白）",
-          (snap.width(), snap.height()) == (box, box),
-          "got=%s want=%s" % ((snap.width(), snap.height()), (box, box)))
+    check("P1 快照尺寸 = 整个 widget（含标签）",
+          (w, h) == (ic.width(), ic.height()),
+          "got=%s want=%s" % ((w, h), (ic.width(), ic.height())))
 
     alphas = corner_alphas(snap)
-    check("P2 悬停+选中态下快照四角全透明（白框未被烘入）",
-          all(a == 0 for a in alphas), "corners=%s" % (alphas,))
+    check("P2 四角全透明（无白框/卡片底色）", all(a == 0 for a in alphas),
+          "corners=%s" % (alphas,))
 
     img = snap.toImage()
-    c_alp = img.pixelColor(box // 2, box // 2).alpha()
-    check("P3 快照中心仍有图标内容", c_alp > 8, "center_alpha=%d" % c_alp)
+    icon_alpha = img.pixelColor(int((lay.icon_box // 2) * dpr),
+                                int(4 * dpr)).alpha()
+    check("P3 图标区有内容", icon_alpha > 8, "alpha=%d" % icon_alpha)
 
-    check("P4 快照不改动控件状态", ic._hover is True and ic.selected is True)
+    label_y = int((lay.icon_box + 4) * dpr)
+    label_px = opaque_count(img, 0, label_y,
+                            img.width(), int(h * dpr))
+    check("P4 标签区有内容（文件名保留）", label_px > 20,
+          "opaque=%d label_y=%d" % (label_px, label_y))
 
-    ic2 = AppIcon(app_entry(), 0, layout=lay)
-    ic2._hover = True
+    check("P5 快照不改动控件状态", ic._hover is True and ic.selected is True)
+
+    ic2 = AppIcon(folder_entry(), 0, layout=lay)
     snap2 = ic2._drag_snapshot()
     img2 = snap2.toImage()
-    n2 = sum(1 for y in range(img2.height()) for x in range(img2.width())
-             if img2.pixelColor(x, y).alpha() > 8)
-    check("P5a 应用图标快照非空且无背景框",
-          n2 > 50 and all(a == 0 for a in corner_alphas(snap2)),
+    n2 = opaque_count(img2, 0, 0, img2.width(), int(lay.icon_box * dpr))
+    check("P6 文件夹瓷砖快照非空且无背景框",
+          n2 > 100 and all(a == 0 for a in corner_alphas(snap2)),
           "opaque=%d corners=%s" % (n2, corner_alphas(snap2)))
-
-    n1 = sum(1 for y in range(img.height()) for x in range(img.width())
-             if img.pixelColor(x, y).alpha() > 8)
-    check("P5b 文件夹瓷砖快照非空（迷你图标矩阵保留）", n1 > 100,
-          "opaque=%d" % n1)
 
     print("-" * 56)
     if failures:

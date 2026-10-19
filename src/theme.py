@@ -210,3 +210,134 @@ MENU_QSS = (
     "QMenu::item:selected{background: rgba(76,194,255,46);}"
     "QMenu::separator{height: 1px; background: rgba(255,255,255,20); margin: 4px 8px;}"
 ) % ", ".join('"%s"' % f for f in FONT_FAMILIES)
+
+# ---------- 设置窗口（2026-10-19 苹果/AirDeck 风格重构） ----------
+# 结构：侧栏(#settingsSide) + 内容区(#settingsContent)。
+# 文字层级靠字号/字重/颜色三档表达，不再是"全是白字"或"全是灰字"：
+#   页标题 22px 600 主文字 / 副标题 13px 次级 / 行标题 14px 主文字 /
+#   行说明 12px 弱文字（对比度 5.3:1，过 WCAG AA）。
+SETTINGS_QSS = (
+    "QDialog{background: rgb(22,22,26);}"
+    "QWidget#settingsContent{background: rgb(22,22,26);}"
+    "QFrame#settingsSide{background: rgb(30,30,35);"
+    " border-right: 1px solid rgba(255,255,255,18);}"
+    "QLabel#brandLogo{background: rgb(76,194,255); color: rgb(12,18,26);"
+    " border-radius: 10px; font-size: 17px; font-weight: 700;"
+    " font-family: %(fam)s;}"
+    "QLabel#brandName{color: rgb(242,243,245); font-size: 14px; font-weight: 600;"
+    " font-family: %(fam)s;}"
+    "QLabel#brandSub{color: rgba(168,173,181,220); font-size: 10px;"
+    " font-family: %(fam)s;}"
+    "QLabel#sideVersion{color: rgba(140,146,155,220); font-size: 11px;"
+    " font-family: %(fam)s;}"
+    "QPushButton#navItem{text-align: left; padding: 9px 12px; border: none;"
+    " border-radius: 9px; color: rgba(206,210,218,235); font-size: 13px;"
+    " font-family: %(fam)s; background: transparent;}"
+    "QPushButton#navItem:hover{background: rgba(255,255,255,16);"
+    " color: rgb(242,243,245);}"
+    "QPushButton#navItem:checked{background: rgb(46,120,246);"
+    " color: rgb(255,255,255); font-weight: 600;}"
+    "QLabel#pageTitle{color: rgb(246,247,250); font-size: 22px; font-weight: 600;"
+    " font-family: %(fam)s;}"
+    "QLabel#pageSubtitle{color: rgba(168,173,181,235); font-size: 13px;"
+    " font-family: %(fam)s;}"
+    "QFrame#settingsCard{background: rgba(255,255,255,9);"
+    " border: 1px solid rgba(255,255,255,16); border-radius: 12px;}"
+    "QLabel#cardTitle{color: rgba(150,156,166,240); font-size: 12px;"
+    " font-weight: 600; font-family: %(fam)s;}"
+    "QWidget#settingsRow{background: transparent; border: none;}"
+    "QLabel#rowTitle{color: rgb(238,240,244); font-size: 13px;"
+    " font-family: %(fam)s;}"
+    "QLabel#rowHint{color: rgba(150,156,166,235); font-size: 11px;"
+    " font-family: %(fam)s;}"
+    "QLabel{background: transparent; font-family: %(fam)s;}"
+    "QPushButton{background: rgba(255,255,255,16); color: rgb(240,242,246);"
+    " border: 1px solid rgba(255,255,255,26); border-radius: 8px;"
+    " padding: 6px 14px; font-size: 12px; font-family: %(fam)s;}"
+    "QPushButton:hover{background: rgba(255,255,255,28);}"
+    "QPushButton:pressed{background: rgba(255,255,255,10);}"
+    "QPushButton#primaryButton{background: rgb(46,120,246); border: none;"
+    " color: white; font-weight: 600; padding: 7px 22px;}"
+    "QPushButton#primaryButton:hover{background: rgb(64,138,255);}"
+    "QComboBox{background: rgba(255,255,255,13); color: rgb(240,242,246);"
+    " border: 1px solid rgba(255,255,255,26); border-radius: 7px;"
+    " padding: 4px 10px; min-height: 22px; font-size: 12px;"
+    " font-family: %(fam)s; min-width: 132px;}"
+    "QComboBox:hover{border: 1px solid rgba(255,255,255,60);}"
+    "QComboBox::drop-down{width: 20px; border: none;}"
+    "QComboBox::down-arrow{width: 0; height: 0; margin-right: 8px;"
+    " border-left: 4px solid transparent; border-right: 4px solid transparent;"
+    " border-top: 5px solid rgba(200,205,214,235);}"
+    "QComboBox QAbstractItemView{background: rgb(38,38,44); color: rgb(242,243,245);"
+    " border: 1px solid rgba(255,255,255,26); border-radius: 8px; padding: 4px;"
+    " outline: none; selection-background-color: rgba(46,120,246,120);}"
+    "QSpinBox{background: rgba(255,255,255,13); color: rgb(240,242,246);"
+    " border: 1px solid rgba(255,255,255,26); border-radius: 7px;"
+    " padding: 4px 6px; font-size: 12px; font-family: %(fam)s; min-width: 64px;}"
+    "QSpinBox::up-button, QSpinBox::down-button{width: 14px; border: none;"
+    " background: transparent;}"
+    "QSlider::groove:horizontal{height: 4px; background: rgba(255,255,255,28);"
+    " border-radius: 2px;}"
+    "QSlider::sub-page:horizontal{background: rgb(46,120,246); border-radius: 2px;}"
+    "QSlider::handle:horizontal{width: 14px; height: 14px; margin: -5px 0;"
+    " border-radius: 7px; background: rgb(255,255,255);}"
+    "QScrollArea{background: transparent; border: none;}"
+    "QScrollBar:vertical{background: transparent; width: 8px; margin: 2px;}"
+    "QScrollBar::handle:vertical{background: rgba(255,255,255,44);"
+    " border-radius: 4px; min-height: 30px;}"
+    "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical{height: 0;}"
+    "QMessageBox{background: rgb(30,30,35);}"
+    "QMessageBox QLabel{color: rgb(240,242,246); font-size: 13px;}"
+) % {"fam": ", ".join('"%s"' % f for f in FONT_FAMILIES)}
+
+# QSS 画三角（width:0 + 三边 border）在 Qt 的 subcontrol 上会被强制成实心
+# 方块——下拉箭头变成一个白灰小块。正解是给 ::down-arrow 一张真图，这里
+# 运行时按 DPR 画一张锐利的下折线 PNG 到 app data，再注入 QSS。
+_ARROW_CACHE = None
+
+
+def _combo_arrow_path() -> str:
+    """生成（并缓存）下拉箭头 PNG 的 QSS 可用路径（正斜杠绝对路径）。"""
+    global _ARROW_CACHE
+    if _ARROW_CACHE is not None:
+        return _ARROW_CACHE
+    try:
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+
+        from .paths import data_file, ensure_app_dirs
+
+        dpr = max(1.0, float(screen_dpr()))
+        w, h = int(round(10 * dpr)), int(round(6 * dpr))
+        pm = QPixmap(max(1, w), max(1, h))
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        pen = QPen(QColor(198, 204, 214, 240), max(1.4, 1.5 * dpr))
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        p.setPen(pen)
+        p.drawPolyline([QPointF(1.6 * dpr, 1.8 * dpr),
+                        QPointF(5.0 * dpr, 4.8 * dpr),
+                        QPointF(8.4 * dpr, 1.8 * dpr)])
+        p.end()
+        ensure_app_dirs()
+        path = data_file("ui_arrow_down.png")
+        if not pm.save(str(path), "PNG"):
+            _ARROW_CACHE = ""
+        else:
+            _ARROW_CACHE = str(path).replace("\\", "/")
+    except Exception:
+        _ARROW_CACHE = ""
+    return _ARROW_CACHE
+
+
+def settings_qss() -> str:
+    """设置窗口最终 QSS：基础样式 + 运行时箭头图（图生成失败则退化）。"""
+    arrow = _combo_arrow_path()
+    if not arrow:
+        return SETTINGS_QSS
+    return SETTINGS_QSS + (
+        "QComboBox::down-arrow{image: url(%s); width: 10px; height: 6px;"
+        " border: none; margin-right: 9px;}" % arrow
+    )

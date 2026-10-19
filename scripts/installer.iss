@@ -9,7 +9,7 @@
 
 #define MyAppName "桌面整理Demo"
 #define MyAppNameEn "DesktopOrganizerDemo"
-#define MyAppVersion "1.5.2"
+#define MyAppVersion "1.6.0"
 #define MyAppPublisher "DesktopOrganizerDemo"
 #define MyAppExe "DesktopOrganizerDemo.exe"
 

@@ -43,6 +43,11 @@ MIME_TYPE = "application/x-desktoporg-item"
 # 悬停足够久图标高亮后松手 -> 合并文件夹。两套手势由此分流。
 DWELL_MERGE_MS = 450
 
+# 判定「压到目标中心」的重叠比例（占较小矩形面积）。
+# >= 该值 = 想合并（武装 dwell）；否则视为擦边 = 想放这里并挤走对方。
+# 0.45 ≈ 拖影中心落在目标矩形内 2/3 区域的效果，与手机手感一致。
+MERGE_OVERLAP_RATIO = 0.45
+
 # v6 §5.1（反馈 6）：拖动浮影 = 当前图标的 render 快照，半透明 0.8——
 # 替换旧 QDrag 的白块占位，拖动中保留原始样式（图标 + 标签 + 状态）。
 GHOST_OPACITY = 0.8
@@ -89,7 +94,8 @@ class AppIcon(QWidget):
     reflowDrop = Signal(str, int, int)   # 悬停未满即松手：payload, 指针全局 x, y
 
     def __init__(self, entry: dict, icon_size: int, in_folder: bool = False,
-                 parent=None, chrome_scale: float = 1.0, layout=None):
+                 parent=None, chrome_scale: float = 1.0, layout=None,
+                 compact: bool = False, show_label: bool = True):
         super().__init__(parent)
         self.entry = entry
         self.in_folder = in_folder
@@ -97,6 +103,7 @@ class AppIcon(QWidget):
         # 外围 chrome 缩放（留白 / 标签字号 / 行高随 DPI×用户缩放同比放大，
         # 图标本身由 icon_size 已经放大——2026-10-18 DPI 感知）
         self._m = max(0.5, float(chrome_scale))
+        self._no_label = not bool(show_label)
         # v6 批次 A2（指导文档 §2.2）：grid_sizing.IconLayout 三档方案。
         # 传入时 chrome 全部按 cell/widget 比例派生（标签单行小字 elide，
         # 密度加密后瘦身——旧绝对值 24m/40m 在 cell 变小后会把图标挤成小点）；
@@ -108,6 +115,16 @@ class AppIcon(QWidget):
             self._label_h = int(layout.label_h)
             self._label_font_px = int(layout.font_px)
             self.setFixedSize(int(layout.widget_w), int(layout.widget_h))
+        elif compact:
+            # 文件夹内部格（2026-10-19 反馈 6）：手机文件夹是**紧凑图标阵**，
+            # 没有文件名、没有大片留白——参照 iOS/安卓文件夹内部。
+            pad = max(2, int(round(4 * self._m)))
+            self.icon_size = int(icon_size)
+            self._box_x = pad
+            self._no_label = True
+            self._label_h = 0
+            self._label_font_px = 11
+            self.setFixedSize(icon_size + pad * 2, icon_size + pad * 2)
         else:
             self.icon_size = icon_size
             self._box_x = None
@@ -394,7 +411,8 @@ class AppIcon(QWidget):
             p.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), theme.RADIUS_ITEM, theme.RADIUS_ITEM)
 
         self._paint_icon_only(p, dpr)
-        self._paint_label(p)
+        if not self._no_label:
+            self._paint_label(p)
 
     def _paint_icon_only(self, p: QPainter, dpr: float = 1.0):
         """只画图标本体（文件夹瓷砖或应用图标 pixmap），不画任何 chrome。
@@ -575,35 +593,31 @@ class AppIcon(QWidget):
 
     # ---------- 自管理拖拽循环（替代 QDrag.exec 的 OLE DoDragDrop） ----------
     def _drag_snapshot(self) -> QPixmap:
-        """**只取图标本体**的拖影快照，烘焙 GHOST_OPACITY 半透明。
+        """拖动浮影快照 = **图标本体 + 文件名**，透明底，烘焙 GHOST_OPACITY。
 
-        2026-10-19 用户反馈："拖拽还有一个白框，不好看，只要原图标就行了"。
-        两个病根叠在一起：
-          1. 旧实现 `render()` 整个 AppIcon 部件——悬停/选中/合并目标态的
-             背景圆角矩形与标签一起被烘进去；
-          2. `QWidget.render()` 还会先用**调色板背景色**铺底（AppIcon 没有
-             WA_TranslucentBackground），于是快照底色是一整块不透明卡片。
-        现在不 render 部件，而是直接在 pixmap 上用与 paintEvent 同一份
-        `_paint_icon_only` 画图标本体：背景态、标签、缩放全部不参与。
+        2026-10-19 两轮反馈叠在一起：
+          - "拖拽还有一个白框，不好看，只要原图标就行了"（`render()` 会铺
+            调色板底色 → 白框）；
+          - "图标拖拽的时候丢失了文件名"（为去白框把标签一起裁掉了）。
+        正解不是二选一：**不 render 部件**（避开调色板底色），改用与
+        paintEvent 同一份 `_paint_icon_only` + `_paint_label` 直接画到
+        透明 pixmap 上——既有原图标也有名字，且没有卡片底色。
 
         必须在 set_drag_ghost(True) **之前**调用（虚影态 paintEvent 早退）。
-        alpha 烘焙进 pixmap：单一来源，拖影部件保持无脑 drawPixmap。
         """
         dpr = max(1.0, float(self.devicePixelRatioF()))
-        s = int(self.icon_size)
-        side = max(1, int(round(s * dpr)))
-        pm = QPixmap(side, side)
+        w, h = max(1, self.width()), max(1, self.height())
+        pm = QPixmap(max(1, int(round(w * dpr))), max(1, int(round(h * dpr))))
         pm.setDevicePixelRatio(dpr)
         pm.fill(Qt.transparent)
-        bx = (self._box_x if self._box_x is not None
-              else (self.width() - s) // 2)
         p = QPainter(pm)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
-        p.translate(-int(bx), -2)     # 抵掉图标绘制区在部件内的偏移
         self._paint_icon_only(p, dpr)
+        if not self._no_label:
+            self._paint_label(p)
         p.end()
-        self._drag_crop_off = QPoint(int(bx), 2)
+        self._drag_crop_off = QPoint(0, 0)
         if GHOST_OPACITY >= 1.0:
             return pm
         faded = QPixmap(pm.size())
@@ -676,20 +690,26 @@ class AppIcon(QWidget):
                 self._drag_mime, Qt.LeftButton, Qt.NoModifier))
 
     def _hit_target(self, gpos):
-        """光标下的本应用部件；排除拖影与拖动源自身。
+        """拖放命中：**按拖影与目标的实际重叠分流**（2026-10-19 反馈 9）。
 
-        落点三态：
-        - 命中其它部件 -> 原样返回（图标 = 合并/入文件夹，桌面窗口 = 移动）
-        - 命中拖影或自身 -> 用拖影中心（图标视觉中心）再判一次
-        - 仍然判不出（拖影遮挡 / 空白区无子部件）-> 退化为宿主桌面窗口
+        用户要的手机语义是两套手势：
+          - 压到目标中间 -> 停下来提示「松手合并为文件夹」；
+          - 只在边缘擦碰 -> 悬浮一会儿把对方挤走。
+        旧实现只看**指针**落在谁身上：抓图标角落时指针与图标本体重叠
+        滞后，经常"明明已经叠上了却不出合并提示"，或者反过来刚擦边就
+        弹合并提示。现在以拖影（= 被拖图标本体）与目标的相交比例判定：
 
-        第三种是实机病根（2026-10-19 verify_live 抓到）：拖影是
-        Qt.ToolTip 顶层窗口且 WA_TransparentForMouseEvents，光标压在
-        拖影上时 QApplication.widgetAt() 直接返回 None；DesktopWindow
-        空白区没有子部件时 childAt 也返回 None。旧实现就此把落点判成
-        "无目标"，松手什么都不发生——图标永远拖不动。
+          ratio >= MERGE_OVERLAP_RATIO -> 合并目标（发 dragEnter 武装 dwell）
+          否则（含擦边 / 空白）        -> 桌面窗口（网格落点，悬停够久挤走）
+
+        文件夹内部（in_folder）保持原逻辑：成员只在弹窗里拖动/拖出，
+        不参与桌面合并。
         """
         ghost = self._drag_ghost_w
+        if not self.in_folder:
+            best, ratio = self._best_overlap_icon()
+            if best is not None and ratio >= MERGE_OVERLAP_RATIO:
+                return best
         target = QApplication.widgetAt(gpos)
         if target is ghost or target is self:
             if ghost is not None:
@@ -697,17 +717,73 @@ class AppIcon(QWidget):
                                              ghost.height() // 2))
                 t2 = QApplication.widgetAt(gc)
                 if t2 is not ghost and t2 is not self:
-                    return t2
-            target = None
+                    target = t2
+                else:
+                    target = None
+            else:
+                target = None
+        if self.in_folder:
+            return target
+        if isinstance(target, AppIcon) and target is not self:
+            # 只擦到边缘：目标保持不动，落点交给桌面窗口（实时挤走语义）
+            return self._host_desktop(gpos)
         if target is None:
-            win = self.window()
-            if win is not None and win is not self:
-                try:
-                    if win.rect().contains(win.mapFromGlobal(gpos)):
-                        return win
-                except RuntimeError:      # 窗口已销毁（rebuild 竞态）
-                    return None
+            return self._host_desktop(gpos)
         return target
+
+    def _ghost_rect(self):
+        ghost = self._drag_ghost_w
+        if ghost is None:
+            return None
+        try:
+            return QRect(ghost.mapToGlobal(QPoint(0, 0)), ghost.size())
+        except RuntimeError:
+            return None
+
+    def _overlap_ratio(self, other) -> float:
+        """拖影与另一个部件的相交比例（占较小矩形面积的百分比 0~1）。"""
+        g = self._ghost_rect()
+        if g is None or g.isEmpty():
+            return 0.0
+        try:
+            r = QRect(other.mapToGlobal(QPoint(0, 0)), other.size())
+        except RuntimeError:
+            return 0.0
+        inter = g.intersected(r)
+        if inter.isEmpty():
+            return 0.0
+        a = float(inter.width() * inter.height())
+        m = float(min(g.width() * g.height(), max(1, r.width() * r.height())))
+        return a / max(1.0, m)
+
+    def _best_overlap_icon(self):
+        """与拖影重叠最多的同级桌面图标（排除自身/文件夹成员）。"""
+        host = self.window()
+        if host is None:
+            return None, 0.0
+        best, best_ratio = None, 0.0
+        try:
+            kids = host.findChildren(AppIcon)
+        except RuntimeError:
+            return None, 0.0
+        for w in kids:
+            if w is self or w.in_folder or not w.isVisible():
+                continue
+            ratio = self._overlap_ratio(w)
+            if ratio > best_ratio:
+                best, best_ratio = w, ratio
+        return best, best_ratio
+
+    def _host_desktop(self, gpos):
+        """退化为宿主桌面窗口（空白区 / 拖影遮挡 / 边缘擦碰）。"""
+        win = self.window()
+        if win is not None and win is not self:
+            try:
+                if win.rect().contains(win.mapFromGlobal(gpos)):
+                    return win
+            except RuntimeError:
+                return None
+        return None
 
     def _send_drag_event(self, widget, event):
         """派发合成拖放事件；目标已被销毁（rebuild/deleteLater）时静默跳过。"""

@@ -118,6 +118,31 @@ def icon_layout(cw: int, ch: int, tier) -> IconLayout:
     return IconLayout(w, h, box, chrome_x, label_h, _font_for_box(box))
 
 
+def cell_for_native(native_px: int, tier) -> Tuple[int, int]:
+    """按**原桌面图标边长**反推 cell（2026-10-19 用户反馈 4）。
+
+    诉求："最好能算出电脑原桌面的图标大小，接管后的默认图标大小刚好
+    跟原桌面一致"。做法是反解，而不是猜常数：
+
+        icon_box = native_px
+        widget_w = icon_box + 2*CHROME_X
+        label_h  = 字号行高 + 上下留白（与 _paint_label 的单行布局同源）
+        widget_h = icon_box + label_h
+        cell     = widget / TIERS[tier]        # 保证 icon_box 回到 native_px
+
+    这样无论当前是 小/中/大 档，图标本体都精确等于原生边长；档位只影响
+    cell 密度（小档格距更大、大档更紧凑），不会把图标画小。
+    """
+    tier_name = parse_tier(tier)
+    r = max(0.1, float(TIERS[tier_name]))
+    box = max(ICON_BOX_MIN, int(native_px))
+    font = _font_for_box(box)
+    label_h = max(LABEL_H_MIN, int(round(font * 1.5)) + 4)
+    w = box + 2 * CHROME_X
+    h = box + label_h
+    return max(1, int(round(w / r))), max(1, int(round(h / r)))
+
+
 def icon_px_default() -> int:
     """无界模式图标像素默认值（§2.3）。"""
     return 96

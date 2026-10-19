@@ -139,13 +139,14 @@ def main():
     pos_free = grid_flow.entry_pos(st4, st4.layout[0])
     check("M4 切换瞬间视觉位置不变（无跳变）", pos_free == pos_grid,
           "%s vs %s" % (pos_free, pos_grid))
-    # 无界页间偏移：第 1 页条目在当前页(0)视角应下移一格画布
+    # 无界页间偏移：第 1 页条目在当前页(0)视角应右移一格画布（默认左右翻页）
     st4b = FakeStorage(layout=[entry("z", 0, rpp)],  # 第 1 页
                        settings={"layout_mode": "free"})
     grid_flow.to_free_coords(st4b)
     pz = grid_flow.entry_pos(st4b, st4b.layout[0])
-    check("M4 无界页间偏移 = 画布高（与网格同一页几何）",
-          pz == (ox + dx4, oy + canvas_h + dy4), "%s" % (pz,))
+    canvas_w4 = grid_flow.page_canvas_w(st4b)
+    check("M4 无界页间偏移 = 画布宽（与网格同一页几何）",
+          pz == (ox + canvas_w4 + dx4, oy + dy4), "%s" % (pz,))
 
     # ---------- M5：widget_pos ----------
     st5 = FakeStorage(widgets=[widget_entry("clk", 2, 0),

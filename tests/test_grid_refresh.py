@@ -133,17 +133,34 @@ def main(app):
     check("G4 设置值已落盘", st2.get_setting("columns") == 5,
           "%s" % (st2.get_setting("columns"),))
 
-    # ---------- G5：切档位 -> 立即换尺寸 ----------
+    # ---------- G5：切档位 ----------
+    # 2026-10-19 反馈 4：icon_match_native 默认开 —— 图标本体锁死在原生
+    # 桌面边长，档位只改**格距**（cell），不把图标画小。所以这里断言的是
+    # "widget = icon_layout(切档后的新 cell, 新档位)"（反解自洽），
+    # 而不是用切档前的旧 cell 快照算期望（那样必然对不上）。
     m2 = grid_flow.current_metrics()
+    tier_orig = st2.icon_tier()
+    box_before = grid_sizing.icon_layout(m2.cw, m2.ch, tier_orig).icon_box
     dlg.cmb_tier.setCurrentIndex(dlg.cmb_tier.findData("small"))
     settle(app)
-    lay_small = grid_sizing.icon_layout(m2.cw, m2.ch, "small")
-    check("G5 切 small 档后图标立刻变小",
+    m3 = grid_flow.current_metrics()
+    lay_small = grid_sizing.icon_layout(m3.cw, m3.ch, "small")
+    check("G5 切 small 档后 widget = icon_layout(新 cell, small)",
           (w2.icons["a"].width(), w2.icons["a"].height())
           == (lay_small.widget_w, lay_small.widget_h),
-          "%s" % ((w2.icons["a"].width(), w2.icons["a"].height()),))
+          "icon=%s want=%s" % ((w2.icons["a"].width(),
+                                w2.icons["a"].height()),
+                               (lay_small.widget_w, lay_small.widget_h)))
+    check("G5b 对齐原生：档位只改格距，图标本体不变",
+          m3.cw > m2.cw and lay_small.icon_box == box_before,
+          "cw %d->%d box %d->%d" % (m2.cw, m3.cw, box_before,
+                                    lay_small.icon_box))
 
     # ---------- G6：自动列数 ----------
+    # 先切回原档位——否则 G5 的 small 档会让 cell 变大、铺满列数天然变少，
+    # 这不是"没恢复铺满"，而是测试自己把几何改了（顺序耦合）。
+    dlg.cmb_tier.setCurrentIndex(dlg.cmb_tier.findData(tier_orig))
+    settle(app)
     dlg.chk_auto_cols.setChecked(True)
     settle(app)
     check("G6 自动列数恢复屏幕铺满",

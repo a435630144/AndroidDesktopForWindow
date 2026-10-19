@@ -328,6 +328,59 @@ def multi_move(entries: Sequence[dict], cols: int, primary_id: str,
     return moves
 
 
+def displace_cells(src_cells, blocked, cols: int, page_rows) -> dict:
+    """给一批"被压住"的图标统一分配新格（**互不重复**）。
+
+    2026-10-19 用户反馈 7b："元素排满后再移动小组件，图标会直接堆叠
+    到一起"。病根是旧实现逐个调 nearest_free_cell，每次都用同一份静态
+    `blocked`——两个图标会被分配到同一个空格上。
+
+    规则（纯函数，**没有 Qt 依赖**，可单测）：
+      1. 页内空格优先，**同行优先**（保持行归属），同行内按列距最近；
+         同行无解才跨行，跨行时按曼哈顿距离取最近（同距阅读序）；
+      2. 页内已满 -> 顺延到页底下方的新行（页码自然增长，条目不丢、
+         也不会被分页裁掉）；
+      3. 分配过的格子立刻进 taken，后续条目绝不会重复。
+
+    为什么"同行优先"而不是纯曼哈顿：8 列的桌面里组件挡住左上角时，
+    纯曼哈顿会把 (0,0) 的图标塞进组件正下方的 (0,2)——距离更近，但原来
+    同一行的图标被拆到两行，视觉上就是用户反馈 7b 说的"排布混乱"。
+    先守住行、再谈距离，图标阵才是整块平移而不是交叉打散。
+
+    src_cells 为**原格序列**（决定分配顺序与就近偏好）；返回
+    {原格: 新格}。blocked 需包含组件占位与其他不可用格。
+    """
+    cols = max(1, int(cols))
+    lo, hi = int(page_rows[0]), int(page_rows[1])
+    taken = set(blocked)
+    free = [(c, r) for r in range(lo, hi + 1) for c in range(cols)
+            if (c, r) not in taken]
+    out = {}
+    extra_row = hi + 1
+    next_col = 0
+
+    def _rank(cell, src):
+        # 0 = 原地那行，1 = 其他行；再按行差、列距、阅读序
+        return (0 if cell[1] == src[1] else 1,
+                abs(cell[1] - src[1]),
+                abs(cell[0] - src[0]),
+                cell[1], cell[0])
+
+    for src in src_cells:
+        if free:
+            dst = min(free, key=lambda c: _rank(c, src))
+            free.remove(dst)
+        else:
+            if next_col >= cols:
+                next_col = 0
+                extra_row += 1
+            dst = (next_col, extra_row)
+            next_col += 1
+        taken.add(dst)
+        out[src] = dst
+    return out
+
+
 def nearest_free_cell(target: Cell, occupied: set, cols: int) -> Cell:
     """曼哈顿距离升序找第一个非占用格（同距时阅读序优先）。
 
@@ -384,10 +437,22 @@ def set_grid(storage, screen_size):
 
     DesktopWindow 在启动 / 窗口几何变化 / DPI·分辨率·任务栏变化后调用。
     screen_size：availableGeometry 的 (W, H)。返回 GridMetrics 快照。
+
+    2026-10-19（反馈 4）：settings["icon_match_native"] 开启时先把资源
+    管理器**当前桌面图标边长**读出来传给 grid_metrics——网格与图标尺寸
+    由此与原桌面一致（读不到则回退屏幕公式）。
     """
     global _current_metrics
     from . import grid_metrics  # 延迟导入：grid_metrics 依赖本模块 cell_size
-    _current_metrics = grid_metrics.compute(storage, screen_size)
+    native = None
+    try:
+        if storage.get_setting("icon_match_native"):
+            from . import win32_layer
+            native = win32_layer.native_icon_size()
+    except Exception:
+        native = None
+    _current_metrics = grid_metrics.compute(storage, screen_size,
+                                            native_px=native)
     return _current_metrics
 
 
@@ -585,6 +650,48 @@ def page_number(max_row: int, rpp: int) -> int:
     return max(1, max(0, int(max_row)) // max(1, int(rpp)) + 1)
 
 
+# ---------- 翻页方向（2026-10-19 用户反馈 5） ----------
+# "现在的分页是上下逻辑，改成默认左右翻页，并在设置里可切换上下/左右"。
+# 语义：**页容量不变**（一页仍是 cols × rows_per_page 个格），只有页与页
+# 之间的滑行方向变化——左右模式下第 n 页整体排在当前页右侧一个屏宽处，
+# 翻页时内容横向滑入滑出（iOS launcher 语言）。row 仍编码"第几页 + 页内行"，
+# 零数据迁移。
+PAGE_AXIS_HORIZONTAL = "horizontal"
+PAGE_AXIS_VERTICAL = "vertical"
+
+
+def page_axis(storage) -> str:
+    """翻页方向：horizontal（默认）| vertical（设置里可切）。"""
+    raw = str(storage.get_setting("page_axis") or "").strip().lower()
+    return PAGE_AXIS_VERTICAL if raw == PAGE_AXIS_VERTICAL else PAGE_AXIS_HORIZONTAL
+
+
+def page_canvas_w(storage) -> int:
+    """单页横向跨度（像素）= 网格区宽 = cols × cw。
+
+    左右翻页的页间滑行量；也是无界模式页与页的水平间距。
+    """
+    m = _current_metrics
+    if m is not None:
+        return max(1, int(m.cols)) * int(m.cw)
+    cw, _ch = cell_size(storage)
+    return max(1, int(storage.columns)) * cw
+
+
+def page_offset(storage, page: int) -> Cell:
+    """页间滑行偏移（像素）：(dx, dy)。
+
+    vertical   -> (0, (page-current) * rows*ch)
+    horizontal -> ((page-current) * cols*cw, 0)
+    """
+    delta = int(page) - current_page()
+    if delta == 0:
+        return 0, 0
+    if page_axis(storage) == PAGE_AXIS_VERTICAL:
+        return 0, delta * (rows_per_page() * cell_size(storage)[1])
+    return delta * page_canvas_w(storage), 0
+
+
 def page_count(storage, rpp: int = 0) -> int:
     """总页数：布局条目与锚定组件占位（含跨度）的最大全局行决定，
     至少 1 页；v6 §1.3 起再与空白页（extra_pages 最大值+1）取大。"""
@@ -618,8 +725,11 @@ def cell_pos(storage, col: int, row: int) -> Cell:
     ox, oy = origin()
     cols = storage.columns
     col = max(0, min(int(col), cols - 1))
-    rel = max(0, int(row)) - current_page() * rows_per_page()
-    return ox + col * cw, oy + rel * ch
+    rpp = rows_per_page()
+    page = page_of(int(row), rpp)
+    local = max(0, int(row)) - page * rpp
+    dx, dy = page_offset(storage, page)
+    return ox + col * cw + dx, oy + local * ch + dy
 
 
 def page_grid_center(storage) -> Cell:
@@ -762,7 +872,8 @@ def entry_pos(storage, entry) -> Cell:
     page = page_of(int(entry.get("row", 0) or 0))
     x = int(entry.get("fx", 0) or 0)
     y = int(entry.get("fy", 0) or 0)
-    return x, y + (page - current_page()) * page_canvas_h(storage)
+    dx, dy = page_offset(storage, page)
+    return x + dx, y + dy
 
 
 def widget_pos(storage, entry) -> Cell:
@@ -783,7 +894,8 @@ def widget_pos(storage, entry) -> Cell:
                     int(entry.get("row", 0) or 0))
             x = int(entry.get("fx", entry.get("x", 0)) or 0)
             y = int(entry.get("fy", entry.get("y", 0)) or 0)
-            return x, y + (page - current_page()) * page_canvas_h(storage)
+            dx, dy = page_offset(storage, page)
+            return x + dx, y + dy
         return cell_pos(storage, int(entry.get("col", 0)), int(entry.get("row", 0)))
     return int(entry.get("x", 0) or 0), int(entry.get("y", 0) or 0)
 
@@ -927,6 +1039,14 @@ def pos_cell(storage, x: int, y: int) -> Cell:
     cw, ch = cell_size(storage)
     ox, oy = origin()
     cols = storage.columns
+    rpp = rows_per_page()
+    if page_axis(storage) == PAGE_AXIS_HORIZONTAL:
+        # 左右模式：x 只解析页内列（页偏移由 current_page 决定，不参与反算）
+        col = int((x - ox) / max(1, cw)) if x >= ox else -1
+        local = int((y - oy) / max(1, ch)) if y >= oy else -1
+        local = max(0, min(local, rpp - 1))
+        col = max(0, min(col, cols - 1))
+        return col, current_page() * rpp + local
     col = int((x - ox) / max(1, cw)) if x >= ox else -1
     local = int((y - oy) / max(1, ch)) if y >= oy else -1
     local = max(0, min(local, rows_per_page() - 1))

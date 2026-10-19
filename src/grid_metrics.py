@@ -74,8 +74,13 @@ def _manual_columns(storage, columns_override) -> Optional[int]:
 
 
 def compute(storage, screen_size: Tuple[int, int],
-            columns_override=None) -> GridMetrics:
+            columns_override=None, native_px=None) -> GridMetrics:
     """按工作区尺寸计算网格几何（四边等距、精确铺满）。
+
+    native_px：资源管理器当前桌面图标边长（逻辑 px）。给定且
+    settings["icon_match_native"] 为真（默认）时，cell 由
+    `grid_sizing.cell_for_native()` 反推——图标本体与原桌面 1:1 大小
+    （2026-10-19 用户反馈 4）。None / 关闭该项时走旧的屏幕驱动公式。
 
     storage 只需提供 get_setting / icon_metric / icon_chrome_scale
     （与 grid_flow.cell_size 的依赖面一致——fake storage 可直接单测）。
@@ -85,7 +90,15 @@ def compute(storage, screen_size: Tuple[int, int],
     from . import grid_sizing  # 延迟导入：cell 公式的唯一实现，避免重复
 
     W, H = int(screen_size[0]), int(screen_size[1])
-    cw, ch = grid_sizing.cell_for_screen(W, H)
+    match_native = bool(storage.get_setting("icon_match_native"))
+    if match_native and native_px:
+        try:
+            tier = storage.icon_tier()
+        except Exception:
+            tier = grid_sizing.DEFAULT_TIER
+        cw, ch = grid_sizing.cell_for_native(int(native_px), tier)
+    else:
+        cw, ch = grid_sizing.cell_for_screen(W, H)
     cw, ch = max(1, int(cw)), max(1, int(ch))
     chrome = float(storage.icon_chrome_scale())
     edge_x = int(round(26 * chrome))
