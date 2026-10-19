@@ -1,15 +1,17 @@
 # -*- coding: utf-8 -*-
-"""开发者模式：设置开关（默认开）+ 网格可视化边框（绘制级断言）。
+"""开发者模式：设置开关（默认关）+ 网格可视化边框（绘制级断言）。
 
 需求（2026-10-18 用户）：开发期默认开启；设置里可开关；开启时给网格
 边缘渲染可视化边框，供排查布局问题。
+**2026-10-19 改为默认关闭**：满屏调试网格盖在壁纸上，用户误以为
+"桌面被覆盖/壁纸丢了"。排查布局时从右键「查看 ▸ 显示网格调试信息」开。
 
 运行：python tests/test_dev_mode.py   （offscreen，无需显示桌面）
 
 覆盖（先 Red 后 Green）：
-  D1 DEFAULT_SETTINGS["dev_mode"] 默认 True（开发期默认开启）
+  D1 DEFAULT_SETTINGS["dev_mode"] 默认 False（2026-10-19 起默认关，避免盖住壁纸）
   D2 get/set_setting 往返 + 落盘重载
-  D3 旧 state.json 无 dev_mode 键 -> 回退默认 True（向后兼容）
+  D3 旧 state.json 无 dev_mode 键 -> 回退默认 False（向后兼容）
   D4 dev_mode 开 -> render 后网格边界/内线/原点十字/信息文字可见
      （像素级断言：同步 render 到 QImage 取样——Qt 吞 paintEvent
       异常的盲区见 DEVLOG 6.2 A3 / 坑表 #24）
@@ -89,8 +91,8 @@ def render_window(w: DesktopWindow) -> QImage:
 
 def main(app):
     # ---------- D1：默认开启 ----------
-    check("D1 DEFAULT_SETTINGS dev_mode 默认 True",
-          DEFAULT_SETTINGS.get("dev_mode") is True)
+    check("D1 DEFAULT_SETTINGS dev_mode 默认 False（不盖壁纸）",
+          DEFAULT_SETTINGS.get("dev_mode") is False)
 
     # ---------- D2：读写往返 + 落盘 ----------
     st = make_state(dev=True)
@@ -104,8 +106,8 @@ def main(app):
     del st3._data["settings"]["dev_mode"]
     st3.save()
     st4 = Storage(path=str(STATE))
-    check("D3 旧 state 无 dev_mode 键回退 True",
-          st4.get_setting("dev_mode") is True)
+    check("D3 旧 state 无 dev_mode 键回退 False",
+          st4.get_setting("dev_mode") is False)
 
     # ---------- D4：dev_mode 开 -> 网格可视化可见 ----------
     st = make_state(dev=True, native=True)

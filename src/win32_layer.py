@@ -279,10 +279,19 @@ def diagnose_desktop_layer() -> dict:
 
 
 # ---------- 原生桌面图标隐藏 / 恢复 ----------
-# 第三方桌面的标准做法（腾讯桌面整理同款）：找到承载原生图标的
-# SHELLDLL_DefView（Progman 或 WorkerW 的子窗口）并 ShowWindow(SW_HIDE)，
-# 桌面文件改由我们克隆渲染，从而完全掌控位置与样式。
+# 第三方桌面的标准做法：找到承载原生图标的 SHELLDLL_DefView（Progman 或
+# WorkerW 的子窗口）并隐藏，桌面文件改由我们克隆渲染。
+#
+# **2026-10-19 修正（用户反馈"开启后背景全黑，看不到壁纸"）**：
+# 不能隐藏整个 SHELLDLL_DefView——在部分系统（本机 Win11 build 26300 实测）
+# DefView 参与壁纸绘制链，SW_HIDE 会连壁纸一起关掉，桌面只剩纯黑。
+# 正确做法是只隐藏它内部的图标列表 SysListView32：图标消失、壁纸保留。
+# 这条路径同时也是动态壁纸（Wallpaper Engine / Lively 等把渲染窗口挂在
+# WorkerW 下）能继续工作的前提——容器还在，壁纸层才不会被一起摘掉。
+#
 # 退出 / 崩溃自愈时必须恢复，否则用户将看不到任何桌面图标。
+
+_ICON_LIST_CLASS = "SysListView32"
 
 _native_icons_hidden = False
 
@@ -312,16 +321,34 @@ def _find_defview() -> int:
     return 0
 
 
+def _find_icon_list(defview: int = 0) -> int:
+    """DefView 里的图标列表 SysListView32（隐藏图标的最小目标）。"""
+    dv = int(defview) or _find_defview()
+    if not dv:
+        return 0
+    for c in _iter_children(dv):
+        if _class_of(c) == _ICON_LIST_CLASS:
+            return c
+    return 0
+
+
 def set_native_icons_visible(visible: bool) -> bool:
-    """显示 / 隐藏系统原生桌面图标。返回操作后的实际状态是否符合预期。"""
+    """显示 / 隐藏系统原生桌面图标。返回操作后的实际状态是否符合预期。
+
+    隐藏时**只摘图标列表**并确保 DefView 可见（壁纸随 DefView 一起存活）；
+    只有找不到 SysListView32 的老系统才回退到隐藏整个 DefView。
+    """
     global _native_icons_hidden
     dv = _find_defview()
     if not dv:
         return bool(visible)  # 找不到 DefView 时视为原生图标本就可见
-    _user32.ShowWindow(dv, SW_SHOW if visible else SW_HIDE)
+    target = _find_icon_list(dv) or dv
+    # 先让容器可见——旧版本可能已把 DefView 藏了（升级上来的用户），
+    # 不显式 SHOW 会一直黑屏；target == dv 时下一行会重新盖回 HIDE。
+    _user32.ShowWindow(dv, SW_SHOW)
+    _user32.ShowWindow(target, SW_SHOW if visible else SW_HIDE)
     _native_icons_hidden = not visible
-    now_visible = bool(_user32.IsWindowVisible(dv))
-    return now_visible == bool(visible)
+    return bool(_user32.IsWindowVisible(target)) == bool(visible)
 
 
 def native_icons_hidden() -> bool:
