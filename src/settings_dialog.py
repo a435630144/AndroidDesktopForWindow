@@ -109,10 +109,13 @@ class SettingsDialog(QDialog):
         self.chk_widgets.toggled.connect(self._apply_widgets)
         form.addRow("小组件：", self.chk_widgets)
 
-        self.chk_native = QCheckBox("桌面整理模式：隐藏原生图标，由整理桌面接管（框选 / 自己的右键菜单）")
-        self.chk_native.setChecked(bool(self.storage.get_setting("hide_native_icons")))
-        self.chk_native.toggled.connect(self._apply_native_icons)
-        form.addRow("桌面模式：", self.chk_native)
+        # v6 §7.2：原「桌面整理模式」与托盘「显示桌面整理」合并为唯一开关
+        # 「接管系统桌面」；hide_native_icons 降级为兼容键（storage.set_takeover 双写）。
+        self.chk_takeover = QCheckBox(
+            "接管系统桌面（隐藏原生图标，由整理桌面全盘接管：框选 / 自己的右键菜单）")
+        self.chk_takeover.setChecked(self.storage.takeover())
+        self.chk_takeover.toggled.connect(self._apply_takeover)
+        form.addRow("桌面：", self.chk_takeover)
 
         self.chk_autoclone = QCheckBox("自动把桌面文件克隆进整理网格（关闭则只显示手动添加的图标）")
         self.chk_autoclone.setChecked(bool(self.storage.get_setting("auto_clone_desktop")))
@@ -219,12 +222,15 @@ class SettingsDialog(QDialog):
         self.storage.set_setting("show_widgets", bool(checked))
         self.layer.set_visible(bool(checked))
 
-    def _apply_native_icons(self, checked):
-        """切换桌面整理模式：开=隐藏原生图标全盘接管；关=恢复原生桌面。"""
-        self.storage.set_setting("hide_native_icons", bool(checked))
+    def _apply_takeover(self, checked):
+        """「接管系统桌面」开关（v6 §7.2 唯一模式入口）。
+
+        开 = 隐藏原生图标全盘接管；关 = 恢复原生桌面，整理窗口仅悬浮。
+        """
+        self.storage.set_takeover(bool(checked))
         self.window.apply_native_icons_setting()
         if checked:
-            # 开启整理模式 = 原生图标被隐藏、网格全盘接管：必须保证桌面文件
+            # 开启接管 = 原生图标被隐藏、网格全盘接管：必须保证桌面文件
             # 已播种，否则用户面对的是空桌面（旧逻辑受 auto_clone 开关与
             # "布局为空"双重门槛限制，是 2026-10-18 反馈"文件缺少很多"的根因）
             self.storage.ensure_desktop_clone(force=True)

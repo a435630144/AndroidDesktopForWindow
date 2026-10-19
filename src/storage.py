@@ -94,6 +94,7 @@ class Storage:
                 raw_schema = int(raw["settings"].get("schema_version", 1))
             except (TypeError, ValueError):
                 raw_schema = 1
+        raw_settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else {}
         for key in ("settings", "layout", "widgets"):
             val = raw.get(key)
             if isinstance(val, type(self._data[key])):
@@ -102,6 +103,16 @@ class Storage:
                 else:
                     self._data[key] = val
         self._migrate(raw_schema)
+        # v6 §7.2：takeover_desktop 是 v6 新增键。旧 state 没有它时，
+        # DEFAULT_SETTINGS 的 True 会静默覆盖老用户「关掉整理模式」的选择——
+        # 必须按 hide_native_icons 一次性初始化。反之新键存在则以新键为准，
+        # 把兼容键同步成同一语义（_on_guard_tick 等老路径仍读 hide_native_icons）。
+        if "takeover_desktop" not in raw_settings:
+            self._data["settings"]["takeover_desktop"] = bool(
+                self._data["settings"].get("hide_native_icons", True))
+        else:
+            self._data["settings"]["hide_native_icons"] = bool(
+                self._data["settings"]["takeover_desktop"])
 
     def _migrate(self, raw_schema: int = 2):
         """旧版本 state.json 兼容：
@@ -164,6 +175,27 @@ class Storage:
 
     def set_setting(self, key, value):
         self._data["settings"][key] = value
+        self.save()
+
+    # ---------- 接管系统桌面（v6 §7.2 唯一模式开关） ----------
+    def takeover(self) -> bool:
+        """「接管系统桌面」开关：勾选 = 整理窗口接管桌面（隐藏原生图标、
+        框选 / 自己的右键菜单）；取消 = 仅悬浮/退出，原生桌面照常可用。
+
+        唯一语义入口。`hide_native_icons` 降级为兼容键（旧 state / 旧测试
+        仍可读写），仅在 takeover_desktop 缺失时回退读取。
+        """
+        s = self._data.get("settings") or {}
+        if "takeover_desktop" in s:
+            return bool(s["takeover_desktop"])
+        return bool(s.get("hide_native_icons", True))
+
+    def set_takeover(self, value: bool):
+        """写接管开关：两个键同步落笔，避免「设置里关了、老代码仍读到开」的
+        语义漂移（桌面窗口的 _on_guard_tick 仍在巡检 hide_native_icons）。"""
+        s = self._data.setdefault("settings", {})
+        s["takeover_desktop"] = bool(value)
+        s["hide_native_icons"] = bool(value)
         self.save()
 
     # ---------- 图标尺寸（DPI × 用户缩放双感知） ----------
@@ -416,20 +448,20 @@ class Storage:
         """启动 / 开启整理模式时调用：把桌面文件播种进网格。
 
         2026-10-18 路线A 拍板后的语义：
-          - **整理模式（hide_native_icons）开启且网格为空 -> 无条件播种**：
-            路线A 承诺"桌面文件全部映射"，空布局 + 整理模式 = 用户面对
-            空桌面 = 文件丢失观感（probe16 G2 抓到旧实现里历史标志 +
-            auto_clone 双重拦截会导致播种被跳过）。**不依赖
-            desktop_clone_seeded/v2 历史标志**（旧版标志残留曾导致重新
-            开启整理模式时网格不恢复，是"加载的文件缺少很多"的根因之一）
+          - **接管系统桌面（takeover_desktop，v6 §7.2 唯一模式开关）开启
+            且网格为空 -> 无条件播种**：路线A 承诺"桌面文件全部映射"，
+            空布局 + 接管 = 用户面对空桌面 = 文件丢失观感（probe16 G2 抓到
+            旧实现里历史标志 + auto_clone 双重拦截会导致播种被跳过）。
+            **不依赖 desktop_clone_seeded/v2 历史标志**（旧版标志残留曾导致
+            重新开启接管时网格不恢复，是"加载的文件缺少很多"的根因之一）
           - 布局非空时按 auto_clone_desktop 决定：开=启动补播新增；
             关=尊重用户的手动删除（删过的条目重启不回来）
-          - force=True：用户主动操作（开启整理模式 / 重新扫描），无视
+          - force=True：用户主动操作（开启接管 / 重新扫描），无视
             auto_clone 与空布局判断，强制补扫
           - 每次调用都补扫一次，幂等：已有条目跳过、只增不减（丢失文件的
             清理交给显式「重新扫描桌面文件」，不碰用户布局）
         """
-        if not (force or self.get_setting("hide_native_icons")):
+        if not (force or self.takeover()):
             return 0
         empty = not self._data["layout"]
         if not force and not empty and not self.get_setting("auto_clone_desktop"):

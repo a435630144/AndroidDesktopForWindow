@@ -143,21 +143,21 @@ def main():
             st4 = Storage(path=tmp / "state3.json")
             st4.ensure_desktop_clone()
             check("整理模式默认自动播种", len(st4.layout) == 3)
-            st4.set_setting("hide_native_icons", False)
+            st4.set_takeover(False)
             st4.set_setting("auto_clone_desktop", False)
             st4b = Storage(path=tmp / "state3b.json")
-            st4b.set_setting("hide_native_icons", False)
+            st4b.set_takeover(False)
             st4b.set_setting("auto_clone_desktop", False)
             st4b.ensure_desktop_clone()
             check("退回原生模式后不自动播种", len(st4b.layout) == 0)
-            st4b.set_setting("hide_native_icons", True)
+            st4b.set_takeover(True)
             st4b.ensure_desktop_clone(force=True)
             check("重新开启整理模式即补播", len(st4b.layout) == 3)
 
             # 旧版状态（播种过 + 整理模式）：迁移不再清空布局、不再关闭整理模式
             st5 = Storage(path=tmp / "state4.json")
             st5.seed_desktop_clone()
-            st5.set_setting("hide_native_icons", True)
+            st5.set_takeover(True)
             st5.set_setting("desktop_clone_v2", True)
             check("旧版迁移不再清空/关闭（路线A）", st5.migrate_to_native_mode() is False
                   and len(st5.layout) == 3

@@ -89,8 +89,12 @@ class DesktopWindow(QWidget):
 
     # ---------- 模式 ----------
     def _organize_mode(self) -> bool:
-        """桌面整理模式：隐藏原生图标，由本窗口全盘接管（框选 / 自己的右键菜单）。"""
-        return bool(self.storage.get_setting("hide_native_icons"))
+        """桌面整理模式 = 「接管系统桌面」开关（v6 §7.2 唯一入口）。
+
+        开：隐藏原生图标，由本窗口全盘接管（框选 / 自己的右键菜单）；
+        关：仅悬浮，原生桌面照常可用。
+        """
+        return self.storage.takeover()
 
     def _dev_mode(self) -> bool:
         """开发者模式（2026-10-18）：桌面渲染网格可视化边框，排查布局问题用。
@@ -181,8 +185,8 @@ class DesktopWindow(QWidget):
 
     # ---------- 原生桌面图标 ----------
     def _sync_native_icons(self):
-        """按设置隐藏 / 恢复系统原生桌面图标（克隆模式核心）。"""
-        hide = bool(self.storage.get_setting("hide_native_icons"))
+        """按「接管系统桌面」开关隐藏 / 恢复系统原生桌面图标（克隆模式核心）。"""
+        hide = self.storage.takeover()
         win32_layer.set_native_icons_visible(not hide)
 
     def apply_native_icons_setting(self):
@@ -200,7 +204,7 @@ class DesktopWindow(QWidget):
         """守护周期回调：保持原生图标隐藏（explorer 重启等会令其重新可见）；
         M1 附加：工作区几何变化（DPI / 分辨率 / 任务栏位置变化，
         WM_SETTINGCHANGE/WM_DISPLAYCHANGE 的轮询兜底）时重算网格。"""
-        if self.storage.get_setting("hide_native_icons") and self.isVisible():
+        if self.storage.takeover() and self.isVisible():
             if not win32_layer.native_icons_hidden():
                 win32_layer.set_native_icons_visible(False)
         if self.attached and self.isVisible():
@@ -1910,8 +1914,8 @@ class DesktopWindow(QWidget):
                 pass
 
     def _exit_organize_mode(self):
-        """退出整理模式：恢复原生图标显示（设置同步）。"""
-        self.storage.set_setting("hide_native_icons", False)
+        """退出整理模式：关闭「接管系统桌面」并恢复原生图标显示。"""
+        self.storage.set_takeover(False)
         self._sync_native_icons()
 
     def _remove_selected(self):
