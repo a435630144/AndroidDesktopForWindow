@@ -23,13 +23,15 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import QEvent, QEventLoop, QPoint, QPointF, Qt, QTimer
+from PySide6.QtCore import (QEvent, QEventLoop, QPoint, QPointF, QRect,
+                            Qt, QTimer)
 from PySide6.QtGui import QColor, QKeyEvent, QMouseEvent, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from src import grid_flow, theme, win32_layer
 from src.desktop_window import DesktopWindow
-from src.folder_popup import BandInputBox, FolderPopup, ScrimWindow
+from src.folder_popup import (BandInputBox, FolderPopup, ScrimWindow,
+                              place_beside)
 from src.iconwidget import AppIcon
 from src.storage import Storage
 
@@ -287,12 +289,27 @@ def main(app):
         scr = w2._scrim
         check("F10 弹窗与幕布都已创建", pop is not None and scr is not None)
         if pop is not None and scr is not None:
-            cx, cy = grid_flow.page_grid_center(st3)
-            got_c = (pop.x() + pop.width() // 2, pop.y() + pop.height() // 2)
-            check("F10 弹窗中心 = 当前页网格区中心",
-                  abs(got_c[0] - cx) <= 1 and abs(got_c[1] - cy) <= 1,
-                  "got=%s want=%s" % (got_c, (cx, cy)))
+            # 2026-10-20 用户反馈 F4：弹窗必须**贴着文件夹图标**展开
+            # （旧规格是"居中到网格区中心"，已被本次反馈覆盖）。
             scr_geo = app.primaryScreen().availableGeometry()
+            icon = w2.icons.get("f")
+            check("F10 源图标存在（锚点）", icon is not None)
+            if icon is not None:
+                a = QRect(icon.mapToGlobal(QPoint(0, 0)), icon.size())
+                exp = place_beside(
+                    (a.x(), a.y(), a.width(), a.height()),
+                    pop.width(), pop.height(),
+                    (scr_geo.x(), scr_geo.y(),
+                     scr_geo.width(), scr_geo.height()))
+                check("F10 弹窗贴着文件夹图标展开（位置 = place_beside）",
+                      (pop.x(), pop.y()) == exp,
+                      "got=(%d,%d) want=%s icon=%s"
+                      % (pop.x(), pop.y(), exp, a))
+                check("F10 弹窗不再居中到网格区中心（旧行为已废弃）",
+                      (pop.x() + pop.width() // 2,
+                       pop.y() + pop.height() // 2) != grid_flow.page_grid_center(st3),
+                      "center=%s" % ((pop.x() + pop.width() // 2,
+                                      pop.y() + pop.height() // 2),))
             check("F10 幕布覆盖整个工作区", scr.geometry() == scr_geo,
                   "%s vs %s" % (scr.geometry(), scr_geo))
             shw, phw = int(scr.winId()), int(pop.winId())

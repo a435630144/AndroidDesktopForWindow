@@ -11,12 +11,13 @@ from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from . import appsource
+from . import drag_merge
 from . import grid_flow
 from . import theme
 from . import win32_layer
 from .band_guard import BandGuard
 from .folder_popup import FolderPopup, ScrimWindow
-from .iconwidget import MIME_TYPE, AppIcon
+from .iconwidget import DWELL_MERGE_MS, MIME_TYPE, AppIcon
 from .storage import Storage
 from .win32_layer import attach_to_desktop
 
@@ -24,9 +25,12 @@ WM_NCHITTEST = 0x84
 HTTRANSPARENT, HTCLIENT = -1, 1
 
 # 拥挤推让的悬停时长（ms）：拖到别人格子上停这么久，对方实时让开。
-# 比合并武装（450ms）短——"挤走"是边缘轻触的即时反馈，"建文件夹"是
-# 压在中心静止一会儿的郑重手势，两者不该同时触发。
-PUSH_DWELL_MS = 260
+# 2026-10-20 用户反馈 F3："想合并却先被挤走"——旧值 260ms 比合并武装
+# （DWELL_MERGE_MS=450ms）**短**，拖影抖动一下掉回"擦边"目标就被推走，
+# 合并提示永远等不到。改成 dwell + 250ms：**提示先出现，推让后到**。
+# 另外压住目标图标本身（重叠 ≥ MERGE_ARM_RATIO）时干脆不推让，
+# 见 `_reflow_preview`。
+PUSH_DWELL_MS = DWELL_MERGE_MS + 250
 
 
 class DesktopWindow(QWidget):
@@ -542,6 +546,42 @@ class DesktopWindow(QWidget):
         tl = self.mapFromGlobal(g.topLeft())
         return grid_flow.cell_by_overlap(
             self.storage, (tl.x(), tl.y(), g.width(), g.height()))
+
+    def _drag_overlap_on_cell(self, dragged_id: str, cell,
+                              ghost_rect=None) -> float:
+        """拖影与**目标格上那个图标**的重叠比（0~1）。
+
+        2026-10-20 用户反馈 F3 的判定入口：拖影实质压住目标（≥
+        `drag_merge.MERGE_ARM_RATIO`）时要保住目标、等合并提示；只有擦边
+        才允许"悬停够久把他挤走"。
+
+        ghost_rect 可注入（QRect，全局坐标）：真实拖动取浮动拖影；
+        无拖影（合成 drop / 探针直调）返回 0.0 —— 退化为"照常推让"，
+        不改变既有测试与外部拖入的行为。
+        """
+        if ghost_rect is None:
+            icon = self.icons.get(dragged_id or "")
+            ghost = getattr(icon, "_drag_ghost_w", None) if icon else None
+            if ghost is None:
+                return 0.0
+            try:
+                ghost_rect = ghost.geometry()
+            except RuntimeError:
+                return 0.0
+        occ = self.storage.occupant(cell[0], cell[1], exclude_id=dragged_id)
+        if occ is None:
+            return 0.0
+        target = self.icons.get(occ.get("id"))
+        if target is None:
+            return 0.0
+        try:
+            r = QRect(target.mapToGlobal(QPoint(0, 0)), target.size())
+        except RuntimeError:
+            return 0.0
+        return drag_merge.overlap_ratio(
+            (ghost_rect.x(), ghost_rect.y(),
+             ghost_rect.width(), ghost_rect.height()),
+            (r.x(), r.y(), r.width(), r.height()))
 
     def _set_highlight(self, cell):
         """v6 §5.2：目标 cell 红框。只在跨格时重绘——dragMove 是高频
@@ -1157,6 +1197,23 @@ class DesktopWindow(QWidget):
             self.storage.save()
             self._animate_icons_to_layout(moved)
 
+    def _displace_blocked(self, comp_cells, src_cells) -> set:
+        """挤位禁区：组件占位 ∪ 其他图标占位（排除本次要挪走的那些）。
+
+        2026-10-20 F2（用户反馈「移动组件时实时预览把图标叠到同一格」）：
+        旧实现只把**组件占位**当禁区传给 `displace_cells`，后者把其余格
+        全算空闲——被组件压到的图标于是被分配到**另一个图标正占着的格**
+        上，预览里直接叠成一坨。禁区必须含图标自己的占位。
+
+        src_cells 是**要被挪走**的原格：它们本来就在组件矩形里（禁区已有），
+        但仍要从"图标禁区"里剔除——否则 displaced 图标会因无空格可去而
+        退回原地（留在组件下面）。
+        """
+        src = set(src_cells)
+        icon_cells = {(int(e.get("col", 0)), int(e.get("row", 0)))
+                      for e in self.storage.layout}
+        return set(comp_cells) | (icon_cells - src)
+
     def _displace_from_widgets(self) -> dict:
         """把落在小组件占位格上的图标挪到空格（排除组件占位）。
         返回 {id: (col,row)} 位移清单（空 = 无需 displace）。
@@ -1174,7 +1231,10 @@ class DesktopWindow(QWidget):
             cell = (int(e.get("col", 0)), int(e.get("row", 0)))
             if cell in wc:
                 need.append((e, cell))
-        plan = grid_flow.displace_cells([c for _e, c in need], wc,
+        # 2026-10-20 F2：禁区补上其他图标占位，否则被挤的图标会被分到
+        # 已经站着人的格子上（预览/落定都叠）
+        blocked = self._displace_blocked(wc, [c for _e, c in need])
+        plan = grid_flow.displace_cells([c for _e, c in need], blocked,
                                         self.storage.columns, (lo, hi))
         moved = {}
         for e, cell in need:
@@ -1234,7 +1294,7 @@ class DesktopWindow(QWidget):
             # 否则上一次预览的挤位会叠加漂移
             self._restore_snap(self._widget_snap)
         # 其他组件的占位仍要避开；本组件的旧占位释放（图标可回填）
-        blocked = rect | (self._widget_cells() - self._widget_entry_rect(entry))
+        comp_blocked = rect | (self._widget_cells() - self._widget_entry_rect(entry))
         # 2026-10-19 反馈 7b：批量分配（互不重复）。旧实现逐个
         # nearest_free_cell 用同一份静态 blocked，两个图标会被分到同一格
         # ——"排满后再拖组件，图标直接叠在一起"。
@@ -1243,8 +1303,11 @@ class DesktopWindow(QWidget):
         need = []
         for e in self.storage.layout:
             c, r = int(e.get("col", 0)), int(e.get("row", 0))
-            if (c, r) in blocked:
+            if (c, r) in comp_blocked:
                 need.append((e, (c, r)))
+        # 2026-10-20 F2：禁区再补「其他图标占位」——只给组件占位时
+        # displace_cells 会把图标分到别人正占着的格上（预览直接叠格）
+        blocked = self._displace_blocked(comp_blocked, [c for _e, c in need])
         plan = grid_flow.displace_cells([c for _e, c in need], blocked,
                                         self.storage.columns, (lo, hi))
         moves = {}
@@ -1296,11 +1359,20 @@ class DesktopWindow(QWidget):
         # 2026-10-19 反馈 4/9：目标格被**别的图标**占着时不立刻让位——
         # 用户可能想合并（悬停 450ms 出提示）。但也**不能一直不动**：
         # 手机语义是"边缘重叠并悬浮一会儿 -> 实时把对方挤走"。折中：
-        # 起一个 260ms 的推让计时器，停留够久再算位移（松手/移开即取消）。
+        # 起一个推让计时器，停留够久再算位移（松手/移开即取消）。
         # 拖动中每次 dragMove 都会重置它，只有真正停住才触发。
         if not self._drag_multi:
             occ = self.storage.occupant(cell[0], cell[1], exclude_id=dragged_id)
             if occ is not None:
+                # 2026-10-20 F3：拖影**压住**了目标图标（重叠 ≥
+                # MERGE_ARM_RATIO）时不武装推让——用户要的是合并提示，
+                # 不是把人挤走。只擦边时才走"悬停够久挤走"的老语义。
+                if drag_merge.defers_push(
+                        self._drag_overlap_on_cell(dragged_id, cell)):
+                    self._push_timer.stop()
+                    self._push_cell = None
+                    self._push_dragged = None
+                    return
                 self._push_cell = cell
                 self._push_dragged = dragged_id
                 self._push_timer.start()

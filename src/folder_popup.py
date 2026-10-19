@@ -62,6 +62,45 @@ ZOOM_TO = 0.55     # 关闭时玻璃收起的缩放
 SCRIM_ALPHA = 71   # 幕布黑透明度（0.28 × 255 ≈ 71）
 TINT_OVERLAY_ALPHA = 46   # 弹窗背板上的色板色覆盖层透明度
 
+BESIDE_GAP = 10     # 弹窗与锚点图标之间的间距（px）
+BESIDE_MARGIN = 8   # 弹窗与可用屏幕边缘的最小间距（px）
+
+
+def place_beside(anchor, w: int, h: int, avail,
+                 gap: int = BESIDE_GAP, margin: int = BESIDE_MARGIN):
+    """弹窗「贴着锚点图标展开」的位置（纯函数，返回 (x, y)）。
+
+    2026-10-20 用户反馈 F4：文件夹展开后弹窗跑到网格区中心、离文件夹很远。
+    原决策（v6 §6.2「居中当模态面板」）被本次反馈覆盖——改为贴着图标展开：
+
+      1. **下方优先**：y = 图标底 + gap（最符合"从图标里长出来"的直觉）
+      2. 下方越出可用屏幕 -> **上方**：y = 图标顶 - gap - h
+      3. 上下都放不下 -> 夹紧进可用屏幕（留 margin）
+      4. x 水平**居中对齐图标**，再夹紧进屏幕
+
+    anchor / avail 均为 (x, y, w, h)：anchor 是图标全局矩形，avail 是
+    可用屏幕矩形（已扣任务栏）。
+    """
+    ax, ay, aw, ah = [int(v) for v in anchor]
+    vx, vy, vw, vh = [int(v) for v in avail]
+    w, h = max(1, int(w)), max(1, int(h))
+
+    below = ay + ah + gap
+    above = ay - gap - h
+    if below + h <= vy + vh:
+        y = below
+    elif above >= vy:
+        y = above
+    else:
+        y = below            # 上下都放不下：交给下面的夹紧
+    lo_y, hi_y = vy + margin, vy + vh - h - margin
+    y = lo_y if hi_y < lo_y else max(lo_y, min(y, hi_y))
+
+    x = ax + aw // 2 - w // 2
+    lo_x, hi_x = vx + margin, vx + vw - w - margin
+    x = lo_x if hi_x < lo_x else max(lo_x, min(x, hi_x))
+    return int(x), int(y)
+
 
 class ScrimWindow(QWidget):
     """文件夹打开时的全屏幕布：压暗桌面带内所有元素（iOS 打开文件夹语义）。
@@ -375,20 +414,28 @@ class FolderPopup(QWidget):
         content_h = rows * box + (rows - 1) * max(0, pitch - box)
         h = title_h + content_h + bar_h + pad
         # 高度不超过可用屏幕的 82%：桌面文件全拖进来的极端情况不顶出屏幕
-        # v6 §6.2（指导文档 §6.2 反馈 8/9）：弹窗中心对齐**当前页网格区
-        # 中心**——幕布吞掉桌面层点击后弹窗是模态面板，从任意位置的文件夹
-        # 图标打开都落屏幕同一处，比贴锚点更符合预期；网格区几何所有页
-        # 相同（页只是行偏移），故与翻页状态解耦。
+        # 2026-10-20（用户反馈 F4，覆盖 v6 §6.2 的居中决策）：**贴着源图标
+        # 展开**——下方优先、下方放不下翻上方、都放不下夹紧进屏幕。旧实现
+        # 居中到网格区中心，用户看到的是"弹窗离文件夹很远"。
+        # 无 anchor（探针 / 异常路径）时仍回退网格区居中，保持旧行为兜底。
         cx, cy = grid_flow.page_grid_center(self.storage)
-        screen = QGuiApplication.screenAt(QPoint(int(cx), int(cy)))
-        screen = screen or QGuiApplication.primaryScreen()
+        probe = anchor_rect.center() if anchor_rect is not None \
+            else QPoint(int(cx), int(cy))
+        screen = QGuiApplication.screenAt(probe) or QGuiApplication.primaryScreen()
         geo = screen.availableGeometry()
         max_h = int(geo.height() * 0.82)
         self.setFixedSize(max(240, w), min(max(150, h), max_h))
-        x = cx - self.width() // 2
-        y = cy - self.height() // 2
-        x = max(geo.left() + 8, min(x, geo.right() - self.width() - 8))
-        y = max(geo.top() + 8, min(y, geo.bottom() - self.height() - 8))
+        if anchor_rect is not None:
+            x, y = place_beside(
+                (anchor_rect.x(), anchor_rect.y(),
+                 anchor_rect.width(), anchor_rect.height()),
+                self.width(), self.height(),
+                (geo.x(), geo.y(), geo.width(), geo.height()))
+        else:
+            x = cx - self.width() // 2
+            y = cy - self.height() // 2
+            x = max(geo.left() + 8, min(x, geo.right() - self.width() - 8))
+            y = max(geo.top() + 8, min(y, geo.bottom() - self.height() - 8))
         self.move(x, y)
         if anchor_rect is not None:
             # 玻璃从图标位置涌出：缩放中心 = 图标中心（弹窗本地坐标）

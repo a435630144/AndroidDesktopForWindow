@@ -62,9 +62,13 @@ GW_CHILD, GW_HWNDNEXT = 5, 2
 SM_CXSCREEN, SM_CYSCREEN = 0, 1
 GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
+WS_EX_TOPMOST = 0x00000008
 
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE, SWP_NOZORDER = 0x0001, 0x0002, 0x0010, 0x0004
 SW_HIDE, SW_SHOW = 0, 5
+# SW_SHOWNA = 显示但**不激活**（"show no activate"）。用于「显示桌面」后把
+# 被系统一并藏起来的带内窗口恢复可见，同时不抢走用户当前应用的焦点。
+SW_SHOWNA = 8
 
 
 def _class_of(hwnd) -> str:
@@ -126,6 +130,31 @@ def _progman() -> int:
 def _has_noactivate(hwnd) -> bool:
     ex = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & 0xFFFFFFFF
     return bool(ex & WS_EX_NOACTIVATE)
+
+
+def _is_topmost(hwnd) -> bool:
+    ex = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & 0xFFFFFFFF
+    return bool(ex & WS_EX_TOPMOST)
+
+
+def progman_is_topmost(progman: int = 0) -> bool:
+    """Progman 是否位于 topmost 带 —— 「显示桌面」（Win+D）的可靠特征。
+
+    正常态 Progman 垫在所有窗口之下（非 topmost）；Show Desktop 时 shell
+    把它提到 topmost 带以便盖住应用窗口。
+
+    2026-10-20 用户反馈 F1：旧判定是「Progman 落在 z-order 前 30%」
+    （`pidx < max(60, total*0.3)`）——窗口总数少时会把**正常态误判**成
+    show desktop，于是把我们的窗口插进 topmost 带（会盖住应用窗口）。
+    改成直接读 Progman 的 `WS_EX_TOPMOST` 位，语义唯一且不依赖窗口总数。
+    """
+    progman = progman or _progman()
+    if not progman:
+        return False
+    try:
+        return _is_topmost(progman)
+    except Exception:
+        return False
 
 
 def _insert_above(hwnd: int, above_of: int) -> bool:
@@ -302,6 +331,48 @@ def band_topmost_hwnd(exclude_hwnd: int = 0, zorder=None) -> int:
         if best == 0 or wins.index(hw) < wins.index(best):
             best = hw
     return best
+
+
+def restore_band_windows(items, progman: int = 0, zorder=None) -> int:
+    """「显示桌面」态：把带内窗口恢复可见并压回 Progman 正上方。
+
+    2026-10-20 用户反馈 F1：接管模式下按 Win+D / 点任务栏末端「显示桌面」，
+    Show Desktop 会把**所有顶层窗口**一并藏起来（我们也在其中），而原生
+    图标已被接管隐藏 → 用户看到**完全空的桌面**。
+
+    这里对每个带内成员：
+      1. 不可见就 `ShowWindow(SW_SHOWNA)`——显示但**不激活**，不抢用户
+         当前应用的焦点（已可见时幂等无副作用，故不做状态判断缓存）；
+      2. 按层号自底向上插到 Progman **正上方**：此刻 Progman 在 topmost
+         带，插在它下方（普通带）仍会被全屏壁纸盖住，等于没恢复。
+
+    items 为 [(hwnd, layer)]。返回被恢复可见的窗口数（0 = 本来就都可见）。
+    """
+    progman = progman or _progman()
+    if not progman:
+        return 0
+    pairs = sorted([(int(h), int(ly)) for h, ly in items if h],
+                   key=lambda t: t[1])
+    if not pairs:
+        return 0
+    restored = 0
+    prev = progman
+    for hw, _ly in pairs:
+        try:
+            if not _user32.IsWindow(hw):
+                continue
+            if not _user32.IsWindowVisible(hw):
+                _user32.ShowWindow(hw, SW_SHOWNA)
+                restored += 1
+        except Exception:
+            continue
+        # 层内相对顺序：首个插 Progman 正上方，其余插到上一个成员上方
+        if prev == progman:
+            _insert_above(hw, progman)
+        else:
+            insert_above_window(hw, prev)
+        prev = hw
+    return restored
 
 
 def attach_to_desktop(widget, below_hwnd: int = 0, layer: int = 0) -> bool:

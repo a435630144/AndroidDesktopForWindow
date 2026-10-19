@@ -29,6 +29,7 @@ from PySide6.QtWidgets import QApplication
 
 from src import grid_flow
 from src.desktop_window import PUSH_DWELL_MS, DesktopWindow
+from src.iconwidget import DWELL_MERGE_MS
 from src.storage import Storage
 
 W, H = 1920, 1040
@@ -89,8 +90,11 @@ def main(app):
           [cell_of(st, k) for k in ("a", "b", "c")]
           == [(0, 0), (1, 0), (2, 0)],
           "%s" % [cell_of(st, k) for k in ("a", "b", "c")])
-    check("P0 dwell 常量在手机手感区间（200~450ms）",
-          200 <= PUSH_DWELL_MS <= 450, "%d" % PUSH_DWELL_MS)
+    # 2026-10-20 用户反馈 F3：推让延时**必须晚于**合并提示（450ms），
+    # 否则"想合并却先被挤走"；但也不该长到让人以为卡住。
+    check("P0 推让延时晚于合并提示且不超过 1.2s（提示先出现）",
+          DWELL_MERGE_MS < PUSH_DWELL_MS <= 1200,
+          "push=%d dwell=%d" % (PUSH_DWELL_MS, DWELL_MERGE_MS))
 
     # ---------- P1：拖到被占格 -> 立刻不动 ----------
     w._reflow_preview("c", (0, 0))

@@ -32,6 +32,7 @@ from PySide6.QtGui import (QBrush, QColor, QDragEnterEvent, QDragLeaveEvent,
 from PySide6.QtWidgets import QApplication, QMenu, QToolTip, QWidget
 
 from . import appsource
+from . import drag_merge
 from . import effects
 from .folder_tint import folder_tint
 from . import theme
@@ -45,8 +46,10 @@ DWELL_MERGE_MS = 450
 
 # 判定「压到目标中心」的重叠比例（占较小矩形面积）。
 # >= 该值 = 想合并（武装 dwell）；否则视为擦边 = 想放这里并挤走对方。
-# 0.45 ≈ 拖影中心落在目标矩形内 2/3 区域的效果，与手机手感一致。
-MERGE_OVERLAP_RATIO = 0.45
+# 2026-10-20 用户反馈 F3：0.45 太高——把图标叠到目标上往往还不到 45%，
+# 于是被判成"擦边"走挤走逻辑，合并提示永远出不来。降到 0.30（压上去
+# 就算合并候选）。阈值单点定义在 drag_merge，这里只做 re-export。
+MERGE_OVERLAP_RATIO = drag_merge.MERGE_OVERLAP_RATIO
 
 # v6 §5.1（反馈 6）：拖动浮影 = 当前图标的 render 快照，半透明 0.8——
 # 替换旧 QDrag 的白块占位，拖动中保留原始样式（图标 + 标签 + 状态）。
@@ -741,7 +744,11 @@ class AppIcon(QWidget):
             return None
 
     def _overlap_ratio(self, other) -> float:
-        """拖影与另一个部件的相交比例（占较小矩形面积的百分比 0~1）。"""
+        """拖影与另一个部件的相交比例（占较小矩形面积的百分比 0~1）。
+
+        算法单点定义在 drag_merge.overlap_ratio（桌面窗口侧共用同一份，
+        避免两处各写一套导致手感漂移）。
+        """
         g = self._ghost_rect()
         if g is None or g.isEmpty():
             return 0.0
@@ -749,12 +756,9 @@ class AppIcon(QWidget):
             r = QRect(other.mapToGlobal(QPoint(0, 0)), other.size())
         except RuntimeError:
             return 0.0
-        inter = g.intersected(r)
-        if inter.isEmpty():
-            return 0.0
-        a = float(inter.width() * inter.height())
-        m = float(min(g.width() * g.height(), max(1, r.width() * r.height())))
-        return a / max(1.0, m)
+        return drag_merge.overlap_ratio(
+            (g.x(), g.y(), g.width(), g.height()),
+            (r.x(), r.y(), r.width(), r.height()))
 
     def _best_overlap_icon(self):
         """与拖影重叠最多的同级桌面图标（排除自身/文件夹成员）。"""

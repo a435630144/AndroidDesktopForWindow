@@ -21,11 +21,18 @@
 
 关键边界——"显示桌面"（Win+D / 点任务栏末端）：
   此时 Windows 会把 Progman 提升到 z-order 前部（topmost 带）来盖住
-  应用窗口。实测此状态下强行插入会把我们的窗口带进普通 z-order 带的
-  顶部区域，等用户还原显示桌面时组件将漂移到应用窗口之间（会盖应用）。
-  因此该模式下必须暂停干预；还原后 Windows 会自动恢复窗口的相对位置
-  （实测 Progman 回底部时桌面带窗口随之回到其正上方），
-  守护只需在退出该模式后兜底重挂一次。
+  应用窗口，并**把所有顶层窗口一并藏起来**——我们也在其中。
+
+  2026-10-20 用户反馈 F1：旧实现在该状态下**直接暂停干预**，注释假定
+  "还原后 Windows 会自动恢复窗口的相对位置"。但窗口被藏起来这件事
+  Windows 不会自己还回来：接管模式下原生图标已被隐藏，用户按 Win+D
+  看到的是**完全空的桌面**。
+
+  现在的行为：识别到 show desktop 态（Progman 的 WS_EX_TOPMOST 位置位）
+  就主动 `ShowWindow(SW_SHOWNA)` 恢复可见，并把每个成员按层号插到
+  Progman **正上方**（此刻它在 topmost 带，插其下方仍被全屏壁纸盖住）。
+  全程不激活，键盘输入仍归用户当前应用。退出该态时立刻
+  `enforce_band_order` 全量重排回桌面带——绝不留 topmost 残留。
 """
 from PySide6.QtCore import QObject, QTimer
 
@@ -91,17 +98,27 @@ class BandGuard(QObject):
             wins = win32_layer._enum_zorder()
             if progman not in wins:
                 return
-            pidx = wins.index(progman)
-            total = len(wins)
 
-            # "显示桌面"模式识别：Progman 被提到 z-order 前部
-            # （正常态 Progman 位于最底部一两位）
-            show_desktop = 0 <= pidx < max(60, int(total * 0.3))
+            # "显示桌面"（Win+D / 任务栏末端）判定：Progman 进入 topmost 带
+            # （shell 把它提到最前以盖住应用窗口）。
+            # 2026-10-20 用户反馈 F1：旧判定是「pidx < max(60, total*0.3)」
+            # ——窗口总数少时会把正常态误判成 show desktop，进而把我们的
+            # 窗口插进 topmost 带（会盖住应用窗口）。改读 WS_EX_TOPMOST 位。
+            show_desktop = win32_layer.progman_is_topmost(progman)
             if show_desktop:
+                # 2026-10-20 反馈 F1：这里**不能只暂停干预**。Show Desktop
+                # 会把所有顶层窗口一起藏起来（我们也在其中），而接管模式下
+                # 原生图标已被隐藏 → 用户看到完全空的桌面。改为主动恢复：
+                # ShowWindow(SW_SHOWNA) + 插到 Progman 正上方（此刻它在
+                # topmost 带，插其下方仍被全屏壁纸盖住）。全程不激活，
+                # 键盘输入仍归用户当前应用。
                 self._in_show_desktop = True
-                return  # 暂停干预，交给 Windows 还原
+                win32_layer.restore_band_windows(self._items, progman)
+                self._tick_hook()
+                return
             if self._in_show_desktop:
-                # 退出显示桌面：兜底重挂（Windows 通常已自动还原相对位置）
+                # 退出显示桌面：立刻全量重排回桌面带——绝不留 topmost 残留
+                # （否则我们的窗口会漂到应用窗口之上）。
                 self._in_show_desktop = False
                 win32_layer.enforce_band_order(progman, wins)
                 self._tick_hook()
