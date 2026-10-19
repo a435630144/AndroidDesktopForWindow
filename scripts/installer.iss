@@ -13,6 +13,15 @@
 #define MyAppPublisher "DesktopOrganizerDemo"
 #define MyAppExe "DesktopOrganizerDemo.exe"
 
+; 打包目录名 / 产物名参数化：运行中的旧实例会锁住 dist\<BuildDir>，
+; 换名重打时用 ISCC /DBuildDir=xxx /DOutBase=xxx 覆盖即可，不必改脚本。
+#ifndef BuildDir
+  #define BuildDir "DesktopOrganizerDemo_v6"
+#endif
+#ifndef OutBase
+  #define OutBase "DesktopOrganizerDemo_v6_Setup"
+#endif
+
 [Setup]
 ; 免管理员安装：装到当前用户目录
 PrivilegesRequired=lowest
@@ -24,7 +33,7 @@ DefaultDirName={autopf}\{#MyAppNameEn}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=..\dist
-OutputBaseFilename=DesktopOrganizerDemo_v6_Setup
+OutputBaseFilename={#OutBase}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -42,7 +51,7 @@ Name: "autostart"; Description: "开机自动启动"; GroupDescription: "附加�
 
 [Files]
 ; onedir 产物整体拷贝，保留子目录结构（与 build_portable.ps1 -OutName DesktopOrganizerDemo_v6 对应）
-Source: "..\dist\DesktopOrganizerDemo_v6\DesktopOrganizerDemo\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\{#BuildDir}\DesktopOrganizerDemo\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"
