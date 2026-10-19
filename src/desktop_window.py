@@ -208,7 +208,14 @@ class DesktopWindow(QWidget):
         M1 附加：工作区几何变化（DPI / 分辨率 / 任务栏位置变化，
         WM_SETTINGCHANGE/WM_DISPLAYCHANGE 的轮询兜底）时重算网格。"""
         if self.storage.takeover() and self.isVisible():
-            if not win32_layer.native_icons_hidden():
+            # 三重巡检（2026-10-19）：
+            #   1) 缓存标志——进程内我们自己知道的隐藏状态；
+            #   2) 图标列表实查——explorer 重启 / 重建 SysListView32 后句柄
+            #      会换，缓存标志仍是 True 却已经露出图标；
+            #   3) 第三方桌面层——腾讯桌面整理等会把自绘图层重新 SHOW 回来。
+            if (not win32_layer.native_icons_hidden()
+                    or win32_layer.native_icon_list_visible()
+                    or win32_layer.third_party_overlays_visible()):
                 win32_layer.set_native_icons_visible(False)
         if self.attached and self.isVisible():
             geo = QApplication.primaryScreen().availableGeometry()

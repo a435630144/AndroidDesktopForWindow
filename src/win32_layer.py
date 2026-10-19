@@ -44,6 +44,8 @@ _user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
 _user32.GetWindowRect.restype = wintypes.BOOL
 _user32.IsWindowVisible.argtypes = [wintypes.HWND]
 _user32.IsWindowVisible.restype = wintypes.BOOL
+_user32.IsWindow.argtypes = [wintypes.HWND]
+_user32.IsWindow.restype = wintypes.BOOL
 _user32.SetWindowPos.restype = wintypes.BOOL
 _user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                  ctypes.c_int, ctypes.c_int, wintypes.UINT]
@@ -275,6 +277,8 @@ def diagnose_desktop_layer() -> dict:
         "band_window_count": len(band),
         "band_qt_windows": qt_band,
         "native_icons_hidden": native_icons_hidden(),
+        "third_party_overlays": find_third_party_overlays(),
+        "third_party_overlays_visible": third_party_overlays_visible(),
     }
 
 
@@ -292,6 +296,26 @@ def diagnose_desktop_layer() -> dict:
 # 退出 / 崩溃自愈时必须恢复，否则用户将看不到任何桌面图标。
 
 _ICON_LIST_CLASS = "SysListView32"
+
+# **2026-10-19 第二轮（用户反馈"壁纸有了，但原生图标怎么也出来了、挤到一起"）**：
+# 只藏 SysListView32 还不够——第三方桌面整理软件会在 DefView 下再挂一个
+# 全屏图层，自己画一份桌面图标。本机实测（腾讯桌面整理 DeskGo）：
+#     SHELLDLL_DefView
+#       ├─ TXMiniSkin      ← DesktopMgr64.exe，1536×864 全屏，自绘图标
+#       └─ SysListView32   ← explorer 的图标列表
+# 藏了后者，前者照旧渲染，两套图标错位叠在一起就是"挤到一起"。
+# 实验（tools/probe_deskgoskin*.py）：隐藏 TXMiniSkin → 那套大图标整体消失、
+# 壁纸正常、12 秒内不会被抢回。
+#
+# 识别规则：DefView 下「桌面级尺寸 + 非系统图标列表」的可见子窗口一律视为
+# 第三方桌面层。系统控件（SysListView32 / SysHeader32 / WorkerW）排除；
+# 微型残留窗口由尺寸过滤掉（不会误伤）。
+_OVERLAY_SKIP_CLASSES = {_ICON_LIST_CLASS, "SysHeader32", "WorkerW"}
+
+# 我们亲手藏掉的第三方图层：{hwnd: 类名}。恢复时只 SHOW 这些，
+# 原本就隐藏的自绘层不去动它（尊重第三方自己的状态）。类名一并记着，
+# 落盘后即使句柄被回收也能校验，不会误 SHOW 到别的窗口上。
+_third_party_overlays = {}
 
 _native_icons_hidden = False
 
@@ -337,6 +361,8 @@ def set_native_icons_visible(visible: bool) -> bool:
 
     隐藏时**只摘图标列表**并确保 DefView 可见（壁纸随 DefView 一起存活）；
     只有找不到 SysListView32 的老系统才回退到隐藏整个 DefView。
+    同时连第三方桌面整理软件自绘的全屏图标层一起藏（见上方注释与
+    find_third_party_overlays），否则会与我们的网格图标叠在一起。
     """
     global _native_icons_hidden
     dv = _find_defview()
@@ -347,12 +373,152 @@ def set_native_icons_visible(visible: bool) -> bool:
     # 不显式 SHOW 会一直黑屏；target == dv 时下一行会重新盖回 HIDE。
     _user32.ShowWindow(dv, SW_SHOW)
     _user32.ShowWindow(target, SW_SHOW if visible else SW_HIDE)
+    if visible:
+        _restore_third_party_overlays()
+    else:
+        _hide_third_party_overlays()
     _native_icons_hidden = not visible
     return bool(_user32.IsWindowVisible(target)) == bool(visible)
 
 
 def native_icons_hidden() -> bool:
     return _native_icons_hidden
+
+
+def find_third_party_overlays(defview: int = 0) -> list:
+    """DefView 下由第三方桌面整理软件自绘的桌面级图层（如腾讯桌面整理 TXMiniSkin）。
+
+    这些软件会自己再画一份桌面图标，只藏 SysListView32 时它们仍在原处
+    渲染，和我们的网格图标错位叠在一起（用户反馈"原生图标怎么也出来了
+    挤到一起了"）。返回 hwnd 列表（含当前已隐藏的，调用方自行判断可见性）。
+    """
+    dv = int(defview) or _find_defview()
+    if not dv:
+        return []
+    out = []
+    for c in _iter_children(dv):
+        if _class_of(c) in _OVERLAY_SKIP_CLASSES:
+            continue
+        if not _is_desktop_sized(c):
+            continue
+        out.append(int(c))
+    return out
+
+
+def third_party_overlays_visible() -> bool:
+    """是否有第三方桌面图标层当前可见（守护轮询用来发现「被抢回」）。"""
+    try:
+        return any(bool(_user32.IsWindowVisible(h))
+                   for h in find_third_party_overlays())
+    except Exception:
+        return False
+
+
+def native_icon_list_visible() -> bool:
+    """图标列表此刻是否可见（真实查询，不读缓存标志）。
+
+    守护轮询用：explorer 重启 / 重建列表后句柄会换，缓存标志仍为 True
+    却已经露出图标——只有实查才能发现。
+    """
+    try:
+        lv = _find_icon_list()
+        return bool(lv and _user32.IsWindowVisible(lv))
+    except Exception:
+        return False
+
+
+def _hide_third_party_overlays():
+    _adopt_stale_overlay_state()
+    for h in find_third_party_overlays():
+        try:
+            if _user32.IsWindowVisible(h):
+                _third_party_overlays[h] = _class_of(h)
+                _user32.ShowWindow(h, SW_HIDE)
+        except Exception:
+            continue
+    _save_overlay_state()
+
+
+def _restore_third_party_overlays():
+    """只恢复「进来之前可见、被我们藏掉」的图层；原本隐藏的不动。
+
+    先接管上个进程留下的记录（崩溃 / 被强杀时进程内字典已丢），
+    否则外部恢复脚本、新进程都无从知道要 SHOW 谁。
+    """
+    _adopt_stale_overlay_state()
+    for h in list(_third_party_overlays):
+        try:
+            if _user32.IsWindow(h) and not _user32.IsWindowVisible(h):
+                _user32.ShowWindow(h, SW_SHOW)
+        except Exception:
+            pass
+        _third_party_overlays.pop(h, None)
+    _save_overlay_state()
+
+
+# ---------- 跨进程自愈：被强杀时第三方图层不能永久消失 ----------
+# 进程内字典挡不住 taskkill / 崩溃：新进程不知道上一个进程藏了谁，
+# 用户会发现腾讯桌面整理的挂件再也回不来（与当年 DefView 黑屏同类事故）。
+# 所以把"我们藏了谁（hwnd + 类名）"落盘，恢复路径 / 下次启动都能接上。
+# 记录里带类名，防止句柄被系统回收后误 SHOW 到别的窗口上。
+_OVERLAY_STATE_PATH = None   # 测试可注入临时路径
+
+
+def _overlay_state_path() -> str:
+    global _OVERLAY_STATE_PATH
+    if _OVERLAY_STATE_PATH is None:
+        from .paths import data_file
+        _OVERLAY_STATE_PATH = str(data_file("hidden_overlays.json"))
+    return _OVERLAY_STATE_PATH
+
+
+def _save_overlay_state():
+    import json
+    import os
+    path = _overlay_state_path()
+    try:
+        if not _third_party_overlays:
+            if os.path.exists(path):
+                os.remove(path)
+            return
+        data = {"windows": [{"hwnd": int(h), "cls": str(c)}
+                            for h, c in _third_party_overlays.items()]}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _load_overlay_state() -> list:
+    import json
+    import os
+    path = _overlay_state_path()
+    try:
+        if not os.path.exists(path):
+            return []
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        out = []
+        for rec in raw.get("windows") or []:
+            try:
+                out.append((int(rec["hwnd"]), str(rec.get("cls") or "")))
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return []
+
+
+def _adopt_stale_overlay_state():
+    """接手上一个进程留下的隐藏记录（窗口仍在且类名对得上才认）。"""
+    for h, cls in _load_overlay_state():
+        if h in _third_party_overlays:
+            continue
+        try:
+            if _user32.IsWindow(h) and (not cls or _class_of(h) == cls):
+                _third_party_overlays[h] = cls
+        except Exception:
+            continue
 
 
 def restore_native_icons():

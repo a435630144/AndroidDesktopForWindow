@@ -44,11 +44,18 @@ def check(name, cond, extra=""):
 
 
 class FakeUser32:
-    """只实现 set_native_icons_visible 用到的三个入口。"""
+    """只实现 set_native_icons_visible 用到的入口。
+
+    本用例只覆盖「图标列表 / DefView 两条路径」，不带子窗口树；
+    第三方桌面整理图层的识别与隐藏由 test_third_party_overlay.py 覆盖。
+    """
 
     def __init__(self, visible=None):
         self.visible = dict(visible or {DV_HWND: True, LV_HWND: True})
         self.calls = []
+
+    def GetWindow(self, hwnd, cmd):
+        return 0  # 没有子窗口：DefView 下不挂任何第三方图层
 
     def ShowWindow(self, hwnd, cmd):
         self.calls.append((int(hwnd), int(cmd)))
@@ -57,6 +64,9 @@ class FakeUser32:
 
     def IsWindowVisible(self, hwnd):
         return bool(self.visible.get(int(hwnd), False))
+
+    def IsWindow(self, hwnd):
+        return int(hwnd) in self.visible
 
 
 def run_case(has_listview=True, dv_initially_visible=True):
