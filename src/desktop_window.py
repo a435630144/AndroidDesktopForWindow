@@ -1985,6 +1985,14 @@ class DesktopWindow(QWidget):
         if self._organize_mode():
             menu.addAction("恢复系统原生桌面图标", self._exit_organize_mode)
         menu.addAction("隐藏桌面整理", self.hide_desktop)
+
+        # 构建标识（2026-10-19 版本混淆事故）：用户报"还是没修好"，实际是
+        # 跑着上一轮的包。灰显不可点，只为一眼回答"这是哪个构建"。
+        from . import version
+        menu.addSeparator()
+        ver_act = menu.addAction(version.label())
+        ver_act.setEnabled(False)
+        ver_act.setObjectName("ctxVersion")
         return menu
 
     def _fill_new_menu(self, new_menu):
