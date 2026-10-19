@@ -159,6 +159,49 @@ SPIN_QSS = (
 
 DIALOG_QSS = "QDialog{background: rgb(34, 34, 40);}"
 
+# ---------- 设置卡片（v6 §7.3 分组卡片式重设计） ----------
+# 卡片 = 深色底上更浅的一层（白色低 alpha + 描边 + RADIUS_CARD），不引入
+# 新的灰色阶，保持与桌面带 / 弹窗同一套表面语言；标题用 ACCENT 主色——
+# 层级靠「主色标题 + 卡片边界」表达，而不是把正文调得更白更亮。
+CARD_BG = QColor(255, 255, 255, 10)
+CARD_SPACING = 12          # 卡片之间（统一间距，替代各处魔法数）
+CARD_PAD = 14              # 卡片内边距
+
+CARD_QSS = (
+    "QFrame#settingsCard{background: %s; border: 1px solid %s;"
+    " border-radius: %dpx;}"
+) % (rgba(CARD_BG), rgba(BORDER), RADIUS_CARD)
+
+CARD_TITLE_QSS = (
+    "color: %s; font-family: %s; font-size: 13px; font-weight: 600;"
+) % (rgba(ACCENT), ", ".join('"%s"' % f for f in FONT_FAMILIES))
+
+SCROLL_QSS = (
+    "QScrollArea{background: transparent; border: none;}"
+    "QScrollBar:vertical{background: transparent; width: 8px; margin: 2px;}"
+    "QScrollBar::handle:vertical{background: %s; border-radius: 4px; min-height: 28px;}"
+    "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical{height: 0;}"
+) % rgba(BORDER_STRONG)
+
+# 下拉框：不写 QSS 会回退成系统默认（深色对话框里是纯黑底 + 黑字，不可读，
+# 2026-10-19 设置重设计截图目检抓到）。down-arrow 用 border 三角自绘，
+# 避免依赖图片资源；弹出列表同样走深色表面，悬停/选中用 ACCENT。
+COMBO_QSS = (
+    "QComboBox{background: %s; color: rgb(242,243,245); border: 1px solid %s;"
+    " border-radius: 8px; padding: 4px 10px; min-height: 22px;"
+    " font-family: %s; font-size: 13px;}"
+    "QComboBox:hover{border: 1px solid %s;}"
+    "QComboBox::drop-down{width: 22px; border: none;}"
+    "QComboBox::down-arrow{width: 0; height: 0; margin-right: 8px;"
+    " border-left: 4px solid transparent; border-right: 4px solid transparent;"
+    " border-top: 5px solid %s;}"
+    "QComboBox QAbstractItemView{background: rgb(38,38,44); color: rgb(242,243,245);"
+    " border: 1px solid %s; border-radius: 8px; padding: 4px; outline: none;"
+    " selection-background-color: %s;}"
+) % (rgba(SURFACE_RAISED), rgba(BORDER),
+     ", ".join('"%s"' % f for f in FONT_FAMILIES), rgba(BORDER_STRONG),
+     rgba(TEXT_DIM), rgba(BORDER), rgba(ACCENT_SOFT))
+
 MENU_QSS = (
     "QMenu{background: rgb(38, 38, 44); color: rgb(242,243,245);"
     " border: 1px solid rgba(255,255,255,26); border-radius: 10px; padding: 6px;"
