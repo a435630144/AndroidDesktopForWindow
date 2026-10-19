@@ -19,6 +19,7 @@ from .band_guard import BandGuard
 from .folder_popup import FolderPopup, ScrimWindow
 from .iconwidget import DWELL_MERGE_MS, MIME_TYPE, AppIcon
 from .storage import Storage
+from .storage import Storage, entry_app
 from .win32_layer import attach_to_desktop
 
 WM_NCHITTEST = 0x84
@@ -1722,7 +1723,7 @@ class DesktopWindow(QWidget):
         self.storage.save()
         self._sync_icons()              # compact 的补位动画
         # 桌面文件只是从整理布局移除，文件本身仍在桌面文件夹
-        if entry and entry.get("app", {}).get("kind") == "file":
+        if entry and entry_app(entry).get("kind") == "file":
             from .tray import notify_via_tray  # 延迟导入避免循环
             notify_via_tray("已从整理桌面移除", "文件仍保留在桌面文件夹中，可通过「重新扫描桌面文件」找回")
 
@@ -1763,7 +1764,9 @@ class DesktopWindow(QWidget):
             else:
                 members = [m for m in (target.get("app"), app) if m]
                 target["type"] = "folder"
-                target["app"] = None
+                # 空 dict 而非 None：`e.get("app", {})` 的默认值只在键不存在时
+                # 生效，写 None 会让所有链式 `.get` 在文件夹条目上炸（坑 #39）
+                target["app"] = {}
                 target["apps"] = members
             src["apps"].pop(idx)
             if not src["apps"]:
@@ -1788,7 +1791,7 @@ class DesktopWindow(QWidget):
         else:
             members = [m for m in (target.get("app"), dragged.get("app")) if m]
             target["type"] = "folder"
-            target["app"] = None
+            target["app"] = {}     # 同上：None 会让链式 `.get` 在文件夹上炸
             target["apps"] = members
             self.storage.remove_entry(dragged["id"])
         self.storage.compact_layout()

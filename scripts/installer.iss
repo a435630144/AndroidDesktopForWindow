@@ -1,25 +1,25 @@
 ﻿; -*- coding: utf-8 -*-
 ; 桌面美化整理软件 Demo - Inno Setup 安装包脚本
-; 用法（需先跑 scripts\build_portable.ps1 -OutName DesktopOrganizerDemo_v6）：
+; 用法（需先跑 scripts\build_portable.ps1 -OutName DesktopOrganizerDemo_v6g）：
 ;   "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" scripts\installer.iss
 ;
-; 产物：dist\DesktopOrganizerDemo_v6_Setup.exe
+; 产物：dist\DesktopOrganizerDemo_v6g_Setup.exe
 ; 特性：默认安装到 %LOCALAPPDATA%\Programs（免管理员权限）、
 ;       开始菜单 + 桌面快捷方式、可选开机自启、卸载时清理用户数据（可选）。
 
 #define MyAppName "桌面整理Demo"
 #define MyAppNameEn "DesktopOrganizerDemo"
-#define MyAppVersion "1.6.0"
+#define MyAppVersion "1.7.0"
 #define MyAppPublisher "DesktopOrganizerDemo"
 #define MyAppExe "DesktopOrganizerDemo.exe"
 
 ; 打包目录名 / 产物名参数化：运行中的旧实例会锁住 dist\<BuildDir>，
 ; 换名重打时用 ISCC /DBuildDir=xxx /DOutBase=xxx 覆盖即可，不必改脚本。
 #ifndef BuildDir
-  #define BuildDir "DesktopOrganizerDemo_v6"
+  #define BuildDir "DesktopOrganizerDemo_v6g"
 #endif
 #ifndef OutBase
-  #define OutBase "DesktopOrganizerDemo_v6_Setup"
+  #define OutBase "DesktopOrganizerDemo_v6g_Setup"
 #endif
 
 [Setup]
@@ -50,7 +50,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 Name: "autostart"; Description: "开机自动启动"; GroupDescription: "附加任务:"; Flags: unchecked
 
 [Files]
-; onedir 产物整体拷贝，保留子目录结构（与 build_portable.ps1 -OutName DesktopOrganizerDemo_v6 对应）
+; onedir 产物整体拷贝，保留子目录结构（与 build_portable.ps1 -OutName DesktopOrganizerDemo_v6g 对应）
 Source: "..\dist\{#BuildDir}\DesktopOrganizerDemo\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

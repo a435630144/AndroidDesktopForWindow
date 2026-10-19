@@ -20,21 +20,6 @@ DesktopOrganizerDemo - 第三方桌面整理 / 美化软件（最小可用 Demo�
 import atexit
 import sys
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication
-
-from src import autostart
-from src import win32_layer
-from src.add_apps_dialog import AddAppsDialog
-from src.desktop_window import DesktopWindow
-from src.paths import asset_path, ensure_app_dirs
-from src.settings_dialog import SettingsDialog
-from src.single_instance import SingleInstance
-from src.storage import Storage
-from src.tray import SystemTray
-from src.widget_layer import WidgetLayer
-
 
 def _install_crash_logger():
     """窗口化(--windowed)构建会把 stderr 静默丢弃，启动期/事件循环里的未捕获
@@ -69,6 +54,27 @@ def _install_crash_logger():
             pass
 
     sys.excepthook = _hook
+
+
+# 必须在**任何重依赖导入之前**安装：冻结包一旦缺模块，import 阶段就抛
+# ImportError，而 --windowed 把 stderr 丢进虚空——v6f「exe 约 12s 静默退出、
+# crash.log 一片空白」的最可能真凶，就是这种"死在日志钩子之前"的启动失败。
+_install_crash_logger()
+
+from PySide6.QtCore import Qt                      # noqa: E402
+from PySide6.QtGui import QIcon                    # noqa: E402
+from PySide6.QtWidgets import QApplication         # noqa: E402
+
+from src import autostart                          # noqa: E402
+from src import win32_layer                        # noqa: E402
+from src.add_apps_dialog import AddAppsDialog      # noqa: E402
+from src.desktop_window import DesktopWindow       # noqa: E402
+from src.paths import asset_path, ensure_app_dirs  # noqa: E402
+from src.settings_dialog import SettingsDialog     # noqa: E402
+from src.single_instance import SingleInstance     # noqa: E402
+from src.storage import Storage                    # noqa: E402
+from src.tray import SystemTray                    # noqa: E402
+from src.widget_layer import WidgetLayer           # noqa: E402
 
 
 def main() -> int:
@@ -148,7 +154,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    _install_crash_logger()
     try:
         sys.exit(main())
     except SystemExit:

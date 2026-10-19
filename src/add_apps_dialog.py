@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QLineEdit, QListWid
 
 from . import appsource
 from . import theme
+from .storage import entry_app
 
 
 class AddAppsDialog(QDialog):
@@ -42,7 +43,7 @@ class AddAppsDialog(QDialog):
         existing = set()
         for e in self.window.storage.layout:
             if e.get("type") == "app":
-                existing.add(e.get("app", {}).get("target", ""))
+                existing.add(entry_app(e).get("target", ""))
             else:
                 for a in e.get("apps", []):
                     existing.add(a.get("target", ""))

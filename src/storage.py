@@ -79,6 +79,21 @@ DEFAULT_WIDGETS = [
 ]
 
 
+def entry_app(entry) -> dict:
+    """取条目的 `app` 字典；文件夹条目 / 脏数据统一返回 `{}`。
+
+    2026-10-20：旧版把应用条目升级成文件夹时写 `target["app"] = None`，
+    于是 state.json 里 folder 条目是 `{"app": null, "apps": [...]}`。
+    `e.get("app", {})` 的默认值**只在键不存在时生效**——键存在且值为
+    null 时返回 None，链式 `.get("kind")` 当场 AttributeError。
+    读取 app 一律走这里，别再手写 `e.get("app", {}).get(...)`。
+    """
+    if not isinstance(entry, dict):
+        return {}
+    app = entry.get("app")
+    return app if isinstance(app, dict) else {}
+
+
 class Storage:
     def __init__(self, path=None):
         self.path = str(path or data_file("state.json"))
@@ -124,6 +139,19 @@ class Storage:
         else:
             self._data["settings"]["hide_native_icons"] = bool(
                 self._data["settings"]["takeover_desktop"])
+        self._normalize_layout()
+
+    def _normalize_layout(self):
+        """治愈历史脏数据：文件夹条目的 `app` 必须是 dict，不能是 None。
+
+        旧版建文件夹写 `target["app"] = None`（2026-10-20 起改为 `{}`）。
+        在入口处一次性归一化，save 后落盘自然写回 `{}`——已在用的 state.json
+        无需手工修，也不会在下一次合并新文件夹时把 None 重新写出去。
+        """
+        for e in self._data.get("layout") or []:
+            if isinstance(e, dict) and not isinstance(e.get("app"), dict):
+                if "app" in e:
+                    e["app"] = {}
 
     def _migrate(self, raw_schema: int = 2):
         """旧版本 state.json 兼容：

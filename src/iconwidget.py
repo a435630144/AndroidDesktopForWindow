@@ -36,6 +36,7 @@ from . import drag_merge
 from . import effects
 from .folder_tint import folder_tint
 from . import theme
+from .storage import entry_app
 
 MIME_TYPE = "application/x-desktoporg-item"
 
@@ -339,13 +340,13 @@ class AppIcon(QWidget):
 
     @property
     def is_file(self) -> bool:
-        return self.entry.get("app", {}).get("kind") == "file"
+        return entry_app(self.entry).get("kind") == "file"
 
     def _display_name(self) -> str:
         if self.is_folder:
             # M5：文件夹可重命名（指导文档 §4.2）；entry["name"] 缺省「文件夹」
             return self.entry.get("name") or "文件夹"
-        return self.entry.get("app", {}).get("name", "")
+        return entry_app(self.entry).get("name", "")
 
     def _tooltip(self) -> str:
         if self.is_folder:

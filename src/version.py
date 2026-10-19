@@ -16,7 +16,7 @@ import datetime
 import os
 import sys
 
-VERSION = "6f"
+VERSION = "6g"
 
 
 def build_stamp() -> datetime.datetime | None:
