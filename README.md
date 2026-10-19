@@ -106,7 +106,8 @@ PhoneDesktopForWindow/
 │           / single_instance.py / selftest.py
 ├── scripts/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip（需 pwsh 7）
-│   └── installer.iss        # Inno Setup 6 安装包（必须 UTF-8 BOM）
+│   ├── installer.iss        # Inno Setup 6 安装包（必须 UTF-8 BOM）
+│   └── check_docs.py        # 文档一致性自检（死链/重复章节/文档与代码数值漂移）
 ├── tests/                   # 46 个独立可跑脚本（无 pytest），判据看退出码
 │   ├── smoke_test.py        # 无头逻辑回归（存储/克隆/布局）
 │   └── test_*.py            # 每条契约一份：让位引擎、双模式、命中、弹窗、组件…
@@ -146,9 +147,9 @@ pwsh -File scripts/build_portable.ps1
 
 | 文档 | 内容 |
 |---|---|
-| [docs/README.md](docs/README.md) | **文档地图**：三层结构（入口 / 规格 / 归档）与文档生命周期规则 |
+| [docs/README.md](docs/README.md) | **文档地图**：三层结构（入口 / 规格 / 归档）、文档生命周期规则与提交前自检 |
 | [DEVLOG.md](DEVLOG.md) | **开发日志（权威账本）**：架构决策、Day 1–16 时间线、踩坑台账、测试体系、打包交付 |
-| [HANDOVER.md](HANDOVER.md) | **接手手册**：模块地图、核心机制、安全铁律、开放项、接手检查清单 |
+| [HANDOVER.md](HANDOVER.md) | **接手手册**：模块地图、核心机制、安全铁律、开放项、**§10 文档更新标准**、接手检查清单 |
 | [docs/指导文档_v7.md](docs/指导文档_v7.md) | **当前规格**：v7 —— 尺寸两层模型 / 双布局并存 / 拖拽与命中 / 文件夹与浮层（21 项反馈 → A–G 归组） |
 | [docs/实施计划_v7.md](docs/实施计划_v7.md) | **当前实施计划**：B1 拆 T1–T15，每卡含文件 / 签名 / 验证命令 / 预期红 |
 | [docs/DESKBOX_REFERENCE.md](docs/DESKBOX_REFERENCE.md) | 竞品 DeskBox 调研与可借鉴点分级清单 |

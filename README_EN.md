@@ -106,7 +106,8 @@ PhoneDesktopForWindow/
 │           / single_instance.py / selftest.py
 ├── scripts/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip (needs pwsh 7)
-│   └── installer.iss        # Inno Setup 6 installer (must be UTF-8 BOM)
+│   ├── installer.iss        # Inno Setup 6 installer (must be UTF-8 BOM)
+│   └── check_docs.py        # Docs consistency check (dead links / duplicate sections / doc-vs-code drift)
 ├── tests/                   # 46 standalone scripts (no pytest); judge by exit code
 │   ├── smoke_test.py        # Headless logic regression (storage/clone/layout)
 │   └── test_*.py            # One per contract: reflow, dual mode, hit-testing, popup, widgets…
@@ -146,9 +147,9 @@ pwsh -File scripts/build_portable.ps1
 
 | Document | Contents |
 |---|---|
-| [docs/README.md](docs/README.md) | **Documentation map**: three layers (entry / specs / archive) and the doc lifecycle rules |
+| [docs/README.md](docs/README.md) | **Documentation map**: three layers (entry / specs / archive), doc lifecycle rules and the pre-commit self-check |
 | [DEVLOG.md](DEVLOG.md) | **Development log (authoritative ledger)**: architecture decisions, Day 1–16 timeline, pitfall ledger, test system, packaging & delivery |
-| [HANDOVER.md](HANDOVER.md) | **Handover manual**: module map, core mechanics, safety rules, open items, takeover checklist |
+| [HANDOVER.md](HANDOVER.md) | **Handover manual**: module map, core mechanics, safety rules, open items, **§10 documentation standards**, takeover checklist |
 | [docs/指导文档_v7.md](docs/指导文档_v7.md) | **Current spec** (Chinese): v7 — two-layer sizing / coexisting dual layouts / drag & hit-testing / folder & overlays |
 | [docs/实施计划_v7.md](docs/实施计划_v7.md) | **Current implementation plan** (Chinese): B1 split into T1–T15 |
 | [docs/DESKBOX_REFERENCE.md](docs/DESKBOX_REFERENCE.md) | DeskBox research report and lessons applicable to this project (Chinese) |
