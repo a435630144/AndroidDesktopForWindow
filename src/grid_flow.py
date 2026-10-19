@@ -494,6 +494,80 @@ def clamp_widget_cell(storage, col: int, row: int, cs: int, rs: int) -> Cell:
     return col, max(lo, min(int(row), hi))
 
 
+def widget_rect_cells(col: int, row: int, cs: int, rs: int) -> set:
+    """组件占位的格子集合（col/row 左上角 + 跨度展开）。"""
+    c0, r0 = int(col), int(row)
+    return {(c0 + dc, r0 + dr)
+            for dc in range(max(1, int(cs)))
+            for dr in range(max(1, int(rs)))}
+
+
+def widget_occupied_by_others(storage, exclude_id=None) -> set:
+    """**其它**可见锚定组件占的格子（组件之间互斥的依据，2026-10-19）。
+
+    与 widget_cells 的区别只有 exclude_id：拖动一个组件时必须排除它自己，
+    否则它的旧占位会把自己挡住（原地微调都被判成冲突）。
+    """
+    cells = set()
+    for w in storage.widgets:
+        if w.get("hidden") or not w.get("anchored"):
+            continue
+        if exclude_id is not None and w.get("id") == exclude_id:
+            continue
+        if "col" not in w or "row" not in w:
+            continue
+        cs, rs = widget_span(storage, w)
+        cells |= widget_rect_cells(w.get("col", 0), w.get("row", 0), cs, rs)
+    return cells
+
+
+def resolve_widget_cell(storage, col: int, row: int, cs: int, rs: int,
+                        exclude_id=None) -> Cell:
+    """组件落点消解：不与其它组件重叠的最近合法格（2026-10-19 用户反馈）。
+
+    病根：`_snap_to_grid` 只夹紧网格边界，从不看别的组件——把便签拖到
+    时钟身上松手，两者永久叠在一起（截图实锤）。
+
+    语义（安卓小组件同语言）：
+      - 目标格本身不冲突 -> 原样返回（不做多余挪动，零成本）
+      - 冲突 -> 在同页可行位置里取**离目标最近**的一个（距离用格数平方，
+        同距取扫描序），保证组件只是"被顶开一格"而不是跳到对角
+      - 全页挤满 -> 退回夹紧后的原目标（displace 会兜底，不抛不崩）
+    """
+    blocked = widget_occupied_by_others(storage, exclude_id=exclude_id)
+    cols = max(1, int(storage.columns))
+    rpp = rows_per_page()
+    c0, r0 = clamp_widget_cell(storage, col, row, cs, rs)
+    if not (widget_rect_cells(c0, r0, cs, rs) & blocked):
+        return c0, r0
+    lo, hi = page_row_range(page_of(r0, rpp), rpp, rs)
+    best, best_d = None, None
+    for r in range(lo, hi + 1):
+        for c in range(0, max(1, cols - int(cs) + 1)):
+            if widget_rect_cells(c, r, cs, rs) & blocked:
+                continue
+            d = (c - c0) ** 2 + (r - r0) ** 2
+            if best_d is None or d < best_d:
+                best, best_d = (c, r), d
+    return best if best is not None else (c0, r0)
+
+
+def widget_cell_fits(storage, col: int, row: int, cs: int, rs: int,
+                     exclude_id=None) -> bool:
+    """给定组件矩形是否可落（不越界 + 不压别的组件）。编辑态缩放用。"""
+    cols = max(1, int(storage.columns))
+    rpp = rows_per_page()
+    cs, rs = max(1, int(cs)), max(1, int(rs))
+    if col < 0 or col + cs > cols:
+        return False
+    lo, hi = page_row_range(page_of(int(row), rpp), rpp, rs)
+    if not (lo <= int(row) <= hi):
+        return False
+    blocked = widget_occupied_by_others(storage, exclude_id=exclude_id)
+    return not (widget_rect_cells(col, row, cs, rs) & blocked)
+
+
+
 def current_page() -> int:
     """运行时当前页（DesktopWindow 翻页时经 set_page 同步）。"""
     return _current_page

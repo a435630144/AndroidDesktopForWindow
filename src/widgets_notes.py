@@ -23,6 +23,9 @@ class NotesWidget(FloatingWidget):
         self.edit = QTextEdit()
         self.edit.setPlaceholderText("写点什么，自动保存…")
         self.edit.setPlainText(entry.get("text", ""))
+        # 右键交给组件本体：QTextEdit 的默认菜单会吃掉「编辑」入口
+        # （NoContextMenu = 上下文菜单事件上送给父部件，Qt 文档语义）
+        self.edit.setContextMenuPolicy(Qt.NoContextMenu)
         self.edit.setStyleSheet(
             ("QTextEdit{background: %s; color: rgb(242,243,245); border: 1px solid %s;"
              " border-radius: 10px; padding: 8px; font-family: %s; font-size: 13px;}"
@@ -39,3 +42,10 @@ class NotesWidget(FloatingWidget):
     def _save_text(self):
         self.entry["text"] = self.edit.toPlainText()
         self.storage.save()
+
+    def on_edit_mode(self, on: bool):
+        """编辑态：正文让出鼠标，拖动控制点才不会被 QTextEdit 吞掉。
+
+        只影响鼠标（键盘焦点照旧），退出编辑态后排字行为完全恢复。
+        """
+        self.edit.setAttribute(Qt.WA_TransparentForMouseEvents, bool(on))

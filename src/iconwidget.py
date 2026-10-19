@@ -63,7 +63,11 @@ class _DragGhost(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self._pm = pixmap
-        self.setFixedSize(pixmap.size())
+        # 快照带 devicePixelRatio（DPR 感知）：固定尺寸要用逻辑尺寸，
+        # 否则 125% 缩放下拖影会比图标大一圈（同 AppIcon 的尺寸教训）
+        dpr = max(1.0, float(pixmap.devicePixelRatio()))
+        self.setFixedSize(max(1, int(round(pixmap.width() / dpr))),
+                          max(1, int(round(pixmap.height() / dpr))))
 
     def paintEvent(self, e):
         p = QPainter(self)
@@ -135,6 +139,7 @@ class AppIcon(QWidget):
         # 拖动虚影：拖动期间本图标不绘制（格子在视觉上被让出），但不 hide()——
         # hide 会牵动显隐生命周期与命中测试，纯绘制跳过零风险
         self._drag_ghost = False
+        self._drag_crop_off = QPoint(0, 0)   # 快照裁切偏移（拖影对位用）
         # dwell 合并：悬停 450ms 才武装「合并文件夹」（未满即松手 = 让位置换）
         self._merge_armed = False
         self._dwell = QTimer(self)
@@ -388,19 +393,27 @@ class AppIcon(QWidget):
             p.setBrush(theme.HOVER)
             p.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), theme.RADIUS_ITEM, theme.RADIUS_ITEM)
 
+        self._paint_icon_only(p, dpr)
+        self._paint_label(p)
+
+    def _paint_icon_only(self, p: QPainter, dpr: float = 1.0):
+        """只画图标本体（文件夹瓷砖或应用图标 pixmap），不画任何 chrome。
+
+        正常绘制与拖影快照共用：快照模式下背景态/标签被跳过，剩下的就是
+        "原图标"——用户拖动时看到的应该是手指下那个图标，不是一张卡片。
+        """
         if self.is_folder:
             self._paint_folder(p, dpr)
-        else:
-            app = self.entry.get("app", {})
-            # 高清 pixmap：逻辑尺寸=icon_size（DPR 感知），按逻辑宽度居中，
-            # 绝不能用 pm.width()（物理像素）算偏移——那是图标错位/变虚的根因。
-            # v6 A2：有 layout 时绘制区左侧留白由 chrome_x 精确给出
-            #（cell 变小后按比例派生，不再 (w-icon_size)//2 近似）。
-            pm = appsource.icon_pixmap(app, self.icon_size, dpr)
-            px = self._box_x if self._box_x is not None else (w - self.icon_size) // 2
-            p.drawPixmap(px, 2, pm)
-
-        self._paint_label(p)
+            return
+        app = self.entry.get("app", {})
+        # 高清 pixmap：逻辑尺寸=icon_size（DPR 感知），按逻辑宽度居中，
+        # 绝不能用 pm.width()（物理像素）算偏移——那是图标错位/变虚的根因。
+        # v6 A2：有 layout 时绘制区左侧留白由 chrome_x 精确给出
+        #（cell 变小后按比例派生，不再 (w-icon_size)//2 近似）。
+        pm = appsource.icon_pixmap(app, self.icon_size, dpr)
+        px = (self._box_x if self._box_x is not None
+              else (self.width() - self.icon_size) // 2)
+        p.drawPixmap(px, 2, pm)
 
     def _paint_folder(self, p: QPainter, dpr: float = 1.0):
         """深色圆角方形 + 迷你图标矩阵（安卓风，按成员数 1/2/3/4 自适应）。
@@ -562,19 +575,39 @@ class AppIcon(QWidget):
 
     # ---------- 自管理拖拽循环（替代 QDrag.exec 的 OLE DoDragDrop） ----------
     def _drag_snapshot(self) -> QPixmap:
-        """当前图标的 render 快照，烘焙 GHOST_OPACITY 半透明（v6 §5.1）。
+        """**只取图标本体**的拖影快照，烘焙 GHOST_OPACITY 半透明。
 
-        必须在 set_drag_ghost(True) **之前**调用——虚影态下 paintEvent
-        早退（本格视觉让出），render 出来是全透明空图。alpha 烘焙进
-        pixmap（而非拖影 paintEvent 里 setOpacity）：单一来源，拖影
-        部件保持无脑 drawPixmap。
+        2026-10-19 用户反馈："拖拽还有一个白框，不好看，只要原图标就行了"。
+        两个病根叠在一起：
+          1. 旧实现 `render()` 整个 AppIcon 部件——悬停/选中/合并目标态的
+             背景圆角矩形与标签一起被烘进去；
+          2. `QWidget.render()` 还会先用**调色板背景色**铺底（AppIcon 没有
+             WA_TranslucentBackground），于是快照底色是一整块不透明卡片。
+        现在不 render 部件，而是直接在 pixmap 上用与 paintEvent 同一份
+        `_paint_icon_only` 画图标本体：背景态、标签、缩放全部不参与。
+
+        必须在 set_drag_ghost(True) **之前**调用（虚影态 paintEvent 早退）。
+        alpha 烘焙进 pixmap：单一来源，拖影部件保持无脑 drawPixmap。
         """
-        pm = QPixmap(self.size())
+        dpr = max(1.0, float(self.devicePixelRatioF()))
+        s = int(self.icon_size)
+        side = max(1, int(round(s * dpr)))
+        pm = QPixmap(side, side)
+        pm.setDevicePixelRatio(dpr)
         pm.fill(Qt.transparent)
-        self.render(pm)
+        bx = (self._box_x if self._box_x is not None
+              else (self.width() - s) // 2)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        p.translate(-int(bx), -2)     # 抵掉图标绘制区在部件内的偏移
+        self._paint_icon_only(p, dpr)
+        p.end()
+        self._drag_crop_off = QPoint(int(bx), 2)
         if GHOST_OPACITY >= 1.0:
             return pm
         faded = QPixmap(pm.size())
+        faded.setDevicePixelRatio(dpr)
         faded.fill(Qt.transparent)
         p = QPainter(faded)
         p.setOpacity(GHOST_OPACITY)
@@ -623,8 +656,11 @@ class AppIcon(QWidget):
         """拖动中：拖影跟随光标 + 命中测试 + 合成 dragEnter/dragMove/dragLeave。"""
         ghost = self._drag_ghost_w
         if ghost is not None and self._press_pos is not None:
-            ghost.move(int(gpos.x() - self._press_pos.x()),
-                       int(gpos.y() - self._press_pos.y()))
+            # 快照裁到图标区后左上角不等于部件左上角：减去裁切偏移，
+            # 图标才会正好落在指针下（否则会偏出半个标签行）
+            off = self._drag_crop_off
+            ghost.move(int(gpos.x() - self._press_pos.x() + off.x()),
+                       int(gpos.y() - self._press_pos.y() + off.y()))
         target = self._hit_target(gpos)
         if target is not self._drag_target:
             prev, self._drag_target = self._drag_target, target

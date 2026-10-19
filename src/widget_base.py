@@ -49,6 +49,13 @@ class FloatingWidget(QWidget):
         self._resize_origin = None
         self._start_geom = None
         self._mouse_pos = None
+        # 「编辑」态（2026-10-19 用户反馈）：锚定组件在网格模式下右键编辑，
+        # 四角四边出现控制点，拖点按格步进改跨度（安卓小组件语义）
+        self._edit_mode = False
+        self._rz_edge = None       # 正在拖的控制点（nw/n/ne/e/se/s/sw/w）
+        self._rz_origin = None     # 按下时的全局坐标
+        self._rz_span0 = None      # 按下时的 (colspan, rowspan)
+        self._rz_cell0 = None      # 按下时的 (col, row)
         self._anims = []      # 持有透明度动画引用，防 GC
         self._closing = False  # 退场动画防重入
         self._snapping = False  # 吸附动画中：不再响应拖动
@@ -135,6 +142,8 @@ class FloatingWidget(QWidget):
         self.entry["w"], self.entry["h"] = cs * cw, rs * ch
         col, row = grid_flow.pos_cell(self.storage, self.x(), self.y())
         col, row = grid_flow.clamp_widget_cell(self.storage, col, row, cs, rs)
+        col, row = grid_flow.resolve_widget_cell(
+            self.storage, col, row, cs, rs, exclude_id=self.entry.get("id"))
         self.move(*grid_flow.cell_pos(self.storage, col, row))
         self._save_geom()
         # 不能预写 entry["colspan"] 再调 _sync_grid_occupancy——那会让
@@ -251,6 +260,113 @@ class FloatingWidget(QWidget):
             return QRect()          # 锚定模式不允许缩放手柄
         return QRect(self.width() - 22, self.height() - 22, 20, 20)
 
+    # ---------- 编辑态（八点缩放，2026-10-19 用户反馈） ----------
+    EDIT_HANDLES = ("nw", "n", "ne", "e", "se", "s", "sw", "w")
+
+    def _handle_size(self):
+        """控制点边长（随 DPI×用户缩放，18@125%）。"""
+        try:
+            m = self.storage.icon_chrome_scale()
+        except Exception:
+            m = 1.0
+        return max(12, int(round(14 * float(m))))
+
+    def _handle_rects(self):
+        """八个控制点矩形（部件内坐标）；非编辑态 / 无界模式返回 {}。
+
+        全部画在部件**内部**（外扩一半会落在窗口外，鼠标收不到事件），
+        视觉上用描边 + 半透明填充贴近 iOS/安卓编辑框的观感。
+        """
+        if not self._edit_mode or not self.anchored:
+            return {}
+        if grid_flow.free_mode(self.storage):
+            return {}
+        s = self._handle_size()
+        w, h = self.width(), self.height()
+        inset = s // 2 + 1
+        pts = {
+            "nw": (inset, inset), "n": (w // 2, inset),
+            "ne": (w - inset, inset),
+            "w": (inset, h // 2), "e": (w - inset, h // 2),
+            "sw": (inset, h - inset), "s": (w // 2, h - inset),
+            "se": (w - inset, h - inset),
+        }
+        return {k: QRect(x - s // 2, y - s // 2, s, s)
+                for k, (x, y) in pts.items()}
+
+    def _handle_at(self, pos):
+        for k, r in self._handle_rects().items():
+            if r.contains(pos):
+                return k
+        return None
+
+    def _enter_edit(self):
+        """进入编辑态（网格模式 + 锚定才有意义）。"""
+        if not self.anchored or grid_flow.free_mode(self.storage):
+            return False
+        if self._edit_mode:
+            return True
+        self._edit_mode = True
+        self.on_edit_mode(True)
+        self.update()
+        return True
+
+    def _exit_edit(self):
+        if not self._edit_mode:
+            return False
+        self._edit_mode = False
+        self._rz_edge = None
+        self.on_edit_mode(False)
+        self.update()
+        return True
+
+    def on_edit_mode(self, on: bool):
+        """编辑态钩子（子类按需让交互子控件让出鼠标，见 NotesWidget）。"""
+
+    def _resize_step(self, edge: str, dcol: int, drow: int):
+        """按控制点方向步进改跨度：一格一格走，遇到别的组件就停。
+
+        逐格步进（而非一次性算总量）是刻意选择：跨越别组件时能停在
+        **最后一个合法尺寸**上，而不是整步失败或直接叠上去。
+        """
+        if self._rz_span0 is None or self._rz_cell0 is None:
+            return
+        if not self.anchored or grid_flow.free_mode(self.storage):
+            return
+        cs, rs = self._rz_span0
+        col, row = self._rz_cell0
+        cw, ch = grid_flow.cell_size(self.storage)
+        wid = self.entry.get("id")
+
+        def can(ncol, nrow, ncs, nrs):
+            return grid_flow.widget_cell_fits(self.storage, ncol, nrow,
+                                              ncs, nrs, exclude_id=wid)
+
+        d = int(dcol) if edge in ("e", "w") else int(drow)
+        sign = 1 if d >= 0 else -1
+        for _ in range(abs(d)):
+            ncs, nrs, ncol, nrow = cs, rs, col, row
+            if edge == "e":
+                ncs = cs + sign
+            elif edge == "w":
+                ncs = cs - sign
+                ncol = col + sign
+            elif edge == "s":
+                nrs = rs + sign
+            elif edge == "n":
+                nrs = rs - sign
+                nrow = row + sign
+            if ncs < 1 or nrs < 1 or not can(ncol, nrow, ncs, nrs):
+                break
+            cs, rs, col, row = ncs, nrs, ncol, nrow
+        if (cs, rs, col, row) == (self._rz_span0[0], self._rz_span0[1],
+                                  self._rz_cell0[0], self._rz_cell0[1]):
+            return
+        self.resize(cs * cw, rs * ch)
+        self.move(*grid_flow.cell_pos(self.storage, col, row))
+        self.entry["w"], self.entry["h"] = cs * cw, rs * ch
+        self._write_occupancy(col, row, cs, rs)
+
     # ---------- 绘制 ----------
     def paintEvent(self, e):
         p = QPainter(self)
@@ -264,6 +380,20 @@ class FloatingWidget(QWidget):
             p.setBrush(tint)
             p.setPen(Qt.NoPen)
             p.drawRoundedRect(self.rect(), theme.RADIUS_PANEL, theme.RADIUS_PANEL)
+            if self._edit_mode:
+                # 编辑框：虚线圈 + 八点（安卓小组件编辑语言的桌面版）。
+                # 线色用 ACCENT，点用实心白 + 主色描边，保证深/浅壁纸都可辨。
+                pen = QPen(QColor(theme.ACCENT))
+                pen.setWidth(2)
+                pen.setStyle(Qt.DashLine)
+                p.setPen(pen)
+                p.setBrush(Qt.NoBrush)
+                r = self.rect().adjusted(2, 2, -2, -2)
+                p.drawRoundedRect(r, theme.RADIUS_PANEL, theme.RADIUS_PANEL)
+                p.setPen(QPen(QColor(theme.ACCENT), 1.5))
+                p.setBrush(QColor(255, 255, 255, 235))
+                for hr in self._handle_rects().values():
+                    p.drawEllipse(hr.adjusted(1, 1, -1, -1))
             return
         p.setBrush(theme.SURFACE)
         p.setPen(theme.BORDER)
@@ -307,6 +437,10 @@ class FloatingWidget(QWidget):
         cs, rs = grid_flow.widget_span(self.storage, self.entry)
         col, row = grid_flow.pos_cell(self.storage, self.x(), self.y())
         col, row = grid_flow.clamp_widget_cell(self.storage, col, row, cs, rs)
+        # 2026-10-19 反馈：组件之间不许堆叠——目标压到别的组件身上时改落
+        # 最近的可行格（安卓语义）。放在 clamp 之后：先保证不出页，再消冲突。
+        col, row = grid_flow.resolve_widget_cell(
+            self.storage, col, row, cs, rs, exclude_id=self.entry.get("id"))
         tx, ty = grid_flow.cell_pos(self.storage, col, row)
         if (tx, ty) == (self.x(), self.y()):
             # 已在格点上：没有吸附动画，_on_snapped 永远不会来——直接同步
@@ -379,12 +513,25 @@ class FloatingWidget(QWidget):
         cs, rs = grid_flow.widget_span(self.storage, self.entry)
         col, row = grid_flow.pos_cell(self.storage, self.x(), self.y())
         col, row = grid_flow.clamp_widget_cell(self.storage, col, row, cs, rs)
+        col, row = grid_flow.resolve_widget_cell(
+            self.storage, col, row, cs, rs, exclude_id=self.entry.get("id"))
         self._write_occupancy(col, row, cs, rs)
 
     # ---------- 鼠标 ----------
     def mousePressEvent(self, e):
         if e.button() != Qt.LeftButton:
             return
+        if self._edit_mode:
+            edge = self._handle_at(e.pos())
+            if edge is not None:
+                # 抓控制点：记下按下的跨度/格位，后续移动按格步进（可反复
+                # 调用，_resize_step 永远从按下时的初值重算，天然幂等）
+                self._rz_edge = edge
+                self._rz_origin = e.globalPosition().toPoint()
+                self._rz_span0 = grid_flow.widget_span(self.storage, self.entry)
+                self._rz_cell0 = (int(self.entry.get("col", 0)),
+                                  int(self.entry.get("row", 0)))
+                return
         if not self.anchored and self._close_rect().contains(e.pos()):
             self.entry["hidden"] = True
             self.storage.save()
@@ -412,6 +559,14 @@ class FloatingWidget(QWidget):
 
     def mouseMoveEvent(self, e):
         self._mouse_pos = e.pos()
+        if self._rz_edge is not None and self._rz_origin is not None:
+            cw, ch = grid_flow.cell_size(self.storage)
+            g = e.globalPosition().toPoint()
+            dcol = int(round((g.x() - self._rz_origin.x()) / max(1, cw)))
+            drow = int(round((g.y() - self._rz_origin.y()) / max(1, ch)))
+            self._resize_step(self._rz_edge, dcol, drow)
+            self.update()
+            return
         if self._resizing:
             delta = e.globalPosition().toPoint() - self._resize_origin
             w = max(self.minimumWidth(), self._start_geom.width() + delta.x())
@@ -432,6 +587,14 @@ class FloatingWidget(QWidget):
         self.update()
 
     def mouseReleaseEvent(self, e):
+        if self._rz_edge is not None:
+            self._rz_edge = None
+            self._rz_origin = None
+            self._rz_span0 = None
+            self._rz_cell0 = None
+            self._save_geom()
+            self.update()
+            return
         if self._resizing or self._drag_off is not None:
             if self._drag_off is not None and not self._closing:
                 # 松手回弹：临界阻尼弹簧淡回（无动量不过冲）
@@ -450,16 +613,35 @@ class FloatingWidget(QWidget):
 
     # ---------- 右键菜单 ----------
     def contextMenuEvent(self, e):
+        self._build_context_menu().exec(e.globalPos())
+
+    def _build_context_menu(self):
+        """构建组件右键菜单（拆出来便于单测）。
+
+        2026-10-19 用户反馈：网格模式下要有「编辑」——进入后四角四边出现
+        控制点，拖点按格改大小（安卓小组件语义）。无界模式没有格跨度，
+        不出现该项（改成像素拖右下角手柄，悬浮态本来就有）。
+        """
         menu = QMenu(self)
         menu.setStyleSheet(theme.MENU_QSS)
+        # 子菜单是 Python 所有的 QMenu：不额外持引用会被 GC，弹出来一片空白
+        # （DEVLOG §8 坑 #39 同源）
+        self._ctx_submenus = []
         if self.anchored:
+            grid_mode = not grid_flow.free_mode(self.storage)
+            if grid_mode:
+                if self._edit_mode:
+                    menu.addAction("完成编辑", self._exit_edit)
+                else:
+                    menu.addAction("编辑", self._enter_edit)
+                menu.addSeparator()
             menu.addAction("切换为自由悬浮", self._toggle_anchored)
             self._add_span_menu(menu)
         else:
             menu.addAction("锚定到桌面（融入壁纸）", self._toggle_anchored)
         menu.addAction("隐藏", self._hide_self)
         menu.addAction("关闭", self._close_self)
-        menu.exec(e.globalPos())
+        return menu
 
     def _add_span_menu(self, menu):
         """「组件尺寸」子菜单（M3）：catalog 登记了多个跨度才出现。
@@ -474,6 +656,10 @@ class FloatingWidget(QWidget):
         if len(opts) < 2:
             return None
         sub = menu.addMenu("组件尺寸")
+        try:
+            self._ctx_submenus.append(sub)
+        except AttributeError:
+            pass
         cur = grid_flow.widget_span(self.storage, self.entry)
         for cs, rs in opts:
             act = sub.addAction("%d × %d 格" % (cs, rs),

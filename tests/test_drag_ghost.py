@@ -59,22 +59,16 @@ def main(app):
           "opaque=%d size=%s" % (n_opaque, snap.size()))
 
     # ---------- D2：快照半透明 0.8 ----------
-    # 参照：全不透明 render（不走 _drag_snapshot 的衰减）
-    ref = QPixmap(ic.size())
-    ref.fill(Qt.transparent)
-    ic.render(ref)
-    ref_img = ref.toImage()
+    # 2026-10-19 改为直接对快照取最大 alpha：快照已不 render 整个部件
+    # （只画图标本体，见 test_drag_ghost_icon_only.py），无法再拿全幅
+    # render 做逐像素比对；0.8 的语义等价表达 = 实心像素 alpha ≈ 204。
     snap_img = snap.toImage()
-    pairs = []
-    for y in range(ref_img.height()):
-        for x in range(ref_img.width()):
-            a = ref_img.pixelColor(x, y).alpha()
-            if a > 250:      # 只比对原本全不透明的像素（瓷砖/标签实心区）
-                pairs.append((a, snap_img.pixelColor(x, y).alpha()))
-    ok_alpha = bool(pairs) and all(abs(s - round(r * 0.8)) <= 2
-                                   for r, s in pairs)
-    check("D2 快照 alpha = 0.8 × 原 alpha（约 204）", ok_alpha,
-          "n=%d sample=%s" % (len(pairs), pairs[:3]))
+    alphas = [snap_img.pixelColor(x, y).alpha()
+              for y in range(snap_img.height())
+              for x in range(snap_img.width())]
+    mx = max(alphas) if alphas else 0
+    check("D2 快照最大 alpha = 0.8 × 255（约 204）", abs(mx - 204) <= 2,
+          "max_alpha=%d" % mx)
 
     # ---------- D3：_exec_drag 集成（顺序 bug 回归） ----------
     ic._press_pos = QPoint(10, 10)

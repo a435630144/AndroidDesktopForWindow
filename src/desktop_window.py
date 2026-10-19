@@ -287,6 +287,12 @@ class DesktopWindow(QWidget):
         #  _drag_multi 卡死会让单选拖动也走多选平移分支）
         self._drag_active = False
         self._drag_multi = False
+        # 点桌面 = 退出组件编辑态（安卓语义：点空白结束编辑）
+        if self._widget_layer is not None:
+            try:
+                self._widget_layer.exit_all_edit()
+            except RuntimeError:
+                pass
         # 文件夹弹窗开着时点桌面空白处 = 关闭弹窗（iOS 文件夹语义；
         # 弹窗自身 NOACTIVATE 收不到 Esc，× 按钮 + 这里 + 再点图标共三条路径）
         if self._popup is not None and e.button() == Qt.LeftButton:
@@ -1621,6 +1627,9 @@ class DesktopWindow(QWidget):
         # 关闭弹窗（与 DesktopWindow 空白点击关闭双保险）。
         scrim = ScrimWindow()
         scrim.clicked.connect(self._close_popup)
+        # 2026-10-19 反馈：幕布铺满桌面带且层级最高，拖放必须由它转发到
+        # 桌面窗口——否则"从文件夹里把图标拖出来"的 drop 会被幕布吞掉
+        scrim.dropReceived.connect(self._drop_from_scrim)
         self._scrim = scrim
         scrim.show()
         scrim.fade_in()
@@ -1712,10 +1721,15 @@ class DesktopWindow(QWidget):
         self.storage.save()
         self._sync_structure()
 
-    def _on_extract(self, payload: str):
+    def _on_extract(self, payload: str, pos=None):
         """把文件夹成员拖出到桌面（落到哪个格子就用哪个格子）。
         payload: "M:fid:idx" 或 "fid:idx"（M: 标记可带可不带；
-        fid 自身可能含冒号，故 rpartition 从最后一个冒号切）。"""
+        fid 自身可能含冒号，故 rpartition 从最后一个冒号切）。
+
+        pos: 松手点在桌面窗口内的坐标（可选）。给了就按那个格子落位；
+        格子上已经有图标时退回"第一个空格"——**不挤走无关图标**
+        （提取是用户主动把东西拿出来，不该顺手把别人挪走）。
+        """
         if payload.startswith("M:"):
             payload = payload[2:]
         fid, _, idx = payload.rpartition(":")
@@ -1725,8 +1739,16 @@ class DesktopWindow(QWidget):
         idx = int(idx)
         if not (0 <= idx < len(folder.get("apps", []))):
             return
+        col = row = None
+        if pos is not None:
+            try:
+                tc, tr = self._cell_at(pos)
+                if self.storage.occupant(tc, tr) is None:
+                    col, row = tc, tr
+            except Exception:
+                col = row = None
         app = folder["apps"].pop(idx)
-        self.storage.add_app(app)
+        self.storage.add_app(app, col, row)
         if not folder["apps"]:
             self.storage.remove_entry(fid)
         self.storage.compact_layout()
@@ -1735,6 +1757,21 @@ class DesktopWindow(QWidget):
         # M5：文件夹被解散时 refresh 自动关弹窗；仍有成员时刷新成员网格
         if self._popup is not None:
             self._popup.refresh()
+
+    def _drop_from_scrim(self, md, gpos):
+        """幕布上的落点转发到桌面窗口（2026-10-19 反馈：拖出成员丢失）。
+
+        幕布是桌面带里最顶的全屏窗口，从弹窗往外拖必然经过它；它只负责
+        把 (mime, 全局坐标) 送过来，真正的语义仍由桌面窗口的
+        `_drop_internal` / `_drop_files` 决定（单一实现，不复制逻辑）。
+        """
+        if md is None:
+            return
+        pos = self.mapFromGlobal(gpos) if gpos is not None else QPoint(0, 0)
+        if md.hasFormat(MIME_TYPE):
+            self._drop_internal(md.data(MIME_TYPE).data().decode(), pos)
+        elif md.hasUrls():
+            self._drop_files(md.urls(), pos)
 
     def _on_remove_member(self, payload: str):
         """文件夹内右键移出成员。payload: "M:fid:idx" 或 "fid:idx"。"""
@@ -1785,7 +1822,7 @@ class DesktopWindow(QWidget):
         # 文件夹成员提取（payload: "M:fid:idx"）：M: 标记与含冒号的条目 id 消歧
         if payload.startswith("M:"):
             self._clear_preview()
-            self._on_extract(payload[2:])
+            self._on_extract(payload[2:], pos)
             return
         ids = [p for p in payload.split(",") if p]
         entries = [e for e in (self.storage.find_entry(i) for i in ids) if e is not None]

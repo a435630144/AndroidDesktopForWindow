@@ -42,7 +42,8 @@ UI 对标 iOS 文件夹 + Liquid Glass 材质语言：
 """
 import traceback
 
-from PySide6.QtCore import (QEasingCurve, QParallelAnimationGroup, QPoint,
+from PySide6.QtCore import (QAbstractAnimation, QEasingCurve,
+                            QParallelAnimationGroup, QPoint,
                             QPointF, QPropertyAnimation, QRect, QRectF, Qt,
                             Signal, Property)
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen, QPixmap
@@ -67,8 +68,14 @@ class ScrimWindow(QWidget):
 
     点击幕布 = 关闭弹窗（双保险之一；DesktopWindow 空白点击关闭是另一重）。
     挂桌面带（NOACTIVATE，不抢焦点；不置顶，不盖应用窗口）。
+
+    2026-10-19 用户反馈修复：幕布必须**转发拖放**。它铺满整个桌面带且
+    层级高于整理窗口——从弹窗里把成员往外拖，光标一离开弹窗就落在幕布
+    上；旧实现没有 dragEnter/dropEvent，合成 drop 被静默吞掉，
+    `_on_extract` 永不执行（用户："拖拽出来后不显示"）。
     """
     clicked = Signal()
+    dropReceived = Signal(object, QPoint)   # (QMimeData, 全局落点)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -76,8 +83,30 @@ class ScrimWindow(QWidget):
                             | Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setGeometry(QGuiApplication.primaryScreen().availableGeometry())
+        self.setAcceptDrops(True)
         self._closing = False
         self._anims = []
+
+    # ---------- 拖放转发 ----------
+    def _accepts(self, md) -> bool:
+        from .iconwidget import MIME_TYPE
+        return bool(md is not None
+                    and (md.hasFormat(MIME_TYPE) or md.hasUrls()))
+
+    def dragEnterEvent(self, e):
+        if self._accepts(e.mimeData()):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        if self._accepts(e.mimeData()):
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        if not self._accepts(e.mimeData()):
+            return
+        self.dropReceived.emit(e.mimeData(),
+                               self.mapToGlobal(e.position().toPoint()))
+        e.acceptProposedAction()
 
     # ---------- 淡入淡出 ----------
     def fade_in(self):
@@ -352,6 +381,19 @@ class FolderPopup(QWidget):
             # 弹窗内图标错峰淡入（玻璃涌出后依次浮现）
             icon.appear_in(120 + i * 45)
             icon.show()
+        # 2026-10-19 用户反馈"文件夹样式有时候出问题"：稳态必须铺满整个
+        # 窗口。开合动画中断 / 被 refresh 打断时 `_zoom` 可能停在中间值，
+        # 而 paintEvent 只按 zoom 缩放后的 rect 画玻璃——结果是"图标和工具
+        # 条都在、面板却只有中间一小块"。这里在没有动画在跑时强制归位，
+        # 并把整窗刷一次（几何变了，旧脏区不足以覆盖新尺寸）。
+        anim = getattr(self, "_open_anim", None)
+        try:
+            running = anim is not None and anim.state() == QAbstractAnimation.Running
+        except RuntimeError:
+            running = False
+        if not running:
+            self._zoom = 1.0
+        self.update()
 
     # ---------- 开合动效 ----------
     def _open_animate(self):
@@ -623,7 +665,9 @@ class FolderPopup(QWidget):
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        z = self._zoom
+        # 缩放系数夹紧到合法区间：任何中断残留的中间值都不该让面板缩水
+        # （稳态 1.0 = 面板与内容区完全重合，2026-10-19 反馈）
+        z = min(1.0, max(0.05, float(self._zoom)))
         # 玻璃表面：以图标中心为原点缩放着陆（z<1 时小于窗口，
         # 周围全透明——视觉上就是玻璃从图标位置涌出）
         w, h = self.width() * z, self.height() * z

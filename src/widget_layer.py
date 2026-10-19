@@ -133,6 +133,18 @@ class WidgetLayer(QObject):
         # 小组件同样纳入桌面带守护（防 Win+D 等场景漂移后盖住应用窗口）
         self._band_guard.track(w)
 
+    def exit_all_edit(self):
+        """退出所有组件的编辑态（点桌面空白 / 开右键菜单时调用）。
+
+        编辑态只是视觉+命中层的临时状态，没有落盘副作用，随时可退。
+        """
+        for w in list(self.widgets.values()):
+            try:
+                if getattr(w, "_edit_mode", False):
+                    w._exit_edit()
+            except RuntimeError:
+                pass
+
     def apply_layout_mode(self):
         """v6 §1.3 模式切换后重排组件：关闭全部再按新模式 spawn。
 
