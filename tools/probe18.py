@@ -60,6 +60,9 @@ def make_state(spec, widgets=()):
         STATE.unlink()
     st = Storage(path=str(STATE))
     st._data["settings"]["hide_native_icons"] = False
+    # 2026-10-19 反馈 3：未接管会自动进入无界模式，网格让位探针
+    # 必须显式声明「按接管语义」（不 show 窗口，不会真隐藏原生图标）
+    st._data["settings"]["takeover_desktop"] = True
     st._data["settings"]["auto_clone_desktop"] = False
     st._data["widgets"] = [dict(w) for w in widgets]
     st._data["layout"] = [
@@ -129,6 +132,11 @@ def run(app):
     wc = grid_flow.widget_cells(st2)
     check("S2 widget_cells(clock 2×2 @ (0,0)) == 4 格精确展开",
           wc == {(0, 0), (1, 0), (0, 1), (1, 1)}, "%s" % sorted(wc))
+    # 2026-10-19 反馈 5 连带：启动期 compact 已经避让组件占位（不再等
+    # displace），所以这里必须先把图标放回组件格，才能测到 displace 路径
+    for i, (c, r) in zip("abcd", [(0, 0), (1, 0), (0, 1), (1, 1)]):
+        e = st2.find_entry(i)
+        e["col"], e["row"] = c, r
     moved = w2._displace_from_widgets()
     b = by_id(st2)
     check("S2 displace 把占位格上的 4 个图标全部挤出", moved)

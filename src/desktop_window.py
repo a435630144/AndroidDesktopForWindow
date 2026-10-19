@@ -432,6 +432,26 @@ class DesktopWindow(QWidget):
             self._widget_layer.sync_page(self._page)
         self.update()
 
+    def refresh_grid(self):
+        """网格参数（列数 / 档位 / 图标像素）变更后立即重算并重排。
+
+        反馈 2（2026-10-19）：「软件调整完网格尺寸之后，应该自动刷新而不是
+        需要手动关闭才开启接管」。旧设置路径只调 rebuild()，而 rebuild
+        读的是 `grid_flow.current_metrics()` **旧快照**——cell / cols 没重算，
+        图标位置尺寸全是老值；用户只能关掉「接管系统桌面」再打开
+        （走 _try_attach_once -> _update_grid_metrics）才看到变化。
+
+        这里把「重算快照 + 按新几何重建 + 组件重新落位」收成一个入口，
+        设置面板与桌面右键的图标大小入口统一调用。
+        """
+        # 用惰性哨兵让 _update_grid_metrics 走 rebuild 分支（签名必不等），
+        # 避免"先重算再额外 rebuild 一次"的双重建
+        self._icon_layout_sig = object()
+        self._update_grid_metrics()
+        if self._widget_layer is not None:
+            self._widget_layer.apply_layout_mode()
+        self.update()
+
     def resizeEvent(self, event):
         # M1：窗口几何变化（挂载后铺满工作区 / 悬浮兜底 / 显示器几何变化）
         # 时重算网格。未挂载时窗口尺寸无网格意义，跳过。
@@ -540,12 +560,19 @@ class DesktopWindow(QWidget):
         """v6 §1.3：切换网格 / 无界模式（托盘 + 桌面右键入口）。
 
         双坐标换算（grid_flow.to_free_coords / to_grid_coords）后整体
-         rebuild——图标尺寸体系（三档 layout ↔ 用户像素值）与组件占位
+        rebuild——图标尺寸体系（三档 layout ↔ 用户像素值）与组件占位
         语义都随模式变，只有重建能一次性换干净；翻页状态夹回合法页。
+
+        2026-10-19 反馈 3：判定按**有效模式**（未接管时 grid 设置值也
+        算无界）。用户主动切「网格模式」意味着要网格——网格必须由
+        接管承载（原生图标不隐藏会出现两套图标），故自动开启接管。
         """
         mode = "free" if str(mode) == "free" else "grid"
-        if mode == grid_flow.layout_mode(self.storage):
+        if (mode == "free") == grid_flow.free_mode(self.storage):
             return
+        if mode == "grid" and not self.storage.takeover():
+            self.storage.set_takeover(True)
+            self._sync_native_icons()
         self.storage.set_setting("layout_mode", mode)
         if mode == "free":
             grid_flow.to_free_coords(self.storage)
@@ -1165,6 +1192,15 @@ class DesktopWindow(QWidget):
             return
         if dragged_id not in self.icons:
             return
+        # 2026-10-19 反馈 4：目标格被**别的图标**占着时不做让位预览。
+        # 旧实现照样跑 _free_moves/reflow 把占用者换走——用户拖着 A 停在 B
+        # 上等合并提示，B 却被瞬间弹走（提示永远出不来）。占用格先让位
+        # 语义改为"松手才换"（commit 路径仍会交换/递进，不丢条目）。
+        # 多选分支不适用（整块平移必须实时预览，见 _reflow_preview_multi）。
+        if not self._drag_multi:
+            occ = self.storage.occupant(cell[0], cell[1], exclude_id=dragged_id)
+            if occ is not None:
+                return
         if self._auto_arrange():
             cols = self.storage.columns
             # M6：不再传 rows=GridMetrics.rows——那是单屏行数，分页后目标行
@@ -1276,6 +1312,7 @@ class DesktopWindow(QWidget):
         if self._preview_moves is None:
             return
         dragged = self._preview_drag
+        moves = self._preview_moves
         self._push_undo(self._layout_snap)
         self.storage.save()
         if dragged and dragged in self.icons:
@@ -1283,6 +1320,19 @@ class DesktopWindow(QWidget):
             icon = self.icons[dragged]
             if entry is not None:
                 icon.move(*self._entry_pos(entry))
+            icon.set_drag_ghost(False)
+        # 2026-10-19 反馈 4 连带：占用格改成"松手才换"后，被交换走的
+        # 占据者不会经过 _apply_preview_moves 的动画路径（拖动中没有预览），
+        # 只 move 拖拽源会让 storage 与画面不一致（下一帧视觉跳变）。
+        # 这里把 moves 里其余成员一并弹簧落位——已到位的 animate_to 早退。
+        for eid in moves:
+            if eid == dragged:
+                continue
+            icon = self.icons.get(eid)
+            entry = self.storage.find_entry(eid)
+            if icon is None or entry is None:
+                continue
+            icon.animate_to(*self._entry_pos(entry))
             icon.set_drag_ghost(False)
         self._preview_moves = None
         self._preview_drag = None
@@ -1473,8 +1523,10 @@ class DesktopWindow(QWidget):
         self._sync_structure()          # M4：成员增量淡入 + 文件夹图标移除
 
     def _on_merge(self, dragged_payload: str, target_id: str):
-        # 合并会整体重排布局，让位预览失效
-        self._clear_preview()
+        # 2026-10-19 反馈 5：合并前**回退**拖动预览（不是清掉状态）。
+        # 旧实现 _clear_preview() 丢弃了快照回退，被递进的图标就停在预览
+        # 位置，用户看到的是"加了个文件夹，整张桌面自己重排了一遍"。
+        self._cancel_preview()
         target = self.storage.find_entry(target_id)
         if target is None:
             return
@@ -1821,31 +1873,60 @@ class DesktopWindow(QWidget):
 
     # ---------- 背景右键 / 按键 ----------
     def contextMenuEvent(self, e):
-        """桌面空白处右键菜单。
+        """桌面空白处右键菜单。"""
+        self._build_context_menu().exec(e.globalPos())
+
+    def _build_context_menu(self):
+        """构建桌面右键菜单（拆出来便于单测）。
 
         整理模式（路线A）下原生桌面右键被我们接管（nativeEvent 全窗口
-        HTCLIENT），Windows 原生的「新建文件夹 / 刷新 / 个性化 / 显示设置」
-        全部消失——2026-10-18 用户反馈"桌面右键功能也没了"。这里自绘补齐：
-        真实可用的新建（create_on_desktop 真创建 + shell 刷新）、系统设置
-        页（ms-settings URI 走 explorer 解析）、以及本软件功能。
+        HTCLIENT），Windows 原生菜单全部消失——2026-10-18 用户反馈
+        "桌面右键功能也没了"，2026-10-19 追加反馈 6：「右键要还原原系统
+        的所有功能，比如新建 word」。
+
+        因此接管态菜单按系统原生的顺序组织：查看 / 刷新 / 粘贴 / 新建▸ /
+        显示设置 / 个性化 / 终端 / 打开桌面文件夹。其中「新建」子菜单由
+        `shell_new.shell_new_templates()` 枚举注册表 ShellNew 模板生成
+        （Word / Excel / PPT / 压缩包…用户装了什么就有什么）。
         """
         menu = QMenu(self)
         menu.setStyleSheet(theme.MENU_QSS)
         if self._organize_mode():
-            menu.addAction("新建文件夹", lambda: self._create_on_desktop("新建文件夹", True))
-            menu.addAction("新建文本文档", lambda: self._create_on_desktop("新建文本文档.txt", False))
-            menu.addSeparator()
-            menu.addAction("重新扫描桌面文件", self.rescan_desktop)
-            size_menu = menu.addMenu("图标大小")
-            for label, tier in (("小", "small"), ("中", "medium"), ("大", "large")):
+            # 查看 ▸（图标大小 + 自动排列 + 网格调试）
+            view = menu.addMenu("查看")
+            size_menu = view.addMenu("图标大小")
+            for label, tier in (("大图标", "large"), ("中图标", "medium"),
+                                ("小图标", "small")):
                 act = size_menu.addAction(label)
                 act.triggered.connect(
                     lambda checked=False, t=tier: self._set_icon_tier(t))
-            arr_act = menu.addAction("自动排序（拖动后递进）")
-            arr_act.setCheckable(True)
-            arr_act.setChecked(bool(self.storage.get_setting("auto_arrange")))
-            arr_act.triggered.connect(self._toggle_auto_arrange)
+            view.addSeparator()
+            view.addAction("自动排列图标", self._tidy)
+            dev_act = view.addAction("显示网格调试信息")
+            dev_act.setCheckable(True)
+            dev_act.setChecked(self._dev_mode())
+            dev_act.triggered.connect(self._toggle_dev_mode)
+
+            # 刷新 / 粘贴（与系统桌面同一位置）
+            menu.addAction("刷新", self.rescan_desktop)
+            paste = menu.addAction("粘贴", self._paste_files)
+            paste.setEnabled(self._clipboard_has_files())
+
             menu.addSeparator()
+            new_menu = menu.addMenu("新建")
+            new_menu.setObjectName("ctxNewMenu")   # 测试/自动化定位用
+            self._fill_new_menu(new_menu)
+            menu.addSeparator()
+
+            # 系统设置与常用入口
+            menu.addAction("显示设置", lambda: self._open_uri("ms-settings:display"))
+            menu.addAction("个性化（桌面背景）",
+                           lambda: self._open_uri("ms-settings:personalization-background"))
+            menu.addAction("在终端中打开", self._open_terminal)
+            menu.addAction("打开桌面文件夹", self._open_desktop_folder)
+            menu.addSeparator()
+
+            # 本软件的布局能力
             free_now = grid_flow.free_mode(self.storage)
             menu.addAction("切换到无界模式（自由摆布）" if not free_now
                            else "切换到网格模式（对齐网格）",
@@ -1853,14 +1934,13 @@ class DesktopWindow(QWidget):
             if free_now:
                 menu.addAction("添加空白页", self._add_blank_page)
                 menu.addAction("删除当前空白页", self._remove_blank_page)
+            arr_act = menu.addAction("自动排序（拖动后递进）")
+            arr_act.setCheckable(True)
+            arr_act.setChecked(bool(self.storage.get_setting("auto_arrange")))
+            arr_act.triggered.connect(self._toggle_auto_arrange)
             menu.addSeparator()
-            menu.addAction("显示设置", lambda: self._open_uri("ms-settings:display"))
-            menu.addAction("个性化（桌面背景）",
-                           lambda: self._open_uri("ms-settings:personalization-background"))
-            menu.addAction("打开桌面文件夹", self._open_desktop_folder)
-            menu.addSeparator()
+
         menu.addAction("添加应用…", self.openAddAppsRequested.emit)
-        menu.addAction("整理布局", self._tidy)
         if self._selected:
             menu.addAction("删除选中（%d）" % len(self._selected), self._remove_selected)
         menu.addAction("设置…", self.openSettingsRequested.emit)
@@ -1868,7 +1948,95 @@ class DesktopWindow(QWidget):
         if self._organize_mode():
             menu.addAction("恢复系统原生桌面图标", self._exit_organize_mode)
         menu.addAction("隐藏桌面整理", self.hide_desktop)
-        menu.exec(e.globalPos())
+        return menu
+
+    def _fill_new_menu(self, new_menu):
+        """「新建」子菜单：文件夹 + 系统注册的全部 ShellNew 模板（反馈 6）。"""
+        from . import shell_new
+        new_menu.addAction(
+            "文件夹", lambda: self._create_on_desktop("新建文件夹", True))
+        templates = shell_new.shell_new_templates()
+        if templates:
+            new_menu.addSeparator()
+        for tpl in templates:
+            new_menu.addAction(
+                tpl["label"],
+                lambda checked=False, t=tpl: self._create_from_template(t))
+
+    def _clipboard_has_files(self) -> bool:
+        """剪贴板里是否有可粘贴的本地文件 / 目录（决定「粘贴」是否置灰）。"""
+        try:
+            md = QApplication.clipboard().mimeData()
+            return bool(md is not None and md.hasUrls()
+                        and any(u.isLocalFile() for u in md.urls()))
+        except Exception:
+            return False
+
+    def _paste_files(self):
+        """粘贴：把剪贴板里的本地文件/目录复制到桌面（系统语义）。"""
+        import shutil
+        from . import shell_new
+        try:
+            urls = QApplication.clipboard().mimeData().urls()
+        except Exception:
+            return
+        folders = appsource._desktop_folders()
+        if not folders:
+            return
+        dest = str(folders[0])
+        added = 0
+        for u in urls:
+            src = u.toLocalFile()
+            if not src or not os.path.exists(src):
+                continue
+            base, ext = os.path.splitext(os.path.basename(src))
+            try:
+                target = shell_new.unique_path(dest, base, ext)
+                if os.path.isdir(src):
+                    shutil.copytree(src, target)
+                else:
+                    shutil.copy2(src, target)
+                added += 1
+            except Exception:
+                continue
+        if added:
+            self.rescan_desktop()
+            from .tray import notify_via_tray
+            notify_via_tray("已粘贴到桌面", "%d 个项目" % added)
+
+    def _create_from_template(self, tpl):
+        """按 ShellNew 模板在桌面新建文件（Office 文档带默认样式）。"""
+        from . import shell_new
+        folders = appsource._desktop_folders()
+        if not folders:
+            return
+        path = shell_new.create_from_template(tpl, str(folders[0]))
+        if not path:
+            from .tray import notify_via_tray
+            notify_via_tray("新建失败", "系统没有为该类型提供模板")
+            return
+        self.rescan_desktop()
+
+    def _toggle_dev_mode(self, checked: bool):
+        self.storage.set_setting("dev_mode", bool(checked))
+        self.update()
+
+    def _open_terminal(self):
+        """在桌面目录打开终端（Windows Terminal 优先，回退 cmd）。"""
+        folders = appsource._desktop_folders()
+        if not folders:
+            return
+        d = str(folders[0])
+        try:
+            if QProcess.startDetached("wt.exe", ["-d", d]):
+                return
+        except Exception:
+            pass
+        try:
+            QProcess.startDetached("cmd.exe", ["/c", "start", "cmd", "/k",
+                                               'cd /d "%s"' % d])
+        except Exception:
+            pass
 
     def _create_on_desktop(self, name: str, is_dir: bool):
         """右键新建：真实创建到桌面目录，然后重扫让网格立即出现。"""
@@ -1880,14 +2048,18 @@ class DesktopWindow(QWidget):
 
     def _set_icon_size(self, px: int):
         self.storage.set_setting("icon_size", int(px))
-        self.rebuild(stagger=True)
+        self.refresh_grid()
 
     def _set_icon_tier(self, tier: str):
         """右键「图标大小」三档（v6 A2，指导文档 §2.2）：档位 × 当前 cell，
-        与 icon_size/icon_scale 解钩——网格模式下 widget 整体按比例渲染。"""
+        与 icon_size/icon_scale 解钩——网格模式下 widget 整体按比例渲染。
+
+        反馈 2：改完必须立刻重算几何（refresh_grid），只 rebuild 会沿用
+        旧 cell 快照，看起来"改了没反应"。
+        """
         from . import grid_sizing
         self.storage.set_setting("icon_tier", grid_sizing.parse_tier(tier))
-        self.rebuild(stagger=True)
+        self.refresh_grid()
 
     def _toggle_auto_arrange(self, checked: bool):
         """自动排序开关（v6 §3.2）：False=自由移动（落 target 原位留空，

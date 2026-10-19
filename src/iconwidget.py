@@ -775,13 +775,14 @@ class AppIcon(QWidget):
             return  # 文件夹内部不互相合并 / 不让位
         if self._merge_armed:
             return  # 已进入合并分支，不再驱动让位预览
-        # 未武装：把悬停目标格上报主窗口做实时让位（安卓默认语义）。
-        # 2026-10-18 M2（指导文档 §2.3）：报**指针全局坐标**而非本图标
-        # col/row——预览会改写 entry，读 entry 等于追逐一个移动的目标；
-        # 主窗口用 mapFromGlobal 反算格点，只信指针。
+        # 2026-10-19 反馈 4：悬停在另一个图标上**不再驱动实时让位**。
+        # 旧实现这里 emit reflowHover -> 主窗口立刻把本图标让位/交换走 ->
+        # 指针下的目标消失 -> dragLeave -> dwell(450ms) 归零 ->
+        # 「松手合并为文件夹」提示永远出不来（用户："还没有出现提示两个
+        # 图标就分开位置了"）。现在悬停只维持 dwell 计时，目标留在原地；
+        # 松手时若未武装（不够久）仍由 dropEvent 走 reflowDrop 做让位交换。
+        # 让位预览只在拖到**空白格**时生效（主窗口 dragMoveEvent 负责）。
         e.acceptProposedAction()
-        g = self.mapToGlobal(e.position().toPoint())
-        self.reflowHover.emit(dragged, g.x(), g.y())
 
     def dragLeaveEvent(self, e):
         self._disarm_merge()

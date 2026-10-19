@@ -571,8 +571,26 @@ def layout_mode(storage) -> str:
 
 
 def free_mode(storage) -> bool:
-    """v6 §1.3：是否无界模式（所有元素自由摆布、可相互重叠）。"""
-    return layout_mode(storage) == "free"
+    """是否无界模式（所有元素自由摆布、可相互重叠）。
+
+    v6 §1.3 的显式切换（layout_mode="free"），外加 2026-10-19 反馈 3：
+    **关闭「接管系统桌面」后自动按无界模式处理**——原生桌面图标已经
+    恢复可见，网格强制对齐只会让两套图标叠在一起、组件被钉死在格点；
+    用户要的是"这时就像普通悬浮层一样自由摆放"。
+
+    判定表：
+        接管 + grid -> 网格      接管 + free -> 自由
+        未接管（任意）-> 自由     （显式 free 自然也是自由）
+    """
+    if layout_mode(storage) == "free":
+        return True
+    tk = getattr(storage, "takeover", None)
+    if callable(tk):
+        try:
+            return not bool(tk())
+        except Exception:
+            return False
+    return False
 
 
 def page_canvas_h(storage) -> int:
@@ -589,8 +607,13 @@ def page_canvas_h(storage) -> int:
     return rows_per_page() * ch
 
 
-def _page_local_pos(storage, col: int, row: int) -> Cell:
-    """所属页视角的格点像素（当前页偏移归零）——无界 fx/fy 的生成式。"""
+def _page_local_pos(storage, col: int, row: int, centered: bool = False) -> Cell:
+    """所属页视角的格点像素（当前页偏移归零）——无界 fx/fy 的生成式。
+
+    centered=True：图标 widget 比 cell 小时按居中留白补偿（反馈 1）——
+    切无界的那一刻位置与网格模式视觉一致，不跳变。组件不用居中
+    （跨格占位必须左上对齐格线）。
+    """
     cw, ch = cell_size(storage)
     ox, oy = origin()
     cols = storage.columns
@@ -598,7 +621,32 @@ def _page_local_pos(storage, col: int, row: int) -> Cell:
     page = page_of(row, rpp)
     x = ox + max(0, min(int(col), cols - 1)) * cw
     y = oy + (max(0, int(row)) - page * rpp) * ch
+    if centered:
+        dx, dy = icon_center_offset(storage)
+        x += dx
+        y += dy
     return x, y
+
+
+def icon_center_offset(storage) -> Cell:
+    """图标 widget 在 cell 内的居中留白 ((cw-w)//2, (ch-h)//2)（反馈 1）。
+
+    2026-10-19 用户反馈："图标大小为中或者小的时候不应该位于网格左上角
+    而是居中"——旧实现 entry_pos 直接返回 cell 左上角，小档（0.58×cell）
+    时整套图标偏左上，留白全堆在右下。
+
+    尺寸来源与 DesktopWindow._icon_layout 同源（grid_sizing.icon_layout ×
+    当前快照 cell × 档位），大档 widget == cell 时偏移自然为 (0,0)。
+    """
+    from . import grid_sizing
+    cw, ch = cell_size(storage)
+    raw = getattr(storage, "icon_tier", None)
+    try:
+        tier = raw() if callable(raw) else (raw or grid_sizing.DEFAULT_TIER)
+    except Exception:
+        tier = grid_sizing.DEFAULT_TIER
+    lay = grid_sizing.icon_layout(cw, ch, tier)
+    return max(0, (cw - lay.widget_w) // 2), max(0, (ch - lay.widget_h) // 2)
 
 
 def free_pos_cell(storage, x: int, y: int, page: int) -> Cell:
@@ -628,10 +676,15 @@ def entry_pos(storage, entry) -> Cell:
     按所属页格点懒生成一次——视觉落在它的网格原位，不跳变。
     """
     if not free_mode(storage):
-        return cell_pos(storage, int(entry.get("col", 0)), int(entry.get("row", 0)))
+        x, y = cell_pos(storage, int(entry.get("col", 0)),
+                        int(entry.get("row", 0)))
+        # 反馈 1：widget 小于 cell 时在格内居中（不能贴左上角）
+        dx, dy = icon_center_offset(storage)
+        return x + dx, y + dy
     if "fx" not in entry or "fy" not in entry:
         entry["fx"], entry["fy"] = _page_local_pos(
-            storage, int(entry.get("col", 0) or 0), int(entry.get("row", 0) or 0))
+            storage, int(entry.get("col", 0) or 0),
+            int(entry.get("row", 0) or 0), centered=True)
     page = page_of(int(entry.get("row", 0) or 0))
     x = int(entry.get("fx", 0) or 0)
     y = int(entry.get("fy", 0) or 0)
@@ -648,6 +701,12 @@ def widget_pos(storage, entry) -> Cell:
     if entry.get("anchored"):
         if free_mode(storage):
             page = page_of(int(entry.get("row", 0) or 0))
+            if "fx" not in entry or "fy" not in entry:
+                # 反馈 3：未接管自动无界时，旧数据按原格点像素懒生成
+                # （不能回退 x/y，否则组件跳到窗口左上角）
+                entry["fx"], entry["fy"] = cell_pos(
+                    storage, int(entry.get("col", 0) or 0),
+                    int(entry.get("row", 0) or 0))
             x = int(entry.get("fx", entry.get("x", 0)) or 0)
             y = int(entry.get("fy", entry.get("y", 0)) or 0)
             return x, y + (page - current_page()) * page_canvas_h(storage)
@@ -667,7 +726,8 @@ def to_free_coords(storage) -> int:
         if "fx" in e and "fy" in e:
             continue
         e["fx"], e["fy"] = _page_local_pos(
-            storage, int(e.get("col", 0) or 0), int(e.get("row", 0) or 0))
+            storage, int(e.get("col", 0) or 0),
+            int(e.get("row", 0) or 0), centered=True)
         n += 1
     for w in getattr(storage, "widgets", []):
         if not w.get("anchored") or ("fx" in w and "fy" in w):

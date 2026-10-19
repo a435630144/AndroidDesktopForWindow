@@ -166,17 +166,19 @@ def main(app):
                      ("p1", 0, rpp, "app", []),
                      ("p2", 1, rpp + 1, "app", [])])
     w = fresh_window(st)
+    # 反馈 1：entry_pos 含 icon 在 cell 内的居中留白
+    dx, dy = grid_flow.icon_center_offset(st)
     check("T4 page0 条目在屏内",
-          w._entry_pos(st.find_entry("p0")) == (ox, oy))
+          w._entry_pos(st.find_entry("p0")) == (ox + dx, oy + dy))
     check("T4 次页条目在屏外（y = oy + rpp*ch，屏下方）",
-          w._entry_pos(st.find_entry("p1"))[1] == oy + rpp * ch
-          and w._entry_pos(st.find_entry("p2"))[1] == oy + (rpp + 1) * ch,
+          w._entry_pos(st.find_entry("p1"))[1] == oy + rpp * ch + dy
+          and w._entry_pos(st.find_entry("p2"))[1] == oy + (rpp + 1) * ch + dy,
           "%s" % (w._entry_pos(st.find_entry("p1")),))
     grid_flow.set_page(1)
     check("T4 翻到 page1 后次页条目进屏内、首页条目出屏",
-          w._entry_pos(st.find_entry("p1")) == (ox, oy)
-          and w._entry_pos(st.find_entry("p2")) == (ox + cw, oy + ch)
-          and w._entry_pos(st.find_entry("p0"))[1] == oy - rpp * ch,
+          w._entry_pos(st.find_entry("p1")) == (ox + dx, oy + dy)
+          and w._entry_pos(st.find_entry("p2")) == (ox + cw + dx, oy + ch + dy)
+          and w._entry_pos(st.find_entry("p0"))[1] == oy - rpp * ch + dy,
           "%s" % (w._entry_pos(st.find_entry("p0")),))
     grid_flow.set_page(0)
 

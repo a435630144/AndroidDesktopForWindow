@@ -102,17 +102,17 @@ def main(app):
     check("S4 数量守恒（3 条不丢）", len(st.layout) == 3,
           "got %d" % len(st.layout))
 
-    # ---------- S5：rescan 走 pack（集成，隔离真实桌面扫描）----------
-    # 铁律：测试绝不碰用户真实桌面——patch appsource 扫描为空，
-    # 只验证 rescan 的 pack 路径（S5 首版没隔离，把真实桌面 ~80 个
-    # 文件播种进了临时 state——测试隔离缺陷，非产品问题）。
+    # ---------- S5：rescan(repack=True) 才铺满 ----------
+    # 2026-10-19 反馈 5：默认 rescan 不得重排用户布局（右键"新建"内部也走
+    # rescan），只有显式整理（repack=True）才 pack。
+    # 铁律：测试绝不碰用户真实桌面——patch appsource 扫描为空。
     from src import appsource
     orig_scan = appsource.scan_desktop_files
     appsource.scan_desktop_files = lambda: []
     try:
         st = make_state([("a", 8, 8, "app", []), ("b", 0, 0, "app", [])])
         grid_flow.set_grid(st, (1920, 1040))
-        st.rescan_desktop()
+        st.rescan_desktop(repack=True)
         got = cells(st)
         check("S5 rescan 后 pack 紧凑", got["a"] == (1, 0) and got["b"] == (0, 0),
               "got %s" % (got,))

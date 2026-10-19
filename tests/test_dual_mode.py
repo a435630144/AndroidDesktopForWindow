@@ -102,12 +102,15 @@ def main():
     st2._settings["layout_mode"] = "free"
     n = grid_flow.to_free_coords(st2)
     check("M2 四个对象都生成 fx/fy（3 条目 + 1 锚定组件）", n == 4, "n=%d" % n)
+    # 2026-10-19 反馈 1：生成式含 icon 居中留白（widget 小于 cell）
+    dx, dy = grid_flow.icon_center_offset(st2)
     a = st2.layout[0]
-    check("M2 第 0 页条目 fx/fy = 所属页格点",
-          (a["fx"], a["fy"]) == (ox + 0 * cw, oy + 0 * ch), "%s" % ((a["fx"], a["fy"]),))
+    check("M2 第 0 页条目 fx/fy = 所属页格点 + 居中留白",
+          (a["fx"], a["fy"]) == (ox + dx, oy + dy), "%s" % ((a["fx"], a["fy"]),))
     c = st2.layout[2]
     check("M2 第 1 页条目 fy = 页内局部行（不是全局行像素）",
-          (c["fx"], c["fy"]) == (ox, oy + 1 * ch), "%s" % ((c["fx"], c["fy"]),))
+          (c["fx"], c["fy"]) == (ox + dx, oy + 1 * ch + dy),
+          "%s" % ((c["fx"], c["fy"]),))
     check("M2 幂等：第二次不重算", grid_flow.to_free_coords(st2) == 0)
 
     # ---------- M3：to_grid_coords 吸附 + 清空 ----------
@@ -128,7 +131,9 @@ def main():
     st4 = FakeStorage(layout=[entry("a", 1, 0)])
     grid_flow.set_page(0)
     pos_grid = grid_flow.entry_pos(st4, st4.layout[0])
-    check("M4 网格模式 = cell_pos", pos_grid == (ox + cw, oy), "%s" % (pos_grid,))
+    dx4, dy4 = grid_flow.icon_center_offset(st4)
+    check("M4 网格模式 = cell_pos + 居中留白",
+          pos_grid == (ox + cw + dx4, oy + dy4), "%s" % (pos_grid,))
     st4._settings["layout_mode"] = "free"
     grid_flow.to_free_coords(st4)
     pos_free = grid_flow.entry_pos(st4, st4.layout[0])
@@ -140,7 +145,7 @@ def main():
     grid_flow.to_free_coords(st4b)
     pz = grid_flow.entry_pos(st4b, st4b.layout[0])
     check("M4 无界页间偏移 = 画布高（与网格同一页几何）",
-          pz == (ox, oy + canvas_h), "%s" % (pz,))
+          pz == (ox + dx4, oy + canvas_h + dy4), "%s" % (pz,))
 
     # ---------- M5：widget_pos ----------
     st5 = FakeStorage(widgets=[widget_entry("clk", 2, 0),

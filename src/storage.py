@@ -261,12 +261,15 @@ class Storage:
             return
         cols = self.columns
         used = set()
+        # 2026-10-19 反馈 5：补位也要避开小组件占位，否则重叠时被挤出来的
+        # 图标会落到时钟/便签的格子上（用户："整理布局会让组件和图标重叠"）
+        widget_used = set(grid_flow.widget_cells(self))
         for e in sorted(self._data["layout"],
                         key=lambda x: (x.get("row", 0), x.get("col", 0))):
             col = max(0, min(cols - 1, int(e.get("col", 0))))
             row = max(0, int(e.get("row", 0)))
-            if (col, row) in used:
-                col, row = self._first_free_cell()
+            if (col, row) in used or (col, row) in widget_used:
+                col, row = self._first_free_cell(extra_used=used | widget_used)
             used.add((col, row))
             e["col"], e["row"] = col, row
 
@@ -274,15 +277,29 @@ class Storage:
         """显式整理：按 (row, col) 排序后顺序铺满为连续网格（用户主动触发）。
 
         v6 §1.3：无界模式没有网格可铺——跳过（用户要整齐就切回网格模式）。
+
+        2026-10-19 反馈 5：**必须避开小组件占位**。旧实现直接 `i % columns`
+        铺满前 N 格，图标压在时钟/便签/面板上——整理一次桌面就花一次。
+        与 pack_layout 同一条避让语义（组件是一等公民，占位不可覆盖）。
         """
         from . import grid_flow
         if grid_flow.free_mode(self):
             return
+        cols = max(2, int(self.columns))
+        used = set(grid_flow.widget_cells(self))   # 组件占位（不可覆盖）
         entries = sorted(self._data["layout"],
                          key=lambda e: (e.get("row", 0), e.get("col", 0)))
-        for i, e in enumerate(entries):
-            e["col"] = i % self.columns
-            e["row"] = i // self.columns
+        col = row = 0
+        for e in entries:
+            while (col, row) in used:
+                col += 1
+                if col >= cols:
+                    col, row = 0, row + 1
+            e["col"], e["row"] = col, row
+            used.add((col, row))
+            col += 1
+            if col >= cols:
+                col, row = 0, row + 1
 
     def free_icon_box(self):
         """无界模式图标 widget 尺寸（逻辑 px）= icon_px + legacy chrome。
@@ -425,12 +442,17 @@ class Storage:
                 col, row = 0, row + 1
         return len(entries)
 
-    def rescan_desktop(self) -> int:
+    def rescan_desktop(self, repack: bool = False) -> int:
         """重新扫描桌面：补新增、清丢失（同名路径哈希消失的条目）。
 
         2026-10-19 v6 §3.1：末尾从 compact_layout（最小修正）改为
         pack_layout（阅读序铺满）——「重新扫描」是用户主动要求的整齐
         操作，与加载时的"尊重留空"区分开。
+
+        2026-10-19 反馈 5 修正：**默认不再铺满**（repack=False）。右键
+        「新建文本文档 / 文件夹」内部也走 rescan，铺满会让"加个文件
+        桌面就整体重排一遍"。只有显式「整理布局」/ repack=True 才重排；
+        默认走 compact_layout 的最小修正（只修越界与重叠，尊重留空）。
         """
         from . import appsource
         live = {f["id"] for f in appsource.scan_desktop_files()}
@@ -442,7 +464,10 @@ class Storage:
                     and e.get("id") not in live)
         ]
         added = self.seed_desktop_clone()
-        self.pack_layout()
+        if repack:
+            self.pack_layout()
+        else:
+            self.compact_layout()
         self.save()
         return added, before - (len(self._data["layout"]) - added)
 

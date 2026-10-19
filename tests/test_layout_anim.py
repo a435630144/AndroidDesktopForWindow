@@ -251,10 +251,10 @@ def main(app):
     w5f = new_window(app, st5f)
     w5f._drag_multi = False
     w5f._on_drag_started()
-    w5f._reflow_preview("a", (2, 0))          # 预览：a→(2,0)、c 交换到 (0,0)
+    # 2026-10-19 反馈 4：占用格不再实时预览交换，这里用空格目标
+    w5f._reflow_preview("a", (3, 0))          # 预览：a→(3,0)，b/c 不动
     b5f_mid = cells_of(st5f)
-    check("T5f 预览已生效（a=(2,0)、c=(0,0)）",
-          b5f_mid["a"] == (2, 0) and b5f_mid["c"] == (0, 0), "%s" % b5f_mid)
+    check("T5f 预览已生效（a=(3,0)）", b5f_mid["a"] == (3, 0), "%s" % b5f_mid)
     pos5f = {eid: w5f.icons[eid].pos() for eid in w5f.icons}
     w5f._reflow_commit_or_compute("ghost", (1, 1))   # 陈旧 payload：ghost 不在布局
     b5f = cells_of(st5f)

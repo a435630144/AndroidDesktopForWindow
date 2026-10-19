@@ -104,16 +104,26 @@ def main(app):
     ea = st.find_entry("a")
     check("F2 取消后 dragged 回原位", (ea["col"], ea["row"]) == (0, 0))
 
-    # ---------- F3：free 目标被占 -> 交换 ----------
+    # ---------- F3：free 目标被占 -> 拖动中不动、松手交换 ----------
+    # 2026-10-19 反馈 4：悬停在别的图标上时不预览让位（否则目标瞬间弹走，
+    # 合并提示永远出不来）；占用格的交换改成"松手才换"。
     st = make_state([("a", 0, 0, "app", []), ("b", 3, 0, "app", [])])
     w = fresh_window(st)
-    w._layout_snap = [(e["id"], e["col"], e["row"]) for e in st.layout]
+    w._drag_entry_id = "a"
+    w._on_drag_started()
     tgt = cell_of(w, st, 3, 0)             # b 占 (3,0)
     w._reflow_preview("a", w._cell_at(tgt))
     ea, eb = st.find_entry("a"), st.find_entry("b")
-    check("F3 dragged 落目标 (3,0)", (ea["col"], ea["row"]) == (3, 0))
-    check("F3 占据者交换到源格 (0,0)", (eb["col"], eb["row"]) == (0, 0),
-          "got %s" % ((eb["col"], eb["row"]),))
+    check("F3 拖动中目标不弹走（b 仍在 (3,0)）",
+          (eb["col"], eb["row"]) == (3, 0), "got %s" % ((eb["col"], eb["row"]),))
+    check("F3b dragged 预览也没落位（等松手）",
+          (ea["col"], ea["row"]) == (0, 0), "got %s" % ((ea["col"], ea["row"]),))
+    # 松手：现算交换并提交
+    w._reflow_commit_or_compute("a", w._cell_at(tgt))
+    check("F3c 松手后 dragged 落目标 (3,0)",
+          (ea["col"], ea["row"]) == (3, 0), "got %s" % ((ea["col"], ea["row"]),))
+    check("F3d 松手后占据者交换到源格 (0,0)",
+          (eb["col"], eb["row"]) == (0, 0), "got %s" % ((eb["col"], eb["row"]),))
     # commit 落盘
     w._commit_preview()
     reloaded = Storage(path=str(STATE))

@@ -64,6 +64,9 @@ def make_state(spec, auto_arrange=True):
         STATE.unlink()
     st = Storage(path=str(STATE))
     st._data["settings"]["hide_native_icons"] = False
+    # 2026-10-19 反馈 3：未接管会自动进入无界模式，网格让位探针
+    # 必须显式声明「按接管语义」（不 show 窗口，不会真隐藏原生图标）
+    st._data["settings"]["takeover_desktop"] = True
     st._data["settings"]["auto_clone_desktop"] = False
     st._data["settings"]["auto_arrange"] = bool(auto_arrange)
     st._data["widgets"] = []  # 清空默认组件：S1-S6 测纯图标让位
@@ -85,6 +88,7 @@ def cells_of(st):
 
 
 def icon_at(w, eid, ox, oy, cw, ch, tol=2):
+    """图标是否落在自己的格点上（含反馈 1 的格内居中留白）。"""
     icon = w.icons.get(eid)
     if icon is None:
         return False
@@ -92,8 +96,9 @@ def icon_at(w, eid, ox, oy, cw, ch, tol=2):
     if entry is None:
         return False
     c, r = int(entry["col"]), int(entry["row"])
-    return (abs(icon.x() - (ox + c * cw)) <= tol
-            and abs(icon.y() - (oy + r * ch)) <= tol)
+    dx, dy = grid_flow.icon_center_offset(w.storage)
+    return (abs(icon.x() - (ox + c * cw + dx)) <= tol
+            and abs(icon.y() - (oy + r * ch + dy)) <= tol)
 
 
 def run(app):
@@ -120,20 +125,28 @@ def run(app):
 
     orig = by_id(st)
 
-    # ---------- S1：单格微移只动 1~2 个图标 ----------
+    # ---------- S1：悬停占用格不抢走目标；松手才相邻交换 ----------
+    # 2026-10-19 反馈 4：拖到图标上时若实时让位，目标会瞬间弹走，
+    # 「松手合并为文件夹」提示永远出不来。占用格改为"松手才换"。
     w._on_drag_started()
-    w._reflow_preview("c", (3, 0))  # 拖 c 到 d 的格
+    w._reflow_preview("c", (3, 0))  # 拖 c 悬停在 d 上
+    check("S1 悬停占用格：布局不动（保住合并提示）",
+          by_id(st) == orig, "%s" % by_id(st))
+    w._reflow_commit_or_compute("c", (3, 0))   # 松手：交换
     b = by_id(st)
-    check("S1 微移只动 c/d（相邻交换）",
+    check("S1b 松手后相邻交换（c→(3,0)、d→(2,0)）",
           b["c"] == (3, 0) and b["d"] == (2, 0)
           and b["a"] == (0, 0) and b["b"] == (1, 0)
           and b["e"] == (4, 0) and b["f"] == (5, 0), "%s" % b)
-    check("S1 任何时刻无重叠", len(cells_of(st)) == 6)
+    check("S1c 任何时刻无重叠", len(cells_of(st)) == 6)
     settle(app, 500)
-    check("S1 位移图标弹簧滑到新格（c 除外——它正被拖动）",
+    check("S1d 位移图标弹簧滑到新格（c 除外——它正被拖动）",
           all(icon_at(w, eid, ox, oy, cw, ch) for eid in "abdef"))
+    orig = by_id(st)      # 交换已提交，S2 的"拖动前"基准随之更新
+    w._on_drag_started()
+    w._reflow_preview("a", (6, 0))            # 空格：递进预览
     w._cancel_preview()
-    check("S1b 取消后布局即回滚", by_id(st) == orig)
+    check("S1e 空格预览取消后布局回滚", by_id(st) == orig)
 
     # ---------- S2：取消（拖出窗口/松手无落点）全体滑回 ----------
     w._on_drag_started()
@@ -206,7 +219,8 @@ def run(app):
         did = rng.choice([s[0] for s in spec])
         tgt = (rng.randrange(19), rng.randrange(3))
         wx._on_drag_started()
-        wx._reflow_preview(did, tgt)
+        # 占用格不实时预览（反馈 4），压力测试走松手提交路径
+        wx._reflow_commit_or_compute(did, tgt)
         b = by_id(stx)
         tc = max(0, min(18, tgt[0]))
         tr = max(0, tgt[1])
@@ -214,7 +228,6 @@ def run(app):
             ok = False
             print("  round %d FAIL: did=%s tgt=%s got=%s" % (i, did, tgt, b.get(did)),
                   flush=True)
-        wx._cancel_preview()
         wx.deleteLater()
     check("S6 50 轮随机落点：dragged 精确落点 + 无重叠", ok)
 

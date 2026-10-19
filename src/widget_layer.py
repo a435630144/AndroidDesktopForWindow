@@ -84,8 +84,15 @@ class WidgetLayer(QObject):
                     entry["row"] = (grid_flow.current_page()
                                     * grid_flow.rows_per_page())
                 if "fx" not in entry or "fy" not in entry:
-                    entry["fx"] = int(entry.get("x", 0) or 0)
-                    entry["fy"] = int(entry.get("y", 0) or 0)
+                    if "col" in entry and "row" in entry:
+                        # 反馈 3：未接管时自动无界——没有 fx/fy 的旧数据按
+                        # 它原来的格点像素懒生成，切换瞬间视觉不跳变
+                        # （旧实现回退 x/y，会跳到窗口左上角）
+                        entry["fx"], entry["fy"] = grid_flow.cell_pos(
+                            self.storage, int(entry["col"]), int(entry["row"]))
+                    else:
+                        entry["fx"] = int(entry.get("x", 0) or 0)
+                        entry["fy"] = int(entry.get("y", 0) or 0)
                 # __init__ 的初始 geometry 读 x/y——同步一份，窗口才落在
                 # fx/fy 上（否则停在网格模式遗留的旧格点像素）
                 entry["x"], entry["y"] = entry["fx"], entry["fy"]

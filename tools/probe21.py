@@ -121,18 +121,19 @@ def run(app):
                               "h": 228, "hidden": False, "anchored": True,
                               "col": 4, "row": 0}])
     cw, ch = grid_flow.cell_size(st)
+    idy = grid_flow.icon_center_offset(st)[1]   # 反馈 1：图标格内居中留白
     w, layer = build(st)
     settle(app, 250)
     check("S0 三页布局 page_count=3", grid_flow.page_count(st) == 3,
           "%s" % grid_flow.page_count(st))
     check("S0 首页条目在屏内",
-          w.icons["a"].y() == oy and w.icons["b"].y() == oy)
+          w.icons["a"].y() == oy + idy and w.icons["b"].y() == oy + idy)
     check("S0 次页条目在屏下方",
-          w.icons["c"].y() == oy + rpp * ch
-          and w.icons["d"].y() == oy + rpp * ch,
+          w.icons["c"].y() == oy + rpp * ch + idy
+          and w.icons["d"].y() == oy + rpp * ch + idy,
           "c.y=%s" % w.icons["c"].y())
     check("S0 第三页条目更靠下",
-          w.icons["e"].y() == oy + 2 * rpp * ch)
+          w.icons["e"].y() == oy + 2 * rpp * ch + idy)
     ck = layer.widgets.get("clk")
     check("S0 clock 锚定 page0 槽位并落在格点",
           ck is not None and (ck.x(), ck.y()) == (ox + 4 * cw, oy),
@@ -151,11 +152,11 @@ def run(app):
     settle(app, 600)
     check("S1 点击第 2 点翻到 page1", w._page == 1)
     check("S1 page1：c/d 进屏内、a/b 滑出屏顶",
-          w.icons["c"].y() == oy and w.icons["d"].y() == oy
-          and w.icons["a"].y() == oy - rpp * ch,
+          w.icons["c"].y() == oy + idy and w.icons["d"].y() == oy + idy
+          and w.icons["a"].y() == oy - rpp * ch + idy,
           "a.y=%s c.y=%s" % (w.icons["a"].y(), w.icons["c"].y()))
     check("S1 page1：e 仍在屏下方",
-          w.icons["e"].y() == oy + rpp * ch)
+          w.icons["e"].y() == oy + rpp * ch + idy)
     check("S1 clock 随页滑出屏顶（实例不变）",
           ck is not None and ck.y() == oy - rpp * ch
           and id(layer.widgets.get("clk")) == id(ck),
@@ -169,7 +170,7 @@ def run(app):
     send_wheel(w, QPoint(W // 2, H // 2), 120)      # 下滚 -> page2
     settle(app, 600)
     check("S2 下滚到 page2", w._page == 2)
-    check("S2 page2：e 进屏内", w.icons["e"].y() == oy)
+    check("S2 page2：e 进屏内", w.icons["e"].y() == oy + idy)
     send_wheel(w, QPoint(W // 2, H // 2), 120)      # 末页再滚：不动
     settle(app, 400)
     check("S2 末页不越界", w._page == 2)
@@ -294,11 +295,12 @@ def run(app):
     w3.resize(W, H)
     w3._update_grid_metrics()
     settle(app, 200)
+    idy3 = grid_flow.icon_center_offset(st3_state)[1]
     check("S7 重建窗口恢复 page1", w3._page == 1
           and grid_flow.current_page() == 1)
     check("S7 page1 条目在屏内",
-          abs(w3.icons["y1"].y() - oy) <= 2
-          and w3.icons["y0"].y() == oy - rpp * ch)
+          abs(w3.icons["y1"].y() - (oy + idy3)) <= 2
+          and w3.icons["y0"].y() == oy - rpp * ch + idy3)
 
     # ---------- 收尾 ----------
     for ww in (w, w2, w3):

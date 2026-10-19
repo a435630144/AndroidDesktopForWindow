@@ -88,17 +88,24 @@ def main():
     ids = [e["id"] for e in st.layout]
     dragged, other = ids[0], ids[7]        # e0 在 (0,0)，e7 在 (7,0)
 
-    # ---------- G1：reflow 预览使其他图标离开原格 ----------
+    # ---------- G1：悬停占用格不抢走目标（反馈 4）；拖到空格仍实时让位 ----------
+    st.set_setting("auto_arrange", True)   # 递进模式：空格预览会牵动其他图标
     before = {eid: w.icons[eid].pos() for eid in ids}
     w._on_drag_started()
     w._drag_multi = False
-    w._reflow_preview(dragged, (7, 0))     # 把 e0 拖到 e7 的格
+    w._reflow_preview(dragged, (7, 0))     # 把 e0 悬停到 e7 的格（占用）
+    settle(app, 60)
+    moved_occ = [eid for eid in ids
+                 if eid != dragged and w.icons[eid].pos() != before[eid]]
+    check("G1 悬停占用格：其他图标不动（保住「松手合并」提示）",
+          not moved_occ, "moved=%s" % moved_occ)
+    w._reflow_preview(dragged, (11, 0))    # 空格：递进让位
     settle(app, 60)
     moved = [eid for eid in ids if eid != dragged and w.icons[eid].pos() != before[eid]]
-    check("G1 让位预览使其他图标移动", len(moved) >= 1, "moved=%s" % moved)
+    check("G1b 拖到空格：其他图标实时让位", len(moved) >= 1, "moved=%s" % moved)
     mid = w.icons[other].pos()
     target_other = w._entry_pos(st.find_entry(other))
-    check("G1 其他图标正在滑向新格（中途态）",
+    check("G1c 其他图标正在滑向新格（中途态）",
           mid != before[other] and mid != target_other,
           "mid=%s from=%s to=%s" % (mid, before[other], target_other))
     settle(app, 400)
@@ -154,7 +161,7 @@ def main():
     snap_before = [(e["id"], e["col"], e["row"]) for e in st.layout]
     pos_before = {eid: w.icons[eid].pos() for eid in ids}
     w._on_drag_started()
-    w._reflow_preview(ids[5], (0, 0))      # e5 拖到队首
+    w._reflow_preview(ids[5], (12, 0))     # e5 拖到空格（占用格不预览，反馈 4）
     settle(app, 120)
     check("G4 取消前预览已生效", any(w.icons[eid].pos() != pos_before[eid] for eid in ids))
     w._cancel_preview()

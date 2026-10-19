@@ -270,11 +270,13 @@ class SettingsDialog(QDialog):
             return
         self.storage.set_setting("icon_tier", tier)
         self._refresh_icon_labels()
-        self.window.rebuild()
+        self.window.refresh_grid()
 
     def _apply_icon_px(self, value):
         """无界模式图标像素（v6 §2.3）：网格模式置灰不生效。"""
         self.storage.set_setting("icon_px", int(value))
+        # 反馈 2：无界模式下 icon_px 直接决定 widget 尺寸，改完立刻重建
+        self.window.refresh_grid()
 
     def _apply_columns(self, value):
         if self.chk_auto_cols.isChecked():
@@ -282,7 +284,7 @@ class SettingsDialog(QDialog):
         self.storage.set_setting("columns", int(value))
         self.storage.compact_layout()
         self.storage.save()
-        self.window.rebuild()
+        self.window.refresh_grid()   # 反馈 2：立刻重算 GridMetrics 并重排
 
     def _apply_auto_columns(self, checked):
         """自动列数开关：开=写 "auto" 由 GridMetrics 按屏幕铺满；关=以当前
@@ -290,7 +292,7 @@ class SettingsDialog(QDialog):
         self.spin_cols.setEnabled(not checked)
         if checked:
             self.storage.set_setting("columns", "auto")
-            self.window.rebuild()
+            self.window.refresh_grid()   # 反馈 2：立刻重算 GridMetrics 并重排
             m = grid_flow.current_metrics()
             if m is not None:
                 self.spin_cols.setValue(m.cols)
@@ -298,7 +300,7 @@ class SettingsDialog(QDialog):
             self.storage.set_setting("columns", int(self.spin_cols.value()))
             self.storage.compact_layout()
             self.storage.save()
-            self.window.rebuild()
+            self.window.refresh_grid()   # 反馈 2：立刻重算 GridMetrics 并重排
 
     def _apply_dev_mode(self, checked):
         """开发者模式开关（2026-10-18）：网格可视化边框即时显隐，无需重启。"""

@@ -61,6 +61,9 @@ def make_state(spec, widgets=(), settings=None):
         STATE.unlink()
     st = Storage(path=str(STATE))
     st._data["settings"]["hide_native_icons"] = False
+    # 2026-10-19 反馈 3：未接管会自动进入无界模式，网格让位探针
+    # 必须显式声明「按接管语义」（不 show 窗口，不会真隐藏原生图标）
+    st._data["settings"]["takeover_desktop"] = True
     st._data["settings"]["auto_clone_desktop"] = False
     for k, v in (settings or {}).items():
         st._data["settings"][k] = v
