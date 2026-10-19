@@ -4,9 +4,9 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**（v4 已交付，v5 方案已签收正在实施：网格自适应 / iOS 局部让位 / 小组件跨度化 / 文件夹弹窗重做 / 分页）。问题反馈与想法欢迎通过 Issues 讨论，实施计划见 [指导文档_网格与交互_v5.md](指导文档_网格与交互_v5.md)。
+> 🚧 **项目处于活跃开发中**：当前发布 **v6g**（安装包 1.7.0），46 个测试文件全绿；**v7 规格已定稿、正在实施**（尺寸两层解耦 / 双布局并存 / 拖拽与命中系统重做 / 文件夹与浮层细节）。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v7.md](docs/指导文档_v7.md)，实施计划见 [docs/实施计划_v7.md](docs/实施计划_v7.md)。
 
-[![release](https://img.shields.io/badge/release-v0.1.4-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-28%2B%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v1.7.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-46%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -22,7 +22,10 @@
 | 🤏 滑动让位 | 拖动图标时相邻图标弹性滑动让位（真弹簧物理曲线），落点精确到目标格，可取消滑回 |
 | 📂 拖拽合并 | 图标拖到图标上悬停即合并成文件夹；文件夹弹窗为液态玻璃材质 + 涌现开合动画，成员可拖出/移出 |
 | 🖱️ 批量操作 | 橡皮筋框选 + 多选整体拖动 |
-| 🧩 桌面小组件 | 时钟 / 便签（可编辑）/ 桌面面板（搜索 · 快捷文件夹 · 磁盘 · 最近下载 · 天气）；支持**锚定（非悬浮）**模式，融入网格成为一等公民 |
+| 🧩 桌面小组件 | 时钟 / 便签（可编辑）/ 桌面面板（搜索 · 快捷文件夹 · 磁盘 · 最近下载 · 天气）；支持**锚定（非悬浮）**模式，融入网格成为一等公民，可拖拽缩放、与图标互相让位 |
+| 🔀 双模式 | **整理模式**（隐藏原生图标、接管桌面渲染）/ **原生模式**（无界自由摆放）：一键切换，两种布局**各自独立保存**，互不清空 |
+| 📑 分页 | 图标溢出自动分页，页点 + 滚轮翻页，拖到屏幕边缘翻页 |
+| 🔄 桌面同步 | 监听桌面目录增删改（1s debounce），新文件自动入场、删除项自动清理 |
 | 🪄 全量接管 | 隐藏原生图标、按桌面文件夹克隆渲染，彻底掌控位置与样式（路线 A）；也可切回仅动效模式 |
 | 🖥️ 自绘右键菜单 | 整理模式下桌面右键不丢失：新建文件夹/文本文档、重新扫描、图标大小、显示/个性化设置 |
 | 🛡️ BandGuard 守护 | Win+D 显示桌面、explorer 崩溃重启后自动重挂 |
@@ -54,7 +57,7 @@
 
 ```powershell
 git clone https://github.com/a435630144/PhoneDesktopForWindow.git
-cd AndroidDesktopForWindow
+cd PhoneDesktopForWindow
 
 # 安装依赖（仅 PySide6）
 pip install -r requirements.txt
@@ -64,50 +67,68 @@ python main.py
 ```
 
 运行时数据在 `%APPDATA%\DesktopOrganizer\state.json`（布局、设置、小组件显隐）。
-自检：`python src/selftest.py`（attached / native_icons_hidden / 克隆条目数）。
+自检：`python main.py --selftest`（启动 → 截图 → 退出，产出 `selftest_report.txt`；打包后的 exe 同样支持 `--selftest`）。
 
 > ⚠️ **首次使用建议**：先在托盘图标右键熟悉「暂停自动创建/恢复原生」入口——整理模式会接管桌面图标显示，随时可一键恢复原生桌面。
 
 ## 📁 项目结构
 
 ```
-AndroidDesktopForWindow/
-├── main.py                  # 入口：单实例 → 托盘 → 主窗口 → BandGuard
+PhoneDesktopForWindow/
+├── main.py                  # 入口：崩溃钩子 → 单实例 → 托盘 → 主窗口 → BandGuard
 ├── requirements.txt         # PySide6==6.10.*
 ├── assets/                  # 应用图标
+├── docs/                    # 规格与计划（见「文档索引」）
+│   ├── 指导文档_v7.md / 实施计划_v7.md
+│   ├── DESKBOX_REFERENCE.md
+│   └── archive/             # 已完结迭代的规格（冻结，仅供回溯）
 ├── src/
-│   ├── win32_layer.py       # ★ 桌面层挂载 + 原生图标隐藏/恢复 + z-order 工具
-│   ├── band_guard.py        # ★ Win+D / explorer 重启守护
-│   ├── grid_flow.py         # ★ 图标网格让位引擎（纯逻辑，零 Qt 依赖，可单测）
-│   ├── desktop_window.py    # ★ 主窗口：网格/拖拽/框选/文件夹/原生图标同步
-│   ├── iconwidget.py        # ★ 图标部件：多属性弹簧动效 + 拖动 payload 协议
-│   ├── folder_popup.py      # 文件夹弹窗：液态玻璃 + zoom 涌现动画
-│   ├── effects.py           # 动效工具箱：玻璃背板/弹簧曲线/reduced-motion
-│   ├── theme.py             # 设计 tokens（深色 + GLASS 玻璃参数）
-│   ├── storage.py           # state.json 布局/设置持久化 + 桌面克隆播种
-│   ├── appsource.py         # 桌面文件扫描/克隆/稳定 id/图标提取
-│   ├── widget_base.py       # 小组件基类（interactive 焦点策略 + 锚定/悬浮双形态）
-│   ├── widget_layer.py      # 小组件注册与默认落位
-│   ├── widgets_clock.py     # 时钟（纯展示，NOACTIVATE）
-│   ├── widgets_notes.py     # 便签（interactive，可输入）
-│   ├── widgets_panel.py     # 桌面面板（搜索/文件夹/磁盘/下载/天气）
-│   └── settings_dialog.py / add_apps_dialog.py / tray.py / autostart.py …
+│   ├── 核心机制 ★
+│   │   ├── win32_layer.py    # 桌面层挂载 + 原生图标隐藏/恢复 + z-order 工具
+│   │   ├── band_guard.py     # Win+D / explorer 重启守护
+│   │   ├── desktop_window.py # 主窗口：网格/拖拽/框选/文件夹/原生图标同步
+│   │   └── iconwidget.py     # 图标部件：多属性弹簧动效 + 拖动 payload 协议
+│   ├── 纯逻辑（零 Qt 依赖，可单测）
+│   │   ├── grid_flow.py      # 让位引擎（reflow_moves / displace_cells）
+│   │   ├── grid_metrics.py   # 网格度量（origin / cols / rows）
+│   │   ├── grid_sizing.py    # cell 尺寸与图标档位（v7 改造中）
+│   │   ├── drag_merge.py     # 合并 / 挤走几何判定
+│   │   └── widget_catalog.py # 组件跨度目录
+│   ├── UI 部件
+│   │   ├── folder_popup.py / folder_tint.py    # 文件夹弹窗与图标底色
+│   │   ├── widget_base.py / widget_layer.py    # 组件基类与注册
+│   │   └── widgets_clock.py / widgets_notes.py / widgets_panel.py
+│   └── 基础设施
+│       ├── storage.py / paths.py / version.py
+│       ├── appsource.py / desktop_watch.py / shell_new.py
+│       ├── effects.py / theme.py
+│       └── settings_dialog.py / add_apps_dialog.py / tray.py / autostart.py
+│           / single_instance.py / selftest.py
 ├── scripts/
-│   ├── build_portable.ps1   # PyInstaller onedir → zip
-│   └── installer.iss        # Inno Setup 6 安装包
-└── tests/
-    ├── smoke_test.py        # 无头逻辑回归（存储/克隆/布局）
-    └── test_grid_flow.py    # 网格让位引擎单测（28 条）
+│   ├── build_portable.ps1   # PyInstaller onedir → zip（需 pwsh 7）
+│   └── installer.iss        # Inno Setup 6 安装包（必须 UTF-8 BOM）
+├── tests/                   # 46 个独立可跑脚本（无 pytest），判据看退出码
+│   ├── smoke_test.py        # 无头逻辑回归（存储/克隆/布局）
+│   └── test_*.py            # 每条契约一份：让位引擎、双模式、命中、弹窗、组件…
+└── tools/                   # 运行态探针 probe*.py + 打包验证 verify_*.py
 ```
 
 ## 🧪 测试
 
 ```powershell
-python tests/smoke_test.py      # 无头逻辑回归
-python tests/test_grid_flow.py  # 让位引擎单测（28 条断言）
+# 无头逻辑回归
+python tests/smoke_test.py
+
+# 全量单测：46 个独立脚本，无 pytest；判据只看退出码
+Get-ChildItem tests/test_*.py | ForEach-Object {
+    python $_.FullName
+    if ($LASTEXITCODE -ne 0) { "FAILED: $($_.Name)" }
+}
 ```
 
-`tools/` 下另有运行态探针（probe14–16：动效可视化、让位精度、接管模式实机验证）与打包版验证（`verify_frozen.py`）。**探针安全铁律：只读枚举用户窗口、绝不移动/关闭任何用户窗口**（见 DEVLOG §7.2）。
+> 每个测试脚本自带 `check()` + 汇总 + 退出码。**输出文案各文件不统一**（`ALL PASSED` / `ALL xxx PASSED` / `ALL PASS`），所以别用 grep 固定文案判通过——曾经因此把 41 个全绿文件误报成失败（DEVLOG §7.3）。
+
+`tools/` 下另有运行态探针（probe5–probe23：动效可视化、让位精度、接管模式、层序、鼠标命中）与打包版验证（`verify_frozen.py` / `verify_live.py`）。**探针安全铁律：只读枚举用户窗口、绝不移动/关闭任何用户窗口**（见 DEVLOG §7.2）。
 
 ## 📦 打包
 
@@ -125,27 +146,40 @@ pwsh -File scripts/build_portable.ps1
 
 | 文档 | 内容 |
 |---|---|
-| [DEVLOG.md](DEVLOG.md) | **开发日志（权威文档）**：架构决策、踩坑台账、测试体系、打包交付、已知坑速查表 |
-| [指导文档_网格与交互_v5.md](指导文档_网格与交互_v5.md) | **当前阶段方案**：网格自适应 / iOS 局部让位 / 组件跨度化 / 文件夹弹窗重做的算法设计与 M1–M7 实施计划（含 AI 交接说明） |
-| [design.md](design.md) | 手机桌面化设计文档（实时让位 + 锚定小组件） |
-| [DESKBOX_REFERENCE.md](DESKBOX_REFERENCE.md) | DeskBox 调研报告与本项目可借鉴点 |
+| [docs/README.md](docs/README.md) | **文档地图**：三层结构（入口 / 规格 / 归档）与文档生命周期规则 |
+| [DEVLOG.md](DEVLOG.md) | **开发日志（权威账本）**：架构决策、Day 1–16 时间线、踩坑台账、测试体系、打包交付 |
+| [HANDOVER.md](HANDOVER.md) | **接手手册**：模块地图、核心机制、安全铁律、开放项、接手检查清单 |
+| [docs/指导文档_v7.md](docs/指导文档_v7.md) | **当前规格**：v7 —— 尺寸两层模型 / 双布局并存 / 拖拽与命中 / 文件夹与浮层（21 项反馈 → A–G 归组） |
+| [docs/实施计划_v7.md](docs/实施计划_v7.md) | **当前实施计划**：B1 拆 T1–T15，每卡含文件 / 签名 / 验证命令 / 预期红 |
+| [docs/DESKBOX_REFERENCE.md](docs/DESKBOX_REFERENCE.md) | 竞品 DeskBox 调研与可借鉴点分级清单 |
+| [docs/archive/](docs/archive/README.md) | **归档区**：Phase 1 / v5 / v6g 的规格与计划（已冻结，仅供回溯） |
 
-## 🗺️ 路线图（v5，方案已签收）
+## 🗺️ 路线图
 
-- [ ] **M1** 网格自适应：GridMetrics 按视口 ÷ 图标大小自动算行列，四边等距精确铺满
-- [ ] **M2** `reflow_moves` 位移清单：只有新旧位置之间的图标动，空格精确落点
-- [ ] **M3** 小组件跨度化：`WIDGET_CATALOG` 以格跨度为一等公民，碰撞 = 视觉边界
-- [ ] **M4** 位移引擎统一：去全量重建化，位置变化一律弹簧动画
-- [ ] **M5** 文件夹弹窗重做：幕布 + 桌面带内最顶 + 重命名 + 背景色 + 「＋」添加
-- [ ] **M6** 分页：图标多到放不下时页点 + 滚轮翻页（iOS 风）
-- [ ] **M7** 全量回归 + 打包 v5
-- [ ] 后续：整理模式原生能力补齐（F2 重命名 / Delete 回收站 / 剪贴板）、Ctrl+Z 撤销、多显示器、组件目录扩充
+**已交付**（版本短标签见 `src/version.py`，界面右键菜单底部可看构建时刻）：
+
+| 版本 | 内容 | 安装包 |
+|---|---|---|
+| v5 | 网格自适应 / iOS 局部让位 / 组件跨度化 / 文件夹弹窗重做 / 分页 | 1.3.0 |
+| v6 → v6g | 双模式（整理 / 原生）/ 组件入网格 / 桌面目录同步 / 壁纸保留 / Win+D 守护，以及 14 项实机反馈修复 | 1.7.0 |
+
+**v7 实施中**（规格 [docs/指导文档_v7.md](docs/指导文档_v7.md)，计划 [docs/实施计划_v7.md](docs/实施计划_v7.md)）：
+
+- [ ] **B1** 尺寸地基：`cell_from_native` 由原生图标推导格子、档位只改格内占比（`icon_fit`）、行数=纯裁剪
+- [ ] **B2** 双布局并存：网格与无界各自保存，切换零换算零清空
+- [ ] **B3** 拖拽：组件 hover 按 frame 判定 / 中心合并 · 外环让位双区模型 / 提示时机
+- [ ] **B4** 命中系统：组件与弹窗补逐像素 `WM_NCHITTEST`，透明区不再吞点击
+- [ ] **B5** 文件夹与视觉细节：图标比例、弹窗贴边、编辑控制点
+- [ ] **B6** 浮层与分页：自定义新增分页、下拉弹层配色
+- [ ] **v7.1**（延后）：组件中心 / 组件商店（模块化组件生态）
+
+更远：整理模式原生能力补齐（F2 重命名 / Delete 回收站 / 剪贴板）、Ctrl+Z 撤销、多显示器。
 
 ## ⚠️ 已知限制
 
-- 多显示器：本期仅主屏（v5 规划中）
-- 跨页拖动：分页上线前禁止（v5 M6）
-- 图标上限：单页网格容量内（分页后解除）
+- 多显示器：本期仅主屏
+- 跨页拖动：受当前页容量限制，需先翻页
+- 第三方动态壁纸（如 Wallpaper Engine）：未专门适配
 - 杀软误报：见上文打包说明
 
 ## 📄 许可证

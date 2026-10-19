@@ -4,9 +4,9 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development** (v4 delivered; v5 plan signed off and in progress: adaptive grid / iOS-style local reflow / widget span model / folder popup redesign / paging). Bug reports, ideas and discussions are welcome via Issues. See the [v5 plan doc](指导文档_网格与交互_v5.md) (Chinese).
+> 🚧 **Under active development**: current release is **v6g** (installer 1.7.0) with all 46 test files green; the **v7 spec is finalized and in implementation** (two-layer sizing / coexisting dual layouts / drag & hit-testing rework / folder & overlay polish). Bug reports and ideas are welcome via Issues — current spec: [docs/指导文档_v7.md](docs/指导文档_v7.md), plan: [docs/实施计划_v7.md](docs/实施计划_v7.md) (both Chinese).
 
-[![release](https://img.shields.io/badge/release-v0.1.4-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-28%2B%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v1.7.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-46%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -22,7 +22,10 @@ A third-party desktop organizer / beautifier for Windows (demo), in the spirit o
 | 🤏 Slide-to-rearrange | Neighboring icons elastically slide aside while you drag (true spring physics curve), snap precisely to the target cell, and slide back on cancel |
 | 📂 Drag-to-merge | Drag an icon onto another to merge into a folder; folder popup uses liquid-glass material with an emergence open/close animation; members can be dragged out / removed |
 | 🖱️ Batch operations | Rubber-band multi-select + whole-group dragging |
-| 🧩 Desktop widgets | Clock / Sticky notes (editable) / Desktop panel (search · quick folders · disks · recent downloads · weather); supports **anchored (non-floating)** mode where widgets join the grid as first-class citizens |
+| 🧩 Desktop widgets | Clock / Sticky notes (editable) / Desktop panel (search · quick folders · disks · recent downloads · weather); supports **anchored (non-floating)** mode where widgets join the grid as first-class citizens, with drag-resize and icon mutual displacement |
+| 🔀 Two modes | **Organizer mode** (native icons hidden, desktop rendering taken over) / **native mode** (free-floating): one-click switch, and each mode **keeps its own layout** independently |
+| 📑 Paging | Automatic paging when icons overflow; page dots + wheel paging, drag to the screen edge to flip |
+| 🔄 Desktop sync | Watches the desktop folder (1 s debounce): new files enter automatically, deleted items are cleaned up |
 | 🪄 Full takeover | Hides native icons and re-renders from the desktop folder clone, giving complete control over position and style (Route A); can also switch back to effects-only mode |
 | 🖥️ Custom desktop context menu | No more losing right-click in organizer mode: new folder/text file, rescan, icon size, display/personalization settings |
 | 🛡️ BandGuard daemon | Survives Win+D (show desktop) and explorer restarts — automatically re-mounts |
@@ -54,7 +57,7 @@ A third-party desktop organizer / beautifier for Windows (demo), in the spirit o
 
 ```powershell
 git clone https://github.com/a435630144/PhoneDesktopForWindow.git
-cd AndroidDesktopForWindow
+cd PhoneDesktopForWindow
 
 # Install dependencies (PySide6 only)
 pip install -r requirements.txt
@@ -64,50 +67,68 @@ python main.py
 ```
 
 Runtime data lives in `%APPDATA%\DesktopOrganizer\state.json` (layout, settings, widget visibility).
-Self-check: `python src/selftest.py` (attached / native_icons_hidden / cloned entry count).
+Self-check: `python main.py --selftest` (launch → screenshot → exit, writes `selftest_report.txt`; the packaged exe accepts `--selftest` too).
 
 > ⚠️ **First-run advice**: familiarize yourself with the tray menu's "Pause auto-creation / restore native" entry — organizer mode takes over desktop icon rendering and can restore the native desktop at any time with one click.
 
 ## 📁 Project Structure
 
 ```
-AndroidDesktopForWindow/
-├── main.py                  # Entry: single instance → tray → main window → BandGuard
+PhoneDesktopForWindow/
+├── main.py                  # Entry: crash hook → single instance → tray → main window → BandGuard
 ├── requirements.txt         # PySide6==6.10.*
 ├── assets/                  # App icon
+├── docs/                    # Specs & plans (see Documentation)
+│   ├── 指导文档_v7.md / 实施计划_v7.md
+│   ├── DESKBOX_REFERENCE.md
+│   └── archive/             # Specs of finished iterations (frozen, reference only)
 ├── src/
-│   ├── win32_layer.py       # ★ Desktop-band mounting + native icon hide/restore + z-order utils
-│   ├── band_guard.py        # ★ Win+D / explorer restart guardian
-│   ├── grid_flow.py         # ★ Icon-grid reflow engine (pure logic, zero Qt deps, unit-testable)
-│   ├── desktop_window.py    # ★ Main window: grid/drag/marquee/folder/native-icon sync
-│   ├── iconwidget.py        # ★ Icon widget: multi-property spring animations + drag payload protocol
-│   ├── folder_popup.py      # Folder popup: liquid glass + zoom emergence animation
-│   ├── effects.py           # Animation toolbox: glass backdrop/spring curve/reduced-motion
-│   ├── theme.py             # Design tokens (dark + GLASS parameters)
-│   ├── storage.py           # state.json persistence + desktop clone seeding
-│   ├── appsource.py         # Desktop file scan/clone/stable id/icon extraction
-│   ├── widget_base.py       # Widget base class (interactive focus policy + anchored/floating modes)
-│   ├── widget_layer.py      # Widget registry and default placement
-│   ├── widgets_clock.py     # Clock (display-only, NOACTIVATE)
-│   ├── widgets_notes.py     # Sticky notes (interactive, editable)
-│   ├── widgets_panel.py     # Desktop panel (search/folders/disks/downloads/weather)
-│   └── settings_dialog.py / add_apps_dialog.py / tray.py / autostart.py …
+│   ├── Core mechanics ★
+│   │   ├── win32_layer.py    # Desktop-band mounting + native icon hide/restore + z-order utils
+│   │   ├── band_guard.py     # Win+D / explorer restart guardian
+│   │   ├── desktop_window.py # Main window: grid/drag/marquee/folder/native-icon sync
+│   │   └── iconwidget.py     # Icon widget: spring animations + drag payload protocol
+│   ├── Pure logic (zero Qt deps, unit-testable)
+│   │   ├── grid_flow.py      # Reflow engine (reflow_moves / displace_cells)
+│   │   ├── grid_metrics.py   # Grid metrics (origin / cols / rows)
+│   │   ├── grid_sizing.py    # Cell size & icon tiers (being reworked in v7)
+│   │   ├── drag_merge.py     # Merge / push-away geometry
+│   │   └── widget_catalog.py # Widget span catalog
+│   ├── UI parts
+│   │   ├── folder_popup.py / folder_tint.py    # Folder popup & icon tint
+│   │   ├── widget_base.py / widget_layer.py    # Widget base & registry
+│   │   └── widgets_clock.py / widgets_notes.py / widgets_panel.py
+│   └── Infrastructure
+│       ├── storage.py / paths.py / version.py
+│       ├── appsource.py / desktop_watch.py / shell_new.py
+│       ├── effects.py / theme.py
+│       └── settings_dialog.py / add_apps_dialog.py / tray.py / autostart.py
+│           / single_instance.py / selftest.py
 ├── scripts/
-│   ├── build_portable.ps1   # PyInstaller onedir → zip
-│   └── installer.iss        # Inno Setup 6 installer
-└── tests/
-    ├── smoke_test.py        # Headless logic regression (storage/clone/layout)
-    └── test_grid_flow.py    # Grid reflow engine unit tests (28 assertions)
+│   ├── build_portable.ps1   # PyInstaller onedir → zip (needs pwsh 7)
+│   └── installer.iss        # Inno Setup 6 installer (must be UTF-8 BOM)
+├── tests/                   # 46 standalone scripts (no pytest); judge by exit code
+│   ├── smoke_test.py        # Headless logic regression (storage/clone/layout)
+│   └── test_*.py            # One per contract: reflow, dual mode, hit-testing, popup, widgets…
+└── tools/                   # Runtime probes probe*.py + packaged-build verification verify_*.py
 ```
 
 ## 🧪 Testing
 
 ```powershell
-python tests/smoke_test.py      # Headless logic regression
-python tests/test_grid_flow.py  # Reflow engine unit tests (28 assertions)
+# Headless logic regression
+python tests/smoke_test.py
+
+# Full suite: 46 standalone scripts, no pytest; judge by exit code only
+Get-ChildItem tests/test_*.py | ForEach-Object {
+    python $_.FullName
+    if ($LASTEXITCODE -ne 0) { "FAILED: $($_.Name)" }
+}
 ```
 
-`tools/` also contains runtime probes (probe14–16: animation visualization, reflow precision, takeover-mode verification) and packaged-build verification (`verify_frozen.py`). **Probe safety rule: user windows are read-only enumerated — never moved or closed** (see DEVLOG §7.2).
+> Each script ships its own `check()` + summary + exit code. **The closing text differs per file** (`ALL PASSED` / `ALL xxx PASSED` / `ALL PASS`), so never grep for a fixed string to judge success — doing so once mis-reported 41 green files as failures (DEVLOG §7.3).
+
+`tools/` also contains runtime probes (probe5–probe23: animation visualization, reflow precision, takeover mode, z-order, mouse hit-testing) and packaged-build verification (`verify_frozen.py` / `verify_live.py`). **Probe safety rule: user windows are read-only enumerated — never moved or closed** (see DEVLOG §7.2).
 
 ## 📦 Packaging
 
@@ -125,27 +146,40 @@ pwsh -File scripts/build_portable.ps1
 
 | Document | Contents |
 |---|---|
-| [DEVLOG.md](DEVLOG.md) | **Development log (authoritative)**: architecture decisions, pitfall ledger, test system, packaging & delivery, known-issues cheat sheet |
-| [指导文档_网格与交互_v5.md](指导文档_网格与交互_v5.md) | **Current-stage plan**: adaptive grid / iOS-style local reflow / widget span model / folder popup redesign — algorithm design and M1–M7 implementation plan (includes an AI handover guide) |
-| [design.md](design.md) | Phone-home-screen design doc (live reflow + anchored widgets) |
-| [DESKBOX_REFERENCE.md](DESKBOX_REFERENCE.md) | DeskBox research report and lessons applicable to this project |
+| [docs/README.md](docs/README.md) | **Documentation map**: three layers (entry / specs / archive) and the doc lifecycle rules |
+| [DEVLOG.md](DEVLOG.md) | **Development log (authoritative ledger)**: architecture decisions, Day 1–16 timeline, pitfall ledger, test system, packaging & delivery |
+| [HANDOVER.md](HANDOVER.md) | **Handover manual**: module map, core mechanics, safety rules, open items, takeover checklist |
+| [docs/指导文档_v7.md](docs/指导文档_v7.md) | **Current spec** (Chinese): v7 — two-layer sizing / coexisting dual layouts / drag & hit-testing / folder & overlays |
+| [docs/实施计划_v7.md](docs/实施计划_v7.md) | **Current implementation plan** (Chinese): B1 split into T1–T15 |
+| [docs/DESKBOX_REFERENCE.md](docs/DESKBOX_REFERENCE.md) | DeskBox research report and lessons applicable to this project (Chinese) |
+| [docs/archive/](docs/archive/README.md) | **Archive**: Phase 1 / v5 / v6g specs and plans (frozen, reference only) |
 
-## 🗺️ Roadmap (v5, plan signed off)
+## 🗺️ Roadmap
 
-- [ ] **M1** Adaptive grid: GridMetrics derives columns/rows from viewport ÷ icon size, evenly centered to fill the work area
-- [ ] **M2** `reflow_moves` displacement list: only icons between old and new positions move; empty cells are exact landing spots
-- [ ] **M3** Widget span model: `WIDGET_CATALOG` treats grid span as first-class; collision = visual bounds
-- [ ] **M4** Unified displacement engine: remove full rebuilds; all position changes become spring animations
-- [ ] **M5** Folder popup redesign: scrim + top of desktop band + rename + background color + "+" add panel
-- [ ] **M6** Paging: page dots + wheel paging when icons overflow one screen (iOS-style)
-- [ ] **M7** Full regression + package v5
-- [ ] Later: native desktop capability parity (F2 rename / Delete to recycle bin / clipboard), Ctrl+Z undo, multi-monitor, expanded widget catalog
+**Delivered** (short version tag lives in `src/version.py`; the build timestamp is shown at the bottom of the right-click menu):
+
+| Version | Highlights | Installer |
+|---|---|---|
+| v5 | Adaptive grid / iOS-style local reflow / widget span model / folder popup redesign / paging | 1.3.0 |
+| v6 → v6g | Two modes (organizer / native) / widgets in grid / desktop folder sync / wallpaper preserved / Win+D guardian, plus 14 field-reported fixes | 1.7.0 |
+
+**v7 in progress** (spec: [docs/指导文档_v7.md](docs/指导文档_v7.md), plan: [docs/实施计划_v7.md](docs/实施计划_v7.md)):
+
+- [ ] **B1** Sizing foundation: `cell_from_native` derives cells from the native icon size, tiers only change in-cell ratio (`icon_fit`), row count = pure cropping
+- [ ] **B2** Coexisting layouts: grid and free-floating each persist their own layout; switching never converts or clears
+- [ ] **B3** Dragging: widget hover judged by frame / center-merge vs outer-ring push-away zones / hint timing
+- [ ] **B4** Hit-testing: per-pixel `WM_NCHITTEST` for widgets and popups so transparent areas stop swallowing clicks
+- [ ] **B5** Folder & visual polish: icon proportions, popup edge placement, edit handles
+- [ ] **B6** Overlays & paging: custom page creation, combo popup styling
+- [ ] **v7.1** (deferred): widget hub / widget store (modular ecosystem)
+
+Further out: native capability parity (F2 rename / Delete to recycle bin / clipboard), Ctrl+Z undo, multi-monitor.
 
 ## ⚠️ Known Limitations
 
-- Multi-monitor: primary screen only this iteration (planned for v5)
-- Cross-page dragging: disabled until paging ships (v5 M6)
-- Icon capacity: limited to one screen's grid capacity (lifted with paging)
+- Multi-monitor: primary screen only
+- Cross-page dragging: limited to the current page's capacity; flip first
+- Third-party live wallpapers (e.g. Wallpaper Engine): not specifically adapted
 - Antivirus false positives: see packaging notes above
 
 ## 📄 License
