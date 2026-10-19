@@ -224,6 +224,13 @@ class SettingsDialog(QDialog):
         self.chk_autoclone.toggled.connect(self._apply_auto_clone)
         form.addRow("自动克隆：", self.chk_autoclone)
 
+        # v6 §7.4：监听桌面目录（QFileSystemWatcher = ReadDirectoryChangesW），
+        # debounce 1s 后增量同步——只增删差异，不重排用户摆好的图标
+        self.chk_autosync = QCheckBox("自动同步桌面文件变动（新增 / 删除 / 重命名 1 秒内生效）")
+        self.chk_autosync.setChecked(bool(self.storage.get_setting("auto_sync_desktop")))
+        self.chk_autosync.toggled.connect(self._apply_auto_sync)
+        form.addRow("自动同步：", self.chk_autosync)
+
         self.chk_widgets = QCheckBox("在桌面显示小组件（时钟 / 便签 / 桌面面板）")
         self.chk_widgets.setChecked(bool(self.storage.get_setting("show_widgets")))
         self.chk_widgets.toggled.connect(self._apply_widgets)
@@ -339,6 +346,13 @@ class SettingsDialog(QDialog):
         if checked:
             self.storage.ensure_desktop_clone()
             self.window.rebuild()
+
+    def _apply_auto_sync(self, checked):
+        """v6 §7.4：启停桌面目录监听（窗口持有 DesktopWatcher）。"""
+        self.storage.set_setting("auto_sync_desktop", bool(checked))
+        hook = getattr(self.window, "set_auto_sync", None)
+        if hook is not None:
+            hook(bool(checked))
 
     def _rescan(self):
         added, removed = self.window.rescan_desktop()

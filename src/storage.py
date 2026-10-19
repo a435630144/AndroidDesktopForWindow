@@ -34,6 +34,8 @@ DEFAULT_SETTINGS = {
     "extra_pages": [],         # 无界模式空白页页码列表（如 [3,5]）
     "takeover_desktop": True,  # 「接管系统桌面」合并开关（替代 hide_native_icons
                                # 语义入口；旧键仍兼容读取）
+    "auto_sync_desktop": True,  # 监听桌面目录自动同步（v6 §7.4：新增/删除/
+                                # 重命名 debounce 1s 后增量更新，不重排已有布局）
     "columns": "auto",         # 每行图标数："auto"=按工作区尺寸自动计算（M1 GridMetrics，
                                # 指导文档 §1：四边等距铺满）；或整数（>=2）手动覆盖列数
                                # （设置高级选项，rows 始终自动）
@@ -443,6 +445,62 @@ class Storage:
         self.pack_layout()
         self.save()
         return added, before - (len(self._data["layout"]) - added)
+
+    def sync_desktop_incremental(self):
+        """自动同步（v6 §7.4）：文件系统事件触发的增量 diff。
+
+        与 rescan_desktop 的关键区别：**不调 pack_layout**。事件是被动发生的
+        （下载保存 / 删除 / 重命名），不该把用户摆好的图标重排一遍；新增条目
+        走 add_app 的落点逻辑（网格 = 首个空位；无界 = free_slot）。
+
+        1:1 增删视为「重命名」，新条目继承旧条目的位置（改个名不该换位置）；
+        2:2 及以上不做配对，避免把无关文件错配到别人位置上。
+
+        返回 (added, removed_ids)。
+        """
+        from . import appsource
+        files = appsource.scan_desktop_files()
+        live_ids = {f["id"] for f in files}
+
+        moved, removed_ids, kept = [], [], []
+        for e in self._data["layout"]:
+            app = e.get("app") or {}
+            is_desktop_file = (e.get("type") == "app"
+                               and app.get("kind") == "file")
+            if is_desktop_file and e.get("id") not in live_ids:
+                moved.append((e.get("col"), e.get("row"),
+                              e.get("fx"), e.get("fy")))
+                removed_ids.append(e.get("id"))
+                continue
+            kept.append(e)
+        if removed_ids:
+            self._data["layout"] = kept
+
+        existing = {(e.get("app") or {}).get("target")
+                    for e in kept if e.get("type") == "app"}
+        new_ids = []
+        for f in files:
+            if f["target"] in existing:
+                continue
+            entry = self.add_app(f)
+            if entry is not None and entry.get("id") not in new_ids:
+                new_ids.append(entry.get("id"))
+
+        # 重命名：恰好 1 删 1 增 → 继承位置（双模式各写各的坐标）
+        if len(new_ids) == 1 and len(moved) == 1:
+            col, row, fx, fy = moved[0]
+            for e in self._data["layout"]:
+                if e.get("id") != new_ids[0]:
+                    continue
+                if fx is not None and fy is not None:
+                    e["fx"], e["fy"] = int(fx), int(fy)
+                if col is not None and row is not None:
+                    e["col"], e["row"] = int(col), int(row)
+                break
+
+        if new_ids or removed_ids:
+            self.save()
+        return len(new_ids), removed_ids
 
     def ensure_desktop_clone(self, force: bool = False):
         """启动 / 开启整理模式时调用：把桌面文件播种进网格。

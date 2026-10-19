@@ -89,6 +89,11 @@ def main() -> int:
     # 设置里开启了自启但注册表项丢失（如换目录运行）时自动修复
     autostart.sync_on_startup(storage)
 
+    # v6 §7.4：桌面目录自动同步（QFileSystemWatcher + 1s debounce，
+    # 增量增删不重排；设置里可关）
+    window.set_auto_sync(bool(storage.get_setting("auto_sync_desktop")))
+    app.aboutToQuit.connect(lambda: window.set_auto_sync(False))
+
     # 首次运行：弹一条托盘气泡说明基本用法
     if storage.get_setting("first_run"):
         storage.set_setting("first_run", False)

@@ -83,6 +83,9 @@ class DesktopWindow(QWidget):
         self.setWindowTitle("桌面整理Demo")
         # 桌面带守护：Win+D / 切屏等导致漂移时自动拉回桌面带
         self._band_guard = BandGuard(self, on_tick=self._on_guard_tick)
+        # 桌面目录监听（v6 §7.4）：由 set_auto_sync 按设置启停，不在构造时启动
+        # （测试 / 探针直接构造窗口，不该被动起文件监听）
+        self._watcher = None
         # 载入时规整一次，避免越界 / 重叠
         self.storage.compact_layout()
         self.rebuild(stagger=True)  # 首次显示错峰淡入
@@ -1404,6 +1407,33 @@ class DesktopWindow(QWidget):
         self.storage.save()
         # M4：增量新增（新图标淡入；指定格被占时的挤走位移走动画）
         self._sync_structure()
+
+    # ---------- 桌面目录自动同步（v6 §7.4） ----------
+    def set_auto_sync(self, on: bool):
+        """启停桌面目录监听（设置项 / 启动时按 auto_sync_desktop 决定）。
+
+        监听走 QFileSystemWatcher（Windows 底层即 ReadDirectoryChangesW，
+        零新增依赖），debounce 1s 后调 storage.sync_desktop_incremental()。
+        """
+        from .desktop_watch import DesktopWatcher
+        if on:
+            if self._watcher is None:
+                self._watcher = DesktopWatcher(
+                    self.storage, on_sync=self._on_desk_sync, parent=self)
+            else:
+                self._watcher.start()
+        elif self._watcher is not None:
+            self._watcher.stop()
+
+    def _on_desk_sync(self, added: int, removed: int):
+        """桌面目录变动：增量补/删图标。
+
+        只做结构同步（_sync_structure 走弹簧动画），**不重排、不翻页**——
+        文件系统事件是被动发生的，用户摆放的位置必须原样保留。
+        """
+        self._sync_structure()
+        self._cull_page_icons()
+        self.storage.save()
 
     def rescan_desktop(self):
         """重新扫描桌面文件：补新增、清丢失（仅布局，不动文件）。
