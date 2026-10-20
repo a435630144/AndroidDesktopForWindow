@@ -397,8 +397,46 @@ class SettingsDialog(QDialog):
         self.lbl_grid_dims.setObjectName("rowHint")
         self._row(c, card, "当前网格", self.lbl_grid_dims,
                   "列数越少格子越大；行数只裁剪，不改格子")
+
+        # ③ 网格原点（v7 §3.2 / 反馈 21）
+        # 计划里 T13 把它归在「开发者组」，落地时改放「网格」卡片：原点是
+        # 用户在设置里要调的几何项（与行列同级），藏在调试组里找不到。
+        origin_manual = self.storage.grid_origin_mode() == "manual"
+        self.chk_origin = Switch()
+        self.chk_origin.setChecked(origin_manual)
+        self.chk_origin.toggled.connect(self._apply_origin_mode)
+        self._row(c, card, "手动定位网格原点",
+                  self.chk_origin,
+                  "关闭 = 四边等距居中；开启后可用下面两个数值或右键「定位网格原点」")
+
+        self.sp_ox = QSpinBox()
+        self.sp_ox.setRange(0, 9999)
+        self.sp_ox.setSingleStep(2)
+        self.sp_ox.setSuffix(" px")
+        self.sp_ox.setFixedWidth(96)
+        self.sp_ox.setEnabled(origin_manual)
+        self.sp_ox.valueChanged.connect(self._apply_origin_spin)
+        self._row(c, card, "原点 X", self.sp_ox,
+                  "网格左上角的横坐标；超出屏幕会被夹回屏内")
+
+        self.sp_oy = QSpinBox()
+        self.sp_oy.setRange(0, 9999)
+        self.sp_oy.setSingleStep(2)
+        self.sp_oy.setSuffix(" px")
+        self.sp_oy.setFixedWidth(96)
+        self.sp_oy.setEnabled(origin_manual)
+        self.sp_oy.valueChanged.connect(self._apply_origin_spin)
+        self._row(c, card, "原点 Y", self.sp_oy,
+                  "网格左上角的纵坐标；与 X 一起决定整张网格的位置")
+
+        self.btn_reset_origin = QPushButton("重置网格位置")
+        self.btn_reset_origin.setEnabled(origin_manual)
+        self.btn_reset_origin.clicked.connect(self._reset_grid_origin)
+        self._row(c, card, "网格位置", self.btn_reset_origin,
+                  "回到四边等距居中（注意：居中值不等于边距，格子越大越靠里）")
         lay.addWidget(card)
         self._refresh_grid_spins()
+        self._sync_origin_controls()
 
         card, c = self._card(body, "翻页与排列")
         self.cmb_page_axis = QComboBox()
@@ -635,6 +673,66 @@ class SettingsDialog(QDialog):
         self.storage.save()
         self._refresh_grid()
         self._refresh_grid_spins()
+
+    # ---------- 网格原点（v7 §3.2 / 反馈 21） ----------
+    def _sync_origin_controls(self):
+        """同步原点开关 / 两个 spin / 重置按钮的状态与显示值。
+
+        spin 显示的是**实际生效**的原点（快照的 ox/oy），不是 storage 里
+        存的原始值——用户填 9999 时屏幕上是夹紧后的位置，界面必须一致。
+        """
+        chk = getattr(self, "chk_origin", None)
+        if chk is None:
+            return
+        manual = self.storage.grid_origin_mode() == "manual"
+        ox, oy = grid_flow.origin()          # 生效值（快照已按越界夹紧）
+        if manual and grid_flow.current_metrics() is None:
+            # 快照还没算出来（悬浮兜底 / 未挂载就开设置）：显示用户存的值，
+            # 否则界面会显示一个与 storage 无关的常量，用户以为设置没生效
+            ox, oy = self.storage.grid_origin() or (ox, oy)
+        self._origin_syncing = True
+        try:
+            chk.blockSignals(True)
+            chk.setChecked(manual)
+            chk.blockSignals(False)
+            for sp, v in ((self.sp_ox, ox), (self.sp_oy, oy)):
+                sp.blockSignals(True)
+                sp.setEnabled(manual)
+                sp.setValue(max(0, min(int(v), sp.maximum())))
+                sp.blockSignals(False)
+            self.btn_reset_origin.setEnabled(manual)
+        finally:
+            self._origin_syncing = False
+
+    def _apply_origin_mode(self, checked):
+        """开关：开 = 以当前生效原点为起点转手动；关 = 回居中。"""
+        if getattr(self, "_origin_syncing", False):
+            return
+        if checked:
+            self.storage.set_grid_origin("manual",
+                                         int(self.sp_ox.value()),
+                                         int(self.sp_oy.value()))
+        else:
+            self.storage.reset_grid_origin()
+        self._refresh_grid()
+        self._sync_origin_controls()
+
+    def _apply_origin_spin(self, _value):
+        if getattr(self, "_origin_syncing", False):
+            return
+        if not self.chk_origin.isChecked():
+            return
+        self.storage.set_grid_origin("manual",
+                                     int(self.sp_ox.value()),
+                                     int(self.sp_oy.value()))
+        self._refresh_grid()
+        self._sync_origin_controls()
+
+    def _reset_grid_origin(self):
+        """重置网格位置：两键一起清空 -> 回居中（与桌面右键同一入口语义）。"""
+        self.storage.reset_grid_origin()
+        self._refresh_grid()
+        self._sync_origin_controls()
 
     def _apply_page_axis(self, _index):
         axis = self.cmb_page_axis.currentData() or "horizontal"

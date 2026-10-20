@@ -256,6 +256,9 @@ SETTINGS_QSS = (
     " padding: 6px 14px; font-size: 12px; font-family: %(fam)s;}"
     "QPushButton:hover{background: rgba(255,255,255,28);}"
     "QPushButton:pressed{background: rgba(255,255,255,10);}"
+    # 禁用态：自动模式下「重置网格位置」不该看起来能点（v7 原点组）
+    "QPushButton:disabled{color: rgba(150,156,166,120);"
+    " background: rgba(255,255,255,6); border-color: rgba(255,255,255,14);}"
     "QPushButton#primaryButton{background: rgb(46,120,246); border: none;"
     " color: white; font-weight: 600; padding: 7px 22px;}"
     "QPushButton#primaryButton:hover{background: rgb(64,138,255);}"

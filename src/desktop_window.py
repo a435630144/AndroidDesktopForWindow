@@ -63,6 +63,9 @@ class DesktopWindow(QWidget):
         self._band_start = None     # 橡皮筋起点（控件坐标）
         self._band_rect = None
         self._band_moved = False
+        # v7 §3.2 / 反馈 21：网格原点取点态（等用户点一下桌面确定左上角）
+        self._picking_origin = False
+        self._grid_flash = False    # 取点 / 重置后短时显示网格线（ms 级反馈）
         # v6 §5.2：拖动中目标 cell 红框高亮（判定结果可见、可预期）
         self._hl_cell = None
         self.icons = {}
@@ -260,11 +263,15 @@ class DesktopWindow(QWidget):
             if self._band_rect is not None:
                 self._paint_band(event)
             if self._organize_mode():
-                if self._dev_mode():
+                if self._dev_mode() or self._grid_flash:
                     self._paint_grid_debug()
                 self._paint_dots()
             if hl:
                 self._paint_highlight(event)   # v6 §5.2：目标格红框置顶
+            if self._picking_origin:
+                if not self._dev_mode() and not self._grid_flash:
+                    self._paint_grid_debug()   # 取点态先把网格显出来再点
+                self._paint_pick_hint()        # 提示条最后画（不能被网格盖住）
             return  # 除上述元素外全透明，融入壁纸
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -280,6 +287,28 @@ class DesktopWindow(QWidget):
             self._paint_dots()
         if hl:
             self._paint_highlight(event)
+
+    def _paint_pick_hint(self):
+        """取点态提示条：屏幕顶部居中胶囊「点击确定网格左上角 · Esc 取消」。
+
+        不用 toast/子窗口：分层窗口里多一个顶层窗口就多一份命中/z-order 负担，
+        自绘在本窗口最上层最省事。
+        """
+        text = "点击确定网格左上角位置  ·  Esc 取消"
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        font = theme.ui_font(13)
+        font.setBold(True)
+        p.setFont(font)
+        fm = p.fontMetrics()
+        w = fm.horizontalAdvance(text) + 34
+        h = 34
+        r = QRect((self.width() - w) // 2, 18, w, h)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(0, 0, 0, 180))
+        p.drawRoundedRect(r, h // 2, h // 2)
+        p.setPen(QColor(255, 255, 255, 235))
+        p.drawText(r, Qt.AlignCenter, text)
 
     def _paint_highlight(self, event):
         """v6 §5.2：目标 cell 红框（2px 描边 + 8% 红填充，圆角与网格语言一致）。"""
@@ -310,6 +339,11 @@ class DesktopWindow(QWidget):
 
     # ---------- 橡皮筋框选（整理模式；原生模式事件已穿透给真实桌面） ----------
     def mousePressEvent(self, e):
+        # v7 §3.2：取点态优先——**必须在最前面**，否则这一次按下会被当作
+        # 框选起点 / 翻页 / 关弹窗，用户点了桌面却只关掉一个弹窗。
+        if self._picking_origin:
+            self._finish_pick(e.position().toPoint())
+            return
         # 新一次按下必然不在拖动中：清掉可能因信号丢失而卡住的拖动状态
         # （_drag_active 卡死会让 nativeEvent 全窗口 HTCLIENT，桌面点不动；
         #  _drag_multi 卡死会让单选拖动也走多选平移分支）
@@ -411,7 +445,9 @@ class DesktopWindow(QWidget):
             except Exception:
                 return super().nativeEvent(eventType, message)
             if msg.message == WM_NCHITTEST:
-                if self._drag_active or self._ole_active:
+                if self._drag_active or self._ole_active or self._picking_origin:
+                    # 取点态：全窗接收，否则原生模式下空白区是 HTTRANSPARENT，
+                    # 用户点桌面根本传不到本窗口（"定位了没反应"）
                     return True, HTCLIENT
                 x = ctypes.c_int16(msg.lParam & 0xFFFF).value
                 y = ctypes.c_int16((msg.lParam >> 16) & 0xFFFF).value
@@ -513,6 +549,60 @@ class DesktopWindow(QWidget):
         self._update_grid_metrics()
         if self._widget_layer is not None:
             self._widget_layer.apply_layout_mode()
+        self.update()
+
+    # ---------- 网格原点：手动定位 / 重置（v7 §3.2 / 反馈 21） ----------
+    def current_origin(self):
+        """当前网格原点 (x, y)——读快照，未就绪时回退桌面默认边距。"""
+        return grid_flow.origin()
+
+    def _begin_pick_origin(self):
+        """进入取点态：下一次左键按下即网格左上角（落点在 _finish_pick）。
+
+        不要求已挂载桌面层：悬浮兜底时窗口也是铺满工作区的普通窗口，
+        点上去照样能取点（挂载与否都不影响本流程）。
+        """
+        self._picking_origin = True
+        self.setCursor(Qt.CrossCursor)
+        self.update()                       # 画提示条 + 网格
+        return True
+
+    def _cancel_pick_origin(self):
+        """退出取点态（Esc / 右键菜单再次触发）——不改 storage。"""
+        self._picking_origin = False
+        self.unsetCursor()
+        self.update()
+
+    def _finish_pick(self, pos):
+        """取点完成：pos（控件坐标）落成手动原点 -> 重排 -> 落盘。"""
+        x, y = int(pos.x()), int(pos.y())
+        self._picking_origin = False
+        self.unsetCursor()
+        self.storage.set_grid_origin("manual", x, y)
+        self.refresh_grid()                 # 重算快照 + 重建 + 组件落位
+        self.storage.save()
+        self._flash_grid_debug(600)
+        return x, y
+
+    def _reset_grid_origin(self):
+        """重置网格位置：两键一起清空 -> 回居中（唯一重置入口）。"""
+        self.storage.reset_grid_origin()
+        self.refresh_grid()
+        self.storage.save()
+
+    def _flash_grid_debug(self, ms=600):
+        """短时显示网格线（取点 / 重置后的几何反馈，不常驻）。
+
+        dev_mode 常开时网格本来就画着，不必再闪。
+        """
+        if self._dev_mode():
+            return
+        self._grid_flash = True
+        self.update()
+        QTimer.singleShot(int(ms), self._end_grid_flash)
+
+    def _end_grid_flash(self):
+        self._grid_flash = False
         self.update()
 
     def resizeEvent(self, event):
@@ -2196,6 +2286,13 @@ class DesktopWindow(QWidget):
             if free_now:
                 menu.addAction("添加空白页", self._add_blank_page)
                 menu.addAction("删除当前空白页", self._remove_blank_page)
+            # v7 §3.2 / 反馈 21：网格原点。定位项**常驻**（这是进入手动模式的
+            # 唯一快捷入口）；重置项只在手动模式下出现（自动模式下无意义）。
+            menu.addSeparator()
+            menu.addAction("定位网格原点（点击桌面确定）",
+                           self._begin_pick_origin)
+            if self.storage.grid_origin_mode() == "manual":
+                menu.addAction("重置网格位置", self._reset_grid_origin)
             menu.addSeparator()
 
         menu.addAction("添加应用…", self.openAddAppsRequested.emit)
@@ -2429,6 +2526,10 @@ class DesktopWindow(QWidget):
         self.rebuild(stagger=True)
 
     def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Escape and self._picking_origin:
+            # 取点态下 Esc 只取消取点，不顺带把桌面藏起来（否则用户丢了上下文）
+            self._cancel_pick_origin()
+            return
         if e.key() == Qt.Key_Escape:
             self.hide_desktop()
         elif e.key() == Qt.Key_Delete and self._selected:

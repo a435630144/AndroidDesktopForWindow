@@ -266,6 +266,65 @@ def main(app):
     check("U13 勾回自动写 grid_dims_mode=auto",
           st.grid_dims_mode() == "auto", st.grid_dims_mode())
 
+    # ---------- U14 网格原点（v7 §3.2 / 反馈 21） ----------
+    check("U14 原点控件齐全（开关 + X/Y + 重置）",
+          all(getattr(dlg, n, None) is not None
+              for n in ("chk_origin", "sp_ox", "sp_oy", "btn_reset_origin")),
+          "%s" % [n for n in ("chk_origin", "sp_ox", "sp_oy",
+                              "btn_reset_origin")
+                  if getattr(dlg, n, None) is None])
+    if getattr(dlg, "chk_origin", None) is not None:
+        check("U14 自动模式下原点开关关闭、spin 与按钮禁用",
+              (not dlg.chk_origin.isChecked())
+              and not dlg.sp_ox.isEnabled()
+              and not dlg.sp_oy.isEnabled()
+              and not dlg.btn_reset_origin.isEnabled(),
+              "chk=%s x_en=%s btn_en=%s" % (dlg.chk_origin.isChecked(),
+                                            dlg.sp_ox.isEnabled(),
+                                            dlg.btn_reset_origin.isEnabled()))
+        # 开 -> manual 两键落盘，spin 解禁
+        dlg.chk_origin.setChecked(True)
+        app.processEvents()
+        check("U14 开手动定位写 grid_origin_mode=manual",
+              st.grid_origin_mode() == "manual", st.grid_origin_mode())
+        check("U14 开后 spin / 重置按钮解禁",
+              dlg.sp_ox.isEnabled() and dlg.btn_reset_origin.isEnabled(),
+              "x_en=%s btn_en=%s" % (dlg.sp_ox.isEnabled(),
+                                     dlg.btn_reset_origin.isEnabled()))
+        check("U14 开后两键同时写入",
+              isinstance(st.get_setting("grid_origin"), list)
+              and len(st.get_setting("grid_origin")) == 2,
+              "%r" % (st.get_setting("grid_origin"),))
+        # 改 X -> storage 立即跟随
+        before_y = dlg.sp_oy.value()
+        dlg.sp_ox.setValue(100)
+        app.processEvents()
+        check("U14 改 X 立刻落盘",
+              st.grid_origin() == (100, before_y),
+              "%r vs (100,%d)" % (st.grid_origin(), before_y))
+        # spin 显示的是**生效值**：有快照时 = 夹紧后的 ox/oy；无快照（本测试的
+        # FakeWindow 不算几何）时退回 storage 的存储值，不能显示无关常量
+        expect = st.grid_origin() or grid_flow.origin()
+        check("U14 spin 显示生效原点（无快照退 storage）",
+              (dlg.sp_ox.value(), dlg.sp_oy.value()) == expect,
+              "%s vs %s" % ((dlg.sp_ox.value(), dlg.sp_oy.value()), expect))
+        # 重置 -> 两键清空 + 回居中显示
+        dlg.btn_reset_origin.click()
+        app.processEvents()
+        check("U14 重置后 mode=auto", st.grid_origin_mode() == "auto",
+              st.grid_origin_mode())
+        check("U14 重置后 origin is None", st.grid_origin() is None,
+              "%r" % (st.grid_origin(),))
+        check("U14 重置后开关回自动态、按钮禁用",
+              (not dlg.chk_origin.isChecked())
+              and not dlg.btn_reset_origin.isEnabled(),
+              "chk=%s btn_en=%s" % (dlg.chk_origin.isChecked(),
+                                    dlg.btn_reset_origin.isEnabled()))
+        check("U14 重置后 spin 回居中值",
+              (dlg.sp_ox.value(), dlg.sp_oy.value()) == grid_flow.origin(),
+              "%s vs %s" % ((dlg.sp_ox.value(), dlg.sp_oy.value()),
+                            grid_flow.origin()))
+
     # ---------- U12 高度受控 ----------
     dlg.show()
     app.processEvents()

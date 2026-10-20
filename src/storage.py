@@ -376,9 +376,14 @@ class Storage:
         """manual 模式的目标行数；None / 非法 -> None（回自动）。"""
         return _as_positive_int(self.get_setting("grid_rows"))
 
+    def grid_origin_mode(self) -> str:
+        """原点模式："auto"（居中，默认）| "manual"（用 grid_origin）。"""
+        raw = self.get_setting("grid_origin_mode")
+        return "manual" if str(raw).strip().lower() == "manual" else "auto"
+
     def grid_origin(self):
         """manual 原点的 (x, y)；未设置/非法 -> None（回居中）。"""
-        if str(self.get_setting("grid_origin_mode") or "auto").lower() != "manual":
+        if self.grid_origin_mode() != "manual":
             return None
         raw = self.get_setting("grid_origin")
         if isinstance(raw, (list, tuple)) and len(raw) == 2:
@@ -387,6 +392,39 @@ class Storage:
             except (TypeError, ValueError):
                 return None
         return None
+
+    def set_grid_origin(self, mode, x=None, y=None):
+        """**唯一写入点**：原点两键一起写（v7 §3.2 / 反馈 21）。
+
+        - `set_grid_origin("manual", 100, 50)` -> 手动定位（非整数按 0 处理，
+          真正的越界夹紧留给 `grid_sizing.solve_dims`，那里才有网格几何）；
+        - `set_grid_origin("auto")` -> 等价 `reset_grid_origin()`。
+
+        两键必须同时写：只写 origin 不改 mode，`grid_origin()` 会返回 None，
+        用户看到"设了没生效"；反之只改 mode 会用到上一次的旧坐标。
+        """
+        s = self._data.setdefault("settings", {})
+        if str(mode).strip().lower() != "manual":
+            s["grid_origin_mode"] = "auto"
+            s["grid_origin"] = None
+            self.save()
+            return None
+        try:
+            ox, oy = int(x or 0), int(y or 0)
+        except (TypeError, ValueError):
+            ox, oy = 0, 0
+        s["grid_origin_mode"] = "manual"
+        s["grid_origin"] = [ox, oy]
+        self.save()
+        return ox, oy
+
+    def reset_grid_origin(self):
+        """重置到居中（**唯一**把两键一起清空的入口）。
+
+        注意"重置"不等于回到 (26, 22) 边距——居中值由 `solve_dims(origin=None)`
+        按当前行列与工作区现算，格子越大居中越靠里。
+        """
+        return self.set_grid_origin("auto")
 
     # ---------- 布局辅助 ----------
     def find_entry(self, entry_id):

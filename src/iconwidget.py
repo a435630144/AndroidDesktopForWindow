@@ -541,7 +541,32 @@ class AppIcon(QWidget):
         return [fm.elidedText(l, Qt.ElideRight, width) for l in lines]
 
     # ---------- 鼠标 ----------
+    def _picking_origin(self) -> bool:
+        """宿主是否处于「取点网格原点」态（v7 §3.2）。
+
+        取点态下点图标 = 在图标那个位置定原点，**不许**启动应用/开文件夹/
+        改选中——否则用户往图标附近点一下就误启动了一个程序。
+        """
+        try:
+            return bool(getattr(self.window(), "_picking_origin", False))
+        except RuntimeError:
+            return False
+
+    def _forward_pick(self, e):
+        """把这一次按下转交给桌面窗口的取点逻辑（控件坐标已换算）。"""
+        try:
+            win = self.window()
+            finish = getattr(win, "_finish_pick", None)
+            if callable(finish):
+                pos = self.mapTo(win, e.position().toPoint())
+                finish(pos)
+        except RuntimeError:
+            pass
+
     def mousePressEvent(self, e):
+        if self._picking_origin():
+            self._forward_pick(e)
+            return
         if e.button() == Qt.LeftButton:
             self._press_pos = e.pos()
             self._dragged = False
@@ -853,6 +878,9 @@ class AppIcon(QWidget):
             pass
 
     def mouseDoubleClickEvent(self, e):
+        if self._picking_origin():
+            self._forward_pick(e)   # 取点态双击也只定点，不启动应用
+            return
         if self.is_folder:
             self.pulse()
             self.folderClicked.emit(self.entry["id"])
