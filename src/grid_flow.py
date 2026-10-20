@@ -536,6 +536,27 @@ def local_row(row: int, rpp: int = 0) -> int:
     return max(0, int(row)) % rpp
 
 
+def entry_page(storage, entry) -> int:
+    """条目所属页（**双坐标分派**，v7 B2 / 反馈 13）。
+
+    网格模式：`page_of(row)`——row 是全局行，天然带页。
+    无界模式：`entry["fpage"]`（无界页号）；老数据没有 fpage 时退回
+    `page_of(row)`（迁移期不跳页）。
+
+    为什么不能让无界模式继续拿 row 当页载体：row 是**网格坐标**，无界
+    松手写 row 会把用户整理好的网格行号冲掉——这正是"切回网格一堆
+    cell 重叠"的另一半病根（反馈 13）。
+    """
+    if free_mode(storage):
+        raw = entry.get("fpage")
+        if not isinstance(raw, bool):
+            try:
+                return max(0, int(raw))
+            except (TypeError, ValueError):
+                pass
+    return page_of(int(entry.get("row", 0) or 0))
+
+
 def page_row_range(page: int, rpp: int, rs: int = 1) -> Tuple[int, int]:
     """某页可容纳 rs 行跨度组件的全局行范围 [lo, hi]（组件不越页底）。"""
     rpp = max(1, int(rpp))
@@ -705,6 +726,12 @@ def page_count(storage, rpp: int = 0) -> int:
         _cs, rs = widget_span(storage, w)
         max_row = max(max_row, int(w.get("row", 0) or 0) + rs - 1)
     n = page_number(max_row, rpp)
+    # v7 B2：无界页号（fpage）单独算总页数——无界模式把元素摆到第 3 页时
+    # 网格坐标 row 可能还在第 0 页（双坐标互不覆盖），只看 row 会漏页。
+    for e in list(getattr(storage, "layout", [])) + list(getattr(storage, "widgets", [])):
+        fp = e.get("fpage")
+        if isinstance(fp, int) and not isinstance(fp, bool):
+            n = max(n, int(fp) + 1)
     extras = extra_pages(storage)
     if extras:
         n = max(n, extras[-1] + 1)
@@ -869,7 +896,7 @@ def entry_pos(storage, entry) -> Cell:
         entry["fx"], entry["fy"] = _page_local_pos(
             storage, int(entry.get("col", 0) or 0),
             int(entry.get("row", 0) or 0), centered=True)
-    page = page_of(int(entry.get("row", 0) or 0))
+    page = entry_page(storage, entry)
     x = int(entry.get("fx", 0) or 0)
     y = int(entry.get("fy", 0) or 0)
     dx, dy = page_offset(storage, page)
@@ -885,7 +912,7 @@ def widget_pos(storage, entry) -> Cell:
     """
     if entry.get("anchored"):
         if free_mode(storage):
-            page = page_of(int(entry.get("row", 0) or 0))
+            page = entry_page(storage, entry)
             if "fx" not in entry or "fy" not in entry:
                 # 反馈 3：未接管自动无界时，旧数据按原格点像素懒生成
                 # （不能回退 x/y，否则组件跳到窗口左上角）
@@ -914,44 +941,56 @@ def to_free_coords(storage) -> int:
         e["fx"], e["fy"] = _page_local_pos(
             storage, int(e.get("col", 0) or 0),
             int(e.get("row", 0) or 0), centered=True)
+        e.setdefault("fpage", page_of(int(e.get("row", 0) or 0)))
         n += 1
     for w in getattr(storage, "widgets", []):
         if not w.get("anchored") or ("fx" in w and "fy" in w):
             continue
         w["fx"], w["fy"] = _page_local_pos(
             storage, int(w.get("col", 0) or 0), int(w.get("row", 0) or 0))
+        w.setdefault("fpage", page_of(int(w.get("row", 0) or 0)))
         n += 1
     return n
 
 
 def to_grid_coords(storage) -> int:
-    """切回网格：按 fx/fy 反算吸附回最近格点，并清掉 fx/fy。
+    """切回网格：**只补缺、不换算、不删 fx/fy**（v7 B2 / 反馈 13）。
 
-    清空是关键：否则下次切无界时 to_free_coords 认为"已有自由坐标"
-    跳过生成，用户在网格模式下的整理就丢了（反直觉）。row 同步更新
-    （无界模式 row 只是页载体，吸附后按新格点归位）。
+    旧实现按 `fx/fy` 反算吸附回最近格点，然后 `del fx/fy`——两件事都是
+    破坏性的：
+
+    1. 用户在无界模式摆好的位置当场销毁（下次进去重新从格点生成）；
+    2. 吸附结果覆盖了整理好的 `col/row` → 切回来一堆 cell 叠在一起
+       （反馈 13 的截图就是这个）。
+
+    新契约：**双坐标只增不删**。无界模式期间从不写 `col/row`（松手只写
+    `fx/fy/fpage`），所以切回来天然就是原样，这里几乎什么都不做；只有
+    对"根本没有 col/row"的条目（并发新增 / 极旧数据）才按 fx/fy 补一次
+    反算。返回**补算个数**（正常切换恒为 0）。
     """
     n = 0
     for e in getattr(storage, "layout", []):
+        if "col" in e and "row" in e:
+            continue
         if "fx" not in e or "fy" not in e:
             continue
-        page = page_of(int(e.get("row", 0) or 0))
+        page = entry_page(storage, e)
         col, row = free_pos_cell(storage, int(e.get("fx", 0)),
                                  int(e.get("fy", 0)), page)
         e["col"], e["row"] = col, row
-        del e["fx"], e["fy"]
         n += 1
     for w in getattr(storage, "widgets", []):
-        if not w.get("anchored") or "fx" not in w or "fy" not in w:
+        if not w.get("anchored") or ("col" in w and "row" in w):
             continue
-        page = page_of(int(w.get("row", 0) or 0))
+        if "fx" not in w or "fy" not in w:
+            continue
+        page = entry_page(storage, w)
         col, row = free_pos_cell(storage, int(w.get("fx", 0)),
                                  int(w.get("fy", 0)), page)
         cs, rs = widget_span(storage, w)
         col, row = clamp_widget_cell(storage, col, row, cs, rs)
         w["col"], w["row"] = col, row
         w["x"], w["y"] = cell_pos(storage, col, row)
-        del w["fx"], w["fy"]
         n += 1
     return n
 
@@ -979,14 +1018,14 @@ def _free_taken(storage, page: int) -> list:
     cw, ch = cell_size(storage)
     out = []
     for e in getattr(storage, "layout", []):
-        if page_of(int(e.get("row", 0) or 0)) != page:
+        if entry_page(storage, e) != page:
             continue
         out.append((int(e.get("fx", 0) or 0), int(e.get("fy", 0) or 0),
                     int(e.get("fw", 0) or cw), int(e.get("fh", 0) or ch)))
     for w in getattr(storage, "widgets", []):
         if not w.get("anchored") or w.get("hidden"):
             continue
-        if page_of(int(w.get("row", 0) or 0)) != page:
+        if entry_page(storage, w) != page:
             continue
         cs, rs = widget_span(storage, w)
         out.append((int(w.get("fx", 0) or 0), int(w.get("fy", 0) or 0),

@@ -4,9 +4,9 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前版本 **v7a**（安装包 2.0.0，v7 迭代的第一个包），49 个测试文件全绿；**v7 正在实施**（尺寸两层解耦 / 双布局并存 / 拖拽与命中系统重做 / 文件夹与浮层细节），B1 尺寸地基已交付。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v7.md](docs/指导文档_v7.md)，实施计划见 [docs/实施计划_v7.md](docs/实施计划_v7.md)。
+> 🚧 **项目处于活跃开发中**：当前版本 **v7a**（安装包 2.0.0，v7 迭代的第一个包），51 个测试文件全绿；**v7 正在实施**（尺寸两层解耦 / 双布局并存 / 拖拽与命中系统重做 / 文件夹与浮层细节），B1 尺寸地基已交付。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v7.md](docs/指导文档_v7.md)，实施计划见 [docs/实施计划_v7.md](docs/实施计划_v7.md)。
 
-[![release](https://img.shields.io/badge/release-v2.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-49%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v2.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-51%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -168,7 +168,7 @@ pwsh -File scripts/build_portable.ps1
 **v7 实施中**（规格 [docs/指导文档_v7.md](docs/指导文档_v7.md)，计划 [docs/实施计划_v7.md](docs/实施计划_v7.md)）：
 
 - [x] **B1** 尺寸地基：`cell_from_native` 由原生图标推导格子、档位只改格内占比（`icon_fit`）、行数=纯裁剪、网格原点可手动定位（源码 `v7a`，待出包）
-- [ ] **B2** 双布局并存：网格与无界各自保存，切换零换算零清空
+- [x] **B2** 双布局并存：网格与无界各自保存，切换零换算零清空（含图标尺寸单源，`icon_px` 退役）
 - [ ] **B3** 拖拽：组件 hover 按 frame 判定 / 中心合并 · 外环让位双区模型 / 提示时机
 - [ ] **B4** 命中系统：组件与弹窗补逐像素 `WM_NCHITTEST`，透明区不再吞点击
 - [ ] **B5** 文件夹与视觉细节：图标比例、弹窗贴边、编辑控制点

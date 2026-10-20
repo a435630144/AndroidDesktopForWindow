@@ -63,6 +63,15 @@ DEFAULT_TIER = "medium"
 TIER_FIT = {"small": 0.42, "medium": None, "large": 0.82}
 TIER_FIT_FALLBACK = {"small": 0.42, "medium": 0.57, "large": 0.82}
 
+# v7 B2（反馈 9）：第四档「自定义」——占比由用户滑条（30%~90%）决定，
+# 存在 settings["icon_fit"]；档位本身只回答"这一档是不是用户手调的"。
+# 单独一张白名单而不是往 TIERS 里塞：TIERS 是 v6 遗留的 **widget 占格**
+# 表（cell_for_screen 等旧路径还要按档位取值），塞进去会 KeyError。
+TIER_CUSTOM = "custom"
+TIER_NAMES = ("small", "medium", "large", TIER_CUSTOM)
+TIER_FIT[TIER_CUSTOM] = None                    # 实际值由 storage.icon_fit 提供
+TIER_FIT_FALLBACK[TIER_CUSTOM] = 0.57           # 无 icon_fit 时的兜底
+
 # 行列上限：cell 只能变大不能变小，所以自动值就是上限
 MIN_COLS, MAX_COLS = 1, 24
 MIN_ROWS, MAX_ROWS = 1, 12
@@ -126,10 +135,14 @@ def cell_for_screen(W: int, H: int) -> Tuple[int, int]:
 
 
 def parse_tier(raw) -> str:
-    """档位名归一：三档之一；None/空/非法 -> 默认 medium。"""
+    """档位名归一：小/中/大/自定义四者之一；None/空/非法 -> 默认 medium。
+
+    v7 B2 起 `custom` 是**合法档位**（反馈 9）：它表示"占比由用户滑条
+    手调"，实际比例存在 `settings["icon_fit"]`，不在档位映射表里。
+    """
     if isinstance(raw, str):
         t = raw.strip().lower()
-        if t in TIERS:
+        if t in TIER_NAMES:
             return t
     return DEFAULT_TIER
 

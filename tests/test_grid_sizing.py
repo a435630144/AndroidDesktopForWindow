@@ -78,9 +78,14 @@ def main():
           "got %s" % (big,))
 
     # ---------- G4: 档位语义（v7：占比，不再是 widget/cell） ----------
-    check("三档占比常量", gs.TIER_FIT == {"small": 0.42, "medium": None,
-                                        "large": 0.82},
+    # v7 B2（反馈 9）新增第四档 custom，所以这里锁**三档子集**而不是整表
+    check("三档占比常量",
+          all(gs.TIER_FIT[k] == v for k, v in
+              (("small", 0.42), ("medium", None), ("large", 0.82))),
           "got %s" % (gs.TIER_FIT,))
+    check("第四档 custom 存在且不占固定比例",
+          gs.TIER_CUSTOM in gs.TIER_NAMES and gs.TIER_FIT.get(gs.TIER_CUSTOM) is None,
+          "got %s" % (gs.TIER_NAMES,))
     check("默认档 medium", gs.DEFAULT_TIER == "medium")
     check("尺寸单调递增",
           lo_l.widget_w < mid.widget_w < big.widget_w

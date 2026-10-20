@@ -2,9 +2,9 @@
 """v6 批次 C §1.3：双模式的窗口层行为（切换 / 自由落点 / 空白页 / 组件）。
 
 覆盖指导文档_网格与无界双模式_v6.md §1.2/§1.3 的窗口侧契约：
-  W1 切无界：图标重建为用户像素尺寸（不过三档公式），切换瞬间视觉原位
+  W1 切无界：图标尺寸**不变**（v7 B2 尺寸单源），切换瞬间视觉原位
   W2 无界松手：条目落到拖影像素位（夹紧画布），其他图标不让位
-  W3 切回网格：fx/fy 反算吸附 + 清空，往返布局守恒
+  W3 切回网格：col/row 原样（不吸附）、fx/fy 保留（v7 B2 双坐标）
   W4 无界模式让位预览空转（_reflow_preview 不改布局）
   W5 无界模式组件不占格（_widget_cells 空集）
   W6 空白页：追加 -> page_count 增长 -> 可翻页 -> 可删
@@ -87,8 +87,10 @@ def main(app):
     grid_size = (w.icons["a"].width(), w.icons["a"].height())
     w.set_layout_mode("free")
     check("W1 模式已切到 free", grid_flow.free_mode(st))
-    check("W1 图标尺寸换成用户像素体系（≠ 三档 cell 尺寸）",
-          (w.icons["a"].width(), w.icons["a"].height()) != grid_size,
+    # v7 B2（反馈 11）：尺寸单源——切模式图标像素**不许变**，否则整套图标
+    # 从 cell×占比 跳到 96px，视觉上"挤成一坨"
+    check("W1 切无界图标尺寸不变（尺寸单源）",
+          (w.icons["a"].width(), w.icons["a"].height()) == grid_size,
           "grid=%s free=%s" % (grid_size, (w.icons["a"].width(), w.icons["a"].height())))
     check("W1 切换瞬间视觉原位（无跳变）",
           all(w.icons[eid].pos() == pos_grid[eid] for eid in pos_grid),
@@ -114,7 +116,10 @@ def main(app):
         check("W2 松手落点是拖影像素位（不吸附格点）",
               (ea.get("fx"), ea.get("fy")) == (500, 300),
               "%s" % ((ea.get("fx"), ea.get("fy")),))
-        check("W2 row 置为当前页载体", ea.get("row") == 0)
+        # v7 B2：页归属写 fpage，**不动网格坐标 row**（否则切回网格会重叠）
+        check("W2 页号写 fpage 且 row 不被改写",
+              int(ea.get("fpage", -1)) == 0 and ea.get("row") == 0,
+              "fpage=%r row=%r" % (ea.get("fpage"), ea.get("row")))
         check("W2 其他图标不让位（b/c 的 fx/fy 不变）",
               before_free["b"] == (st.find_entry("b").get("fx"),
                                    st.find_entry("b").get("fy"))
@@ -139,17 +144,18 @@ def main(app):
     # ---------- W5：组件不占格 ----------
     check("W5 无界模式 _widget_cells 空集", w._widget_cells() == set())
 
-    # ---------- W3：切回网格——吸附 + 清空 + 往返守恒 ----------
+    # ---------- W3：切回网格——col/row 原样 + fx/fy 保留（v7 B2） ----------
     st.find_entry("a")["fx"], st.find_entry("a")["fy"] = 500, 300
+    cells_before_grid = cells_of(st)
     w.set_layout_mode("grid")
     check("W3 模式已切回 grid", not grid_flow.free_mode(st))
-    check("W3 fx/fy 已清空", all("fx" not in e for e in st.layout))
-    ca = cells_of(st)["a"]
-    cw, ch = grid_flow.cell_size(st)
-    ox, oy = grid_flow.origin()
-    check("W3 a 吸附到 (500,300) 对应格点",
-          ca == (int((500 - ox) / cw), int((300 - oy) / ch)), "%s" % (ca,))
-    check("W3 图标尺寸回三档体系",
+    check("W3 fx/fy 仍保留（无界摆位不丢）",
+          all(("fx" in e and "fy" in e) for e in st.layout),
+          "%s" % [(e["id"], e.get("fx")) for e in st.layout])
+    check("W3 col/row 与切走前逐条相同（不被吸附覆盖）",
+          cells_of(st) == cells_before_grid,
+          "%s vs %s" % (cells_of(st), cells_before_grid))
+    check("W3 图标尺寸仍是同一套",
           (w.icons["a"].width(), w.icons["a"].height()) == grid_size)
 
     # ---------- W6：空白页 ----------

@@ -127,9 +127,8 @@ class WidgetLayer(QObject):
         # 图标是桌面窗口子控件会被裁剪），静止态露在屏顶/屏底就是半截
         # 渲染；翻到它的页由 sync_page 显示
         if entry.get("anchored"):
-            rpp = grid_flow.rows_per_page()
-            row = int(entry.get("row", 0) or 0)
-            if grid_flow.page_of(row, rpp) != grid_flow.current_page():
+            # v7 B2：页归属走 entry_page（无界读 fpage，网格读 row）
+            if grid_flow.entry_page(self.storage, entry) != grid_flow.current_page():
                 w.hide()
         # 小组件同样纳入桌面带守护（防 Win+D 等场景漂移后盖住应用窗口）。
         # 层号 = WIDGET：必须压在整理窗口之上——整理窗口在接管模式全窗口
@@ -191,9 +190,7 @@ class WidgetLayer(QObject):
         for w in self.widgets.values():
             if not getattr(w, "anchored", False):
                 continue
-            col = int(w.entry.get("col", 0))
-            row = int(w.entry.get("row", 0))
-            on_page = grid_flow.page_of(row, rpp) == page
+            on_page = grid_flow.entry_page(self.storage, w.entry) == page
             if on_page and w.isHidden():
                 w.show()      # 滑入前先显示（隐藏窗口的动画不可见）
             # v6 §1.3：位置统一走 widget_pos——网格模式 cell_pos、
@@ -207,9 +204,7 @@ class WidgetLayer(QObject):
 
     def _cull_widget(self, w):
         """组件滑行结束：仍不在当前页就隐藏（v6 §4，防连翻误伤）。"""
-        rpp = grid_flow.rows_per_page()
-        row = int(w.entry.get("row", 0) or 0)
-        if grid_flow.page_of(row, rpp) != grid_flow.current_page():
+        if grid_flow.entry_page(self.storage, w.entry) != grid_flow.current_page():
             w.hide()
 
     def set_anchored(self, entry_id: str, on: bool):

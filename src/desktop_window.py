@@ -730,7 +730,10 @@ class DesktopWindow(QWidget):
                                  max(0, self.width() - w)))
             e["fy"] = max(0, min(int(e.get("fy", 0) or 0) + dy,
                                  max(0, canvas_h - h)))
-            e["row"] = page * rpp        # 页载体：松手即落入当前页
+            # v7 B2：页归属写 fpage，**不再改写 row**。row 是网格坐标，
+            # 无界松手去动它等于把用户整理好的网格行号悄悄冲掉
+            # （反馈 13「切回网格一堆 cell 重叠」的另一半病根）。
+            e["fpage"] = page
             moved[eid] = (e["fx"], e["fy"])
         if not moved:
             return
@@ -834,43 +837,40 @@ class DesktopWindow(QWidget):
         self._page = page
         grid_flow.set_page(page)
         self.storage.set_setting("current_page", page)
-        rpp = grid_flow.rows_per_page()
-        lo = self._page * rpp
-        hi = lo + rpp - 1
         hide_after = []
         for eid, icon in self.icons.items():
             entry = self.storage.find_entry(eid)
             if entry is None:
                 continue
-            row = int(entry.get("row", 0) or 0)
-            on_page = lo <= row <= hi
+            # v7 B2：页归属走 entry_page（无界读 fpage，网格读 row），
+            # 与 entry_pos 的定位来源保持同一套语义。
+            on_page = grid_flow.entry_page(self.storage, entry) == self._page
             if animate:
                 if on_page and icon.isHidden():
                     icon.show()          # 滑入前先显示（否则滑入不可见）
                 anim = icon.animate_to(*self._entry_pos(entry))
                 if not on_page and not icon.isHidden():
                     if anim is not None:
-                        hide_after.append((icon, row, anim))
+                        hide_after.append((icon, entry, anim))
                     else:
                         icon.hide()      # 无动画（已在位/reduced-motion）
             else:
                 icon.move(*self._entry_pos(entry))
                 icon.setVisible(on_page)
-        for icon, row, anim in hide_after:
-            anim.finished.connect(lambda icon=icon, row=row:
-                                  self._hide_if_offpage(icon, row))
+        for icon, entry, anim in hide_after:
+            anim.finished.connect(lambda icon=icon, entry=entry:
+                                  self._hide_if_offpage(icon, entry))
         if self._widget_layer is not None:
             self._widget_layer.sync_page(page)
         self.update()
 
-    def _hide_if_offpage(self, icon, row: int):
+    def _hide_if_offpage(self, icon, entry):
         """翻页滑行结束：该图标若仍不在当前页则隐藏（v6 §4）。
 
         连翻（滑行中再次翻页）时页号可能已变——以当前页为准复核，
         避免把新页图标误隐藏。
         """
-        rpp = grid_flow.rows_per_page()
-        if grid_flow.page_of(int(row), rpp) != grid_flow.current_page():
+        if grid_flow.entry_page(self.storage, entry) != grid_flow.current_page():
             icon.hide()
 
     def _cull_page_icons(self):
@@ -887,8 +887,7 @@ class DesktopWindow(QWidget):
             entry = self.storage.find_entry(eid)
             if entry is None:
                 continue
-            row = int(entry.get("row", 0) or 0)
-            icon.setVisible(grid_flow.page_of(row, rpp) == page)
+            icon.setVisible(grid_flow.entry_page(self.storage, entry) == page)
 
     def _cull_moved_icons(self, moves: dict):
         """按位移清单复核可见性（v6 §4）：落到当前页的显示、别页的隐藏。
@@ -903,8 +902,7 @@ class DesktopWindow(QWidget):
             icon = self.icons.get(eid)
             if entry is None or icon is None:
                 continue
-            row = int(entry.get("row", 0) or 0)
-            icon.setVisible(grid_flow.page_of(row, rpp) == page)
+            icon.setVisible(grid_flow.entry_page(self.storage, entry) == page)
 
     def _dot_centers(self):
         """页点圆心列表（底部居中；只有 1 页时返回空——不画点）。"""
@@ -999,14 +997,16 @@ class DesktopWindow(QWidget):
 
     # ---------- 重建 ----------
     def _icon_size(self):
-        """图标绘制边长（双模式，v6 §1.2/§1.3）。
+        """图标绘制边长（**双模式同源**，v7 B2 / 反馈 11）。
 
-        网格模式 = storage.icon_metric()（DPI × 用户缩放感知；三档 layout
-        再按 cell 比例裁 widget 整体）；无界模式 = 用户像素值 icon_px
-        **直接生效**（规格 §1.2：设置内数字输入，不过档位公式）。
+        旧实现按模式分叉：网格走 `icon_metric()`、无界直接吃 `icon_px`
+        （默认 96）。切模式那一刻图标像素突变，42 个图标一起改大小 →
+        视觉上"挤成一坨"（反馈 11）。现在两模式同一条来源——真正决定
+        视觉尺寸的是 `_icon_layout()`（cell × 占比），这里只提供
+        AppIcon 的基线边长，必须与网格模式一致。
+
+        `icon_px` 键保留（旧 state 里还有），但**不再驱动任何模式**。
         """
-        if grid_flow.free_mode(self.storage):
-            return max(24, int(self.storage.get_setting("icon_px") or 96))
         return self.storage.icon_metric()
 
     def _wire_icon(self, icon):
@@ -1060,21 +1060,20 @@ class DesktopWindow(QWidget):
 
     # ---------- 增量更新（2026-10-18 M4：去 rebuild 化） ----------
     def _icon_layout(self):
-        """网格模式图标 layout（v6 A2，指导文档 §2.2）。
+        """图标 layout（v6 A2 / v7 B1 §2.2，**双模式同源**）。
 
-        档位（storage.icon_tier）× 当前 cell（GridMetrics 快照，屏幕驱动）
+        档位（storage.icon_fit）× 当前 cell（GridMetrics 快照，屏幕驱动）
         -> grid_sizing.IconLayout；快照未就绪返回 None（回退旧 chrome 路径）。
 
-        v6 §1.3：无界模式返回 None——图标尺寸走用户像素值（icon_px）
-        直接生效 + legacy chrome 路径（AppIcon 不传 layout 的行为）。
+        v7 B2（反馈 11）：**无界模式不再返回 None**。旧实现在无界模式把
+        尺寸交给 `icon_px`，切模式 = 图标从 cell×占比 跳到 96px，整套
+        图标"挤成一坨"。现在两模式共用同一份 layout，切模式尺寸零变化。
         """
         from . import grid_sizing
-        if grid_flow.free_mode(self.storage):
-            return None
         m = grid_flow.current_metrics()
         if m is None:
             return None
-        return grid_sizing.icon_layout(m.cw, m.ch, self.storage.icon_tier())
+        return grid_sizing.icon_layout(m.cw, m.ch, self.storage.icon_fit())
 
     def _add_icon(self, entry):
         """增量新增一个图标（add_app / rescan / 文件夹提取等）。
@@ -2409,13 +2408,17 @@ class DesktopWindow(QWidget):
         self.refresh_grid()
 
     def _current_icon_tier(self):
-        """当前图标档位（v7 §3.3）：由 icon_fit 反查最近预设，自定义比例返回 None。
+        """当前图标档位（v7 §3.3）：由 icon_fit 反查最近预设。
 
         medium 的 fit 是 `native_px/cell_w`（跟随屏幕与缩放），所以不能只看
         settings 里的 `icon_tier`——那只是最近一次预设的缓存。
+        返回 None 表示"三档都不勾"（v7 B2：用户选了「自定义」档，
+        哪怕数值恰好等于某个预设，也不该勾上那个预设）。
         """
         from . import grid_sizing
         from .storage import tier_for_fit
+        if self.storage.icon_tier() == grid_sizing.TIER_CUSTOM:
+            return None
         m = grid_flow.current_metrics()
         fit = self.storage.icon_fit()
         if fit is None:
@@ -2437,7 +2440,9 @@ class DesktopWindow(QWidget):
         旧 cell 快照，看起来"改了没反应"。
         """
         from . import grid_sizing
-        self.storage.apply_icon_fit(grid_sizing.parse_fit(tier))
+        # 显式传 tier：从「自定义」切回某档时，tier_for_fit 反查可能因
+        # 数值接近而误判（v7 B2）
+        self.storage.apply_icon_fit(grid_sizing.parse_fit(tier), tier=tier)
         self.refresh_grid()
 
     def _toggle_auto_arrange(self, checked: bool):

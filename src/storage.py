@@ -360,17 +360,22 @@ class Storage:
             return grid_sizing.parse_fit(raw)
         return grid_sizing.parse_fit(self.icon_tier())
 
-    def apply_icon_fit(self, fit):
+    def apply_icon_fit(self, fit, tier=None):
         """**唯一写入点**：同时写 `icon_fit` 与 `icon_tier`。
 
-        `icon_tier` 供右键菜单勾选（`tier_for_fit` 反查最近预设），
-        自定义比例时写 None（菜单里三档都不勾）。
+        `icon_tier` 供右键菜单勾选（`tier_for_fit` 反查最近预设）；
+        v7 B2（反馈 9）起可以显式传 `tier="custom"`——用户手拖滑条到
+        0.42/0.82 附近时，`tier_for_fit` 会反查成 small/large，但用户
+        选的是「自定义」档，勾选状态必须跟着档位而不是数值。
         """
         from . import grid_sizing
         f = grid_sizing.parse_fit(fit)
         s = self._data.setdefault("settings", {})
         s["icon_fit"] = f
-        s["icon_tier"] = tier_for_fit(f) or grid_sizing.DEFAULT_TIER
+        if tier is not None:
+            s["icon_tier"] = grid_sizing.parse_tier(tier)
+        else:
+            s["icon_tier"] = tier_for_fit(f) or grid_sizing.DEFAULT_TIER
         self.save()
 
     def grid_dims_mode(self) -> str:
@@ -506,15 +511,21 @@ class Storage:
                 col, row = 0, row + 1
 
     def free_icon_box(self):
-        """无界模式图标 widget 尺寸（逻辑 px）= icon_px + legacy chrome。
+        """无界模式图标 widget 尺寸（逻辑 px）——**与网格模式同源**。
 
-        与 AppIcon 不传 layout 时的旧chrome 路径同一组数（s+24m, s+40m）
-        ——free_slot 的占位矩形要与真实图标一致，此处按同式复刻
-        （AppIcon 实例尺寸的唯一权威在 iconwidget，这里只做布局预算）。
+        v7 B2 起图标尺寸单源（cell × 占比，`grid_sizing.icon_layout`），
+        这里必须跟着同一式算：`free_slot` 用它给新条目找不重叠的空位，
+        尺寸偏小会让新图标和邻居叠在一起。旧实现按 `icon_px` 复刻
+        legacy chrome 尺寸，统一尺寸后就失配了。
         """
-        s = max(24, int(self.get_setting("icon_px") or 96))
-        m = self.icon_chrome_scale()
-        return s + int(round(24 * m)), s + int(round(40 * m))
+        from . import grid_flow, grid_sizing
+        m = grid_flow.current_metrics()
+        if m is not None:
+            lay = grid_sizing.icon_layout(m.cw, m.ch, self.icon_fit())
+        else:
+            cw, ch = grid_flow.cell_size(self)
+            lay = grid_sizing.icon_layout(cw, ch, self.icon_fit())
+        return lay.widget_w, lay.widget_h
 
     def occupant(self, col, row, exclude_id=None):
         for e in self._data["layout"]:
@@ -570,7 +581,8 @@ class Storage:
                 "app": app,
                 "apps": [],
                 "col": 0,
-                "row": page * rpp,      # 页载体：无界模式 row 只决定第几页
+                "row": page * rpp,      # 网格坐标：无界新增按当前页首行落格
+                "fpage": page,          # 无界页号（v7 B2 起与 row 分离）
                 "fx": int(fx),
                 "fy": int(fy),
             }

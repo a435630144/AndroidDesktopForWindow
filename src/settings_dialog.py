@@ -295,7 +295,7 @@ class SettingsDialog(QDialog):
         card, c = self._card(body, "图标")
         self.cmb_tier = QComboBox()
         for label, tier in (("小", "small"), ("中（= 原生）", "medium"),
-                            ("大", "large")):
+                            ("大", "large"), ("自定义", "custom")):
             self.cmb_tier.addItem(label, tier)
         cur_tier = self.storage.icon_tier()
         self.cmb_tier.setCurrentIndex(max(0, self.cmb_tier.findData(cur_tier)))
@@ -311,7 +311,9 @@ class SettingsDialog(QDialog):
         self._row(c, card, "图标大小",
                   tier_box, "只改变图标在格子里的占比，网格行列数不变")
 
-        # v7 §3.1：自定义占比（30%~90%），与三档联动
+        # v7 B2（反馈 9）：第四档「自定义」才启用滑条。三档是预设，
+        # 滑条跟着值显示但不可拖——旧实现滑条常驻可拖，用户拖完档位
+        # 显示值又跳回最近预设，看着像"逻辑有问题"。
         self.sld_icon_fit = QSlider(Qt.Horizontal)
         self.sld_icon_fit.setRange(30, 90)
         self.sld_icon_fit.setFixedWidth(190)
@@ -326,16 +328,9 @@ class SettingsDialog(QDialog):
         fb.addWidget(self.sld_icon_fit)
         fb.addWidget(self.lbl_icon_fit)
         self._row(c, card, "自定义比例",
-                  fit_box, "拖动可微调；落在三档附近即视为该档")
-
-        self.spin_icon_px = QSpinBox()
-        self.spin_icon_px.setRange(60, 256)
-        self.spin_icon_px.setValue(int(self.storage.get_setting("icon_px") or 96))
-        self.spin_icon_px.valueChanged.connect(self._apply_icon_px)
-        self._row(c, card, "无界模式图标像素",
-                  self.spin_icon_px, "仅在「无界模式」下生效")
-        self._refresh_icon_labels()
+                  fit_box, "选「自定义」后可拖动（30%~90%）；三档预设下只读")
         lay.addWidget(card)
+        self._refresh_icon_labels()
 
         card, c = self._card(body, "外观")
         self.sld_opacity = QSlider(Qt.Horizontal)
@@ -563,11 +558,25 @@ class SettingsDialog(QDialog):
     def _refresh_icon_labels(self):
         """图标档位说明：显示当前占比与推导出的图标像素（v7 §3.1）。"""
         from . import grid_sizing
+        # 滑条可用性先于几何算（几何快照未就绪时下面会 early return，
+        # 但"三档预设下滑条只读"这条与几何无关，必须先生效）
+        sld = getattr(self, "sld_icon_fit", None)
+        if sld is not None:
+            sld.setEnabled(self.storage.icon_tier() == "custom")
         m = grid_flow.current_metrics()
         if m is None:
+            # 快照未就绪（对话框先于几何创建 / 悬浮兜底）：至少把滑条
+            # 摆到 storage 里的占比上，别让它停在 0% 造成"设置丢了"的错觉
             self.lbl_icon_px.setText("")
+            fit0 = self.storage.icon_fit()
             if getattr(self, "lbl_icon_fit", None) is not None:
-                self.lbl_icon_fit.setText("")
+                self.lbl_icon_fit.setText(
+                    "%d%%" % int(round(fit0 * 100)) if fit0 is not None else "")
+            if sld is not None and fit0 is not None:
+                sld.blockSignals(True)
+                sld.setValue(max(sld.minimum(),
+                                 min(int(round(fit0 * 100)), sld.maximum())))
+                sld.blockSignals(False)
             return
         fit = self._effective_fit(m)
         lay = grid_sizing.icon_layout(m.cw, m.ch, fit)
@@ -591,39 +600,49 @@ class SettingsDialog(QDialog):
         return grid_sizing.fit_for(native, cw, "medium")
 
     def _sync_fit_controls(self, fit):
-        """把三档下拉与自定义滑条同步到 fit（阻断信号，避免回写死循环）。"""
+        """把三档下拉与自定义滑条同步到 fit（阻断信号，避免回写死循环）。
+
+        v7 B2（反馈 9）：滑条**只在「自定义」档可拖**。三档预设下它跟着
+        显示该档的占比但置灰——否则用户拖动滑条，值立刻被 `tier_for_fit`
+        反查成最近预设，看着像"拖了不生效"。
+        """
         from .storage import tier_for_fit
         sld = getattr(self, "sld_icon_fit", None)
+        cmb = getattr(self, "cmb_tier", None)
         if sld is not None:
             sld.blockSignals(True)
             sld.setValue(int(round(fit * 100)))
             sld.blockSignals(False)
-        cmb = getattr(self, "cmb_tier", None)
-        tier = tier_for_fit(fit)
+        # 档位以 storage 为准：custom 是显式档位，不能被数值反查覆盖
+        stored = self.storage.icon_tier()
+        tier = stored if stored == "custom" else (tier_for_fit(fit) or stored)
         if cmb is not None and tier:
             idx = cmb.findData(tier)
             if idx >= 0 and idx != cmb.currentIndex():
                 cmb.blockSignals(True)
                 cmb.setCurrentIndex(idx)
                 cmb.blockSignals(False)
+        if sld is not None:
+            sld.setEnabled(tier == "custom")
 
     def _apply_icon_tier(self, _index):
         tier = self.cmb_tier.currentData()
         if not tier:
             return
         from . import grid_sizing
-        self.storage.apply_icon_fit(grid_sizing.parse_fit(tier))
+        if tier == "custom":
+            # 切到自定义：沿用当前占比（用户接着拖滑条微调），
+            # 只把档位名义改掉，视觉不跳变。
+            self.storage.apply_icon_fit(self._effective_fit(), tier="custom")
+        else:
+            self.storage.apply_icon_fit(grid_sizing.parse_fit(tier), tier=tier)
         self._refresh_icon_labels()
         self._refresh_grid()
 
     def _apply_icon_fit(self, value):
-        """自定义占比滑条（30%~90%）：走 storage 唯一写入点。"""
-        self.storage.apply_icon_fit(int(value) / 100.0)
+        """自定义占比滑条（30%~90%）：走 storage 唯一写入点，档位=自定义。"""
+        self.storage.apply_icon_fit(int(value) / 100.0, tier="custom")
         self._refresh_icon_labels()
-        self._refresh_grid()
-
-    def _apply_icon_px(self, value):
-        self.storage.set_setting("icon_px", int(value))
         self._refresh_grid()
 
     def _apply_match_native(self, checked):

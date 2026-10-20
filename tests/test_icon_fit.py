@@ -106,14 +106,19 @@ def main():
     check("A6 非法档位串回退 medium(None)", gs.parse_fit("garbage") is None,
           "got %s" % (gs.parse_fit("garbage"),))
 
-    # ---------- A7：三档比例表 ----------
-    check("A7 TIER_FIT = 0.42/None/0.82",
-          gs.TIER_FIT == {"small": 0.42, "medium": None, "large": 0.82},
+    # ---------- A7：三档比例表（v7 B2 起另有 custom 档，故锁子集） ----------
+    check("A7 TIER_FIT 三档 = 0.42/None/0.82",
+          all(gs.TIER_FIT[k] == v for k, v in
+              (("small", 0.42), ("medium", None), ("large", 0.82))),
           "got %s" % (gs.TIER_FIT,))
-    check("A7 TIER_FIT_FALLBACK = 0.42/0.57/0.82",
-          gs.TIER_FIT_FALLBACK == {"small": 0.42, "medium": 0.57,
-                                   "large": 0.82},
+    check("A7 TIER_FIT_FALLBACK 三档 = 0.42/0.57/0.82",
+          all(gs.TIER_FIT_FALLBACK[k] == v for k, v in
+              (("small", 0.42), ("medium", 0.57), ("large", 0.82))),
           "got %s" % (gs.TIER_FIT_FALLBACK,))
+    check("A7b custom 档：parse_tier 保留、parse_fit 走兜底",
+          gs.parse_tier("custom") == "custom"
+          and gs.parse_fit("custom") is None,
+          "tier=%s fit=%r" % (gs.parse_tier("custom"), gs.parse_fit("custom")))
     check("A7 FIT_BASE = 0.74（沿用 v6 中档，升级不跳格）",
           gs.FIT_BASE == 0.74, "got %s" % (gs.FIT_BASE,))
 

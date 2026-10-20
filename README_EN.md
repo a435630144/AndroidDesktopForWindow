@@ -4,9 +4,9 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: current version **v7a** (installer 2.0.0, first package of the v7 line) with all 49 test files green; **v7 is in implementation** (two-layer sizing / coexisting dual layouts / drag & hit-testing rework / folder & overlay polish), B1 sizing foundation is delivered. Bug reports and ideas are welcome via Issues — current spec: [docs/指导文档_v7.md](docs/指导文档_v7.md), plan: [docs/实施计划_v7.md](docs/实施计划_v7.md) (both Chinese).
+> 🚧 **Under active development**: current version **v7a** (installer 2.0.0, first package of the v7 line) with all 51 test files green; **v7 is in implementation** (two-layer sizing / coexisting dual layouts / drag & hit-testing rework / folder & overlay polish), B1 sizing foundation is delivered. Bug reports and ideas are welcome via Issues — current spec: [docs/指导文档_v7.md](docs/指导文档_v7.md), plan: [docs/实施计划_v7.md](docs/实施计划_v7.md) (both Chinese).
 
-[![release](https://img.shields.io/badge/release-v2.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-49%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v2.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-51%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -168,7 +168,7 @@ pwsh -File scripts/build_portable.ps1
 **v7 in progress** (spec: [docs/指导文档_v7.md](docs/指导文档_v7.md), plan: [docs/实施计划_v7.md](docs/实施计划_v7.md)):
 
 - [x] **B1** Sizing foundation: `cell_from_native` derives cells from the native icon size, tiers only change in-cell ratio (`icon_fit`), row count = pure cropping, grid origin is manually placeable (source `v7a`, not built yet)
-- [ ] **B2** Coexisting layouts: grid and free-floating each persist their own layout; switching never converts or clears
+- [x] **B2** Coexisting layouts: grid and free-floating each persist their own layout; switching never converts or clears (single sizing source, `icon_px` retired)
 - [ ] **B3** Dragging: widget hover judged by frame / center-merge vs outer-ring push-away zones / hint timing
 - [ ] **B4** Hit-testing: per-pixel `WM_NCHITTEST` for widgets and popups so transparent areas stop swallowing clicks
 - [ ] **B5** Folder & visual polish: icon proportions, popup edge placement, edit handles

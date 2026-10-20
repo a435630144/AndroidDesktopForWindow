@@ -9,7 +9,8 @@
   U2 点导航切页：stack 索引跟着变，页标题跟着变
   U3 卡片走 objectName=settingsCard，样式统一来自 SETTINGS_QSS
   U4 行标题 rowTitle / 说明 rowHint 两级文字，颜色在 SETTINGS_QSS 里定义
-  U5 旧控件属性名一个不少（chk_dev / cmb_tier / spin_icon_px …）
+  U5 旧控件属性名一个不少（chk_dev / cmb_tier / sld_icon_fit …）；
+     spin_icon_px 例外——v7 B2 尺寸单源后**已退役**（反馈 9/11）
   U6 「模式」页承载接管 / 自动克隆 / 自动同步 / 布局下拉
   U7 布局模式下拉初值来自 storage，切换调 window.set_layout_mode
   U8 内容可滚动（无横向滚动条）
@@ -149,7 +150,7 @@ def main(app):
           and "font-size: 11px" in theme.SETTINGS_QSS)
 
     # ---------- U5 旧控件兼容 ----------
-    need = ["chk_autostart", "cmb_tier", "spin_icon_px", "chk_auto_cols",
+    need = ["chk_autostart", "cmb_tier", "sld_icon_fit", "chk_auto_cols",
             "spin_cols", "sld_opacity", "chk_takeover", "chk_autoclone",
             "chk_widgets", "chk_tray", "chk_dev", "btn_rescan", "btn_reset",
             "btn_close", "cmb_layout_mode", "chk_autosync",
@@ -158,8 +159,11 @@ def main(app):
     check("U5 旧控件属性名全部保留", not missing, "missing=%s" % missing)
     check("U5 控件类型未被改坏",
           isinstance(dlg.chk_dev, QCheckBox) and isinstance(dlg.cmb_tier, QComboBox)
-          and isinstance(dlg.spin_icon_px, QSpinBox)
+          and isinstance(dlg.sld_icon_fit, QSlider)
           and isinstance(dlg.sld_opacity, QSlider))
+    # v7 B2（反馈 9）：无界像素 spin 退役——尺寸单源后它只会造成
+    # "切模式图标突变"，留着就是第二个真相源
+    check("U5b 无界像素 spin 已退役", not hasattr(dlg, "spin_icon_px"))
 
     # ---------- U6 模式页归属 ----------
     inside = page_widgets(dlg, 3)

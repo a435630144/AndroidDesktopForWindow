@@ -289,6 +289,10 @@ SETTINGS_QSS = (
     "QSlider::sub-page:horizontal{background: rgb(46,120,246); border-radius: 2px;}"
     "QSlider::handle:horizontal{width: 14px; height: 14px; margin: -5px 0;"
     " border-radius: 7px; background: rgb(255,255,255);}"
+    # 禁用态（v7 B2 反馈 9）：三档预设下"自定义比例"只读，必须看得出
+    # 不能拖——不写 :disabled 时滑条外观与可用态完全一样。
+    "QSlider::sub-page:horizontal:disabled{background: rgba(255,255,255,40);}"
+    "QSlider::handle:horizontal:disabled{background: rgba(255,255,255,80);}"
     "QScrollArea{background: transparent; border: none;}"
     "QScrollBar:vertical{background: transparent; width: 8px; margin: 2px;}"
     "QScrollBar::handle:vertical{background: rgba(255,255,255,44);"

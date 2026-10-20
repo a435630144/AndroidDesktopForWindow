@@ -113,7 +113,9 @@ def main():
           "%s" % ((c["fx"], c["fy"]),))
     check("M2 幂等：第二次不重算", grid_flow.to_free_coords(st2) == 0)
 
-    # ---------- M3：to_grid_coords 吸附 + 清空 ----------
+    # ---------- M3：to_grid_coords 只补缺、不换算（v7 B2 / 反馈 13） ----------
+    # 旧契约是"按 fx/fy 反算吸附 + 清空 fx/fy"，两个动作都是破坏性的：
+    # 用户无界摆好的位置被销毁，整理好的 col/row 被吸附结果覆盖。
     st3 = FakeStorage(layout=[{"id": "a", "col": 0, "row": 0,
                                "fx": ox + 2 * cw + cw // 3, "fy": oy + ch + ch // 3},
                               {"id": "b", "col": 5, "row": 5,
@@ -121,11 +123,22 @@ def main():
                       settings={"layout_mode": "free"})
     n3 = grid_flow.to_grid_coords(st3)
     a3, b3 = st3.layout
-    check("M3 反算吸附到最近格（floor 语义）",
-          (a3["col"], a3["row"]) == (2, 1), "%s" % ((a3["col"], a3["row"]),))
-    check("M3 fx/fy 已清空（下次切无界重新生成）",
-          "fx" not in a3 and "fy" not in a3)
-    check("M3 换算计数", n3 == 2)
+    check("M3 已有 col/row 不被 fx/fy 反算覆盖",
+          (a3["col"], a3["row"]) == (0, 0) and (b3["col"], b3["row"]) == (5, 5),
+          "%s / %s" % ((a3["col"], a3["row"]), (b3["col"], b3["row"])))
+    check("M3 fx/fy 保留（无界摆位不丢）",
+          (a3.get("fx"), a3.get("fy"))
+          == (ox + 2 * cw + cw // 3, oy + ch + ch // 3),
+          "%s" % ((a3.get("fx"), a3.get("fy")),))
+    check("M3 正常切换补算计数为 0", n3 == 0, "n=%d" % n3)
+    # 只对"根本没有 col/row"的条目补算（并发新增 / 极旧数据）
+    st3b = FakeStorage(layout=[{"id": "c", "fx": ox + 2 * cw, "fy": oy + ch}],
+                       settings={"layout_mode": "free"})
+    n3b = grid_flow.to_grid_coords(st3b)
+    c3 = st3b.layout[0]
+    check("M3b 缺 col/row 时按 fx/fy 补算一次",
+          (c3["col"], c3["row"]) == (2, 1) and n3b == 1,
+          "%s n=%d" % ((c3["col"], c3["row"]), n3b))
 
     # ---------- M4：entry_pos 双模式 ----------
     st4 = FakeStorage(layout=[entry("a", 1, 0)])
@@ -191,18 +204,31 @@ def main():
     slot2 = grid_flow.free_slot(st8, 0, cw, ch)
     check("M8 第一行满 -> 第二行行首", slot2 == (ox, oy + ch), "%s" % (slot2,))
 
-    # ---------- M9：切换往返守恒 ----------
+    # ---------- M9：切换往返守恒（v7 B2 / 反馈 13） ----------
+    # 新契约：无界摆位**不回写**网格坐标，所以往返后 col/row 必须与
+    # 出发前**逐条相等**（旧契约断言的是"吸附成新格"，那正是重叠的来源）。
     st9 = FakeStorage(layout=[entry("a", 0, 0), entry("b", 1, 0), entry("c", 2, 0)])
-    before = {(e["col"], e["row"]) for e in st9.layout}
+    before = {(e["id"], e["col"], e["row"]) for e in st9.layout}
     st9._settings["layout_mode"] = "free"
     grid_flow.to_free_coords(st9)
     # 无界模式把 a 拖到 (3,1) 格附近
     st9.layout[0]["fx"], st9.layout[0]["fy"] = ox + 3 * cw, oy + ch
     grid_flow.to_grid_coords(st9)
-    after = {(e["col"], e["row"]) for e in st9.layout}
-    check("M9 往返后占用格集合守恒（a 落到 (3,1)，其余不动）",
-          after == {(3, 1), (1, 0), (2, 0)}, "%s" % (after,))
-    check("M9 往返与初始集合同大小（不丢不叠）", len(after) == len(before))
+    after = {(e["id"], e["col"], e["row"]) for e in st9.layout}
+    check("M9 往返后 col/row 逐条等于出发前（不叠不丢）",
+          after == before, "%s vs %s" % (after, before))
+    check("M9b 往返后 a 的无界摆位仍保留",
+          (st9.layout[0].get("fx"), st9.layout[0].get("fy"))
+          == (ox + 3 * cw, oy + ch),
+          "%s" % ((st9.layout[0].get("fx"), st9.layout[0].get("fy")),))
+    # 再切一次无界：仍用用户摆的 fx/fy，不被格点重新生成
+    st9._settings["layout_mode"] = "grid"
+    grid_flow.to_free_coords(st9)      # 幂等：已有 fx/fy 一个都不重算
+    st9._settings["layout_mode"] = "free"
+    check("M9c 再切无界沿用用户摆位",
+          (st9.layout[0].get("fx"), st9.layout[0].get("fy"))
+          == (ox + 3 * cw, oy + ch),
+          "%s" % ((st9.layout[0].get("fx"), st9.layout[0].get("fy")),))
 
     grid_flow.set_page(0)
     print("-" * 56)
