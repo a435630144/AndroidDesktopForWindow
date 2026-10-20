@@ -4,9 +4,9 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前发布 **v6g**（安装包 1.7.0），46 个测试文件全绿；**v7 规格已定稿、正在实施**（尺寸两层解耦 / 双布局并存 / 拖拽与命中系统重做 / 文件夹与浮层细节）。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v7.md](docs/指导文档_v7.md)，实施计划见 [docs/实施计划_v7.md](docs/实施计划_v7.md)。
+> 🚧 **项目处于活跃开发中**：已发布 **v6g**（安装包 1.7.0），**源码已进入 v7 迭代**（当前 `VERSION="7a"`，安装包将升 2.0.0，尚未出包），49 个测试文件全绿；**v7 正在实施**（尺寸两层解耦 / 双布局并存 / 拖拽与命中系统重做 / 文件夹与浮层细节）。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v7.md](docs/指导文档_v7.md)，实施计划见 [docs/实施计划_v7.md](docs/实施计划_v7.md)。
 
-[![release](https://img.shields.io/badge/release-v1.7.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-46%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v1.7.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-49%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -108,7 +108,7 @@ PhoneDesktopForWindow/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip（需 pwsh 7）
 │   ├── installer.iss        # Inno Setup 6 安装包（必须 UTF-8 BOM）
 │   └── check_docs.py        # 文档一致性自检（死链/重复章节/文档与代码数值漂移）
-├── tests/                   # 46 个独立可跑脚本（无 pytest），判据看退出码
+├── tests/                   # 49 个独立可跑脚本（无 pytest），判据看退出码
 │   ├── smoke_test.py        # 无头逻辑回归（存储/克隆/布局）
 │   └── test_*.py            # 每条契约一份：让位引擎、双模式、命中、弹窗、组件…
 └── tools/                   # 运行态探针 probe*.py + 打包验证 verify_*.py
@@ -120,7 +120,7 @@ PhoneDesktopForWindow/
 # 无头逻辑回归
 python tests/smoke_test.py
 
-# 全量单测：46 个独立脚本，无 pytest；判据只看退出码
+# 全量单测：49 个独立脚本，无 pytest；判据只看退出码
 Get-ChildItem tests/test_*.py | ForEach-Object {
     python $_.FullName
     if ($LASTEXITCODE -ne 0) { "FAILED: $($_.Name)" }
@@ -166,7 +166,7 @@ pwsh -File scripts/build_portable.ps1
 
 **v7 实施中**（规格 [docs/指导文档_v7.md](docs/指导文档_v7.md)，计划 [docs/实施计划_v7.md](docs/实施计划_v7.md)）：
 
-- [ ] **B1** 尺寸地基：`cell_from_native` 由原生图标推导格子、档位只改格内占比（`icon_fit`）、行数=纯裁剪
+- [x] **B1** 尺寸地基：`cell_from_native` 由原生图标推导格子、档位只改格内占比（`icon_fit`）、行数=纯裁剪、网格原点可手动定位（源码 `v7a`，待出包）
 - [ ] **B2** 双布局并存：网格与无界各自保存，切换零换算零清空
 - [ ] **B3** 拖拽：组件 hover 按 frame 判定 / 中心合并 · 外环让位双区模型 / 提示时机
 - [ ] **B4** 命中系统：组件与弹窗补逐像素 `WM_NCHITTEST`，透明区不再吞点击
