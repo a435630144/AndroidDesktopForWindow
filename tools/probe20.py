@@ -11,9 +11,10 @@
       源图标打开态 + 锚点定位
   S1  重命名：标题点按 → BandInputBox → Enter 提交 → entry 改名 +
       落盘 + 源图标 tooltip 刷新
-  S2  色板：「颜色」pill → 色板浮层 → 点选预设 → entry tint 持久化
-      + tintChanged 链路（源图标同一 entry dict，渐变即换）
-  S3  ＋ 添加面板：「＋ 添加」pill → 面板 → 点选桌面条目 → 成员并入 +
+  S2  颜色：右上角 ○ → **独立颜色表单**（贴弹窗展开）→ 点选预设 →
+      entry tint 持久化 + tintChanged 链路（源图标同一 entry dict，
+      渐变即换）+ **弹窗尺寸不变、成员实例不被重建**（不重放动画）
+  S3  添加：右上角 ＋ → **独立添加表单** → 点选桌面条目 → 成员并入 +
       桌面源条目增量移除（实例不变、无 rebuild）
   S4  提取成员：extractRequested → 成员落桌增量淡入 + 弹窗刷新仍开
   S5  清空 + 解散：removeMember 最后一个成员 → 空文件夹移除 →
@@ -93,6 +94,12 @@ def click_rect_center(w, rect):
     send_click(w, rect.center())
 
 
+def member_ids(popup):
+    """弹窗里成员图标部件的实例 id 列表（换色不该重建它们）。"""
+    return [id(c) for c in popup.children()
+            if type(c).__name__ == "AppIcon"]
+
+
 def run(app):
     # 桌面：a / b 两个应用 + 文件夹 f（成员 m1/m2，row 0 区）
     st = make_state([("a", 8, 0, "app", []),
@@ -150,34 +157,69 @@ def run(app):
         check("S1 源图标 tooltip 刷新为新名",
               "工作" in (icon.toolTip() or ""), "%s" % icon.toolTip())
 
-    # ---------- S2：色板 ----------
-    click_rect_center(popup, dict(popup._bar_rects())["color"])
-    settle(app, 120)
-    check("S2 「颜色」pill 打开色板浮层", popup._palette_open is True)
-    swatches = popup._palette_layout()
-    pick = swatches[2]                      # 第 3 个预设（橙）
-    click_rect_center(popup, pick[0])
+    # ---------- S2：颜色（独立表单，v7c 反馈 1） ----------
+    popup_w0, popup_h0 = popup.width(), popup.height()
+    members0 = member_ids(popup)
+    click_rect_center(popup, popup._header_rects()["style"])
     settle(app, 150)
-    check("S2 点选预设：entry tint 持久化",
-          st.find_entry("f").get("tint") == pick[1].name(),
-          "%s vs %s" % (st.find_entry("f").get("tint"), pick[1].name()))
-    check("S2 源图标读到同一 tint（渐变即换）",
-          icon.entry.get("tint") == pick[1].name())
-    check("S2 色板浮层已收起", popup._palette_open is False)
+    tint_form = popup._tint_form
+    check("S2 右上角 ○ 打开独立颜色表单",
+          tint_form is not None and tint_form.isVisible())
+    check("S2 颜色表单不覆盖弹窗（贴边展开）",
+          tint_form is not None
+          and not tint_form.frameGeometry().intersects(
+              popup.frameGeometry()),
+          "%s vs %s" % (tint_form.frameGeometry() if tint_form else None,
+                        popup.frameGeometry()))
+    if tint_form is not None:
+        cells = list(tint_form._layout_cache)
+        check("S2 预设色 ≥ 12 + 自动 + 自定义",
+              len(cells) >= 14, "%d 个" % len(cells))
+        keys = [k for _r, k, _c in cells]
+        check("S2 含「自动」与「自定义」入口",
+              "auto" in keys and "custom" in keys, "%s" % keys[-3:])
+        rect, key, color = cells[2]        # 第 3 个预设（橙）
+        click_rect_center(tint_form, rect)
+        settle(app, 150)
+        check("S2 点选预设：entry tint 持久化",
+              st.find_entry("f").get("tint") == color.name(),
+              "%s vs %s" % (st.find_entry("f").get("tint"), color.name()))
+        check("S2 源图标读到同一 tint（渐变即换）",
+              icon.entry.get("tint") == color.name())
+        check("S2 颜色表单已收起", not tint_form.isVisible())
+        check("S2 换色不改弹窗尺寸",
+              (popup.width(), popup.height()) == (popup_w0, popup_h0),
+              "now %sx%s was %sx%s" % (popup.width(), popup.height(),
+                                       popup_w0, popup_h0))
+        check("S2 换色不重建成员（不重放进场动画）",
+              member_ids(popup) == members0, "成员实例变了")
     reloaded = Storage(path=str(STATE))
     check("S2 tint 已落盘", reloaded.find_entry("f").get("tint")
-          == pick[1].name())
+          == st.find_entry("f").get("tint"))
 
-    # ---------- S3：＋ 添加面板 ----------
-    click_rect_center(popup, dict(popup._bar_rects())["add"])
-    settle(app, 120)
-    check("S3 「＋ 添加」pill 打开添加面板", popup._add_panel_open is True)
-    rects, _sz = popup._add_panel_layout()
-    target = next((r for r, eid in rects if eid == "a"), None)
-    check("S3 添加面板候选含桌面条目 a", target is not None,
-          "%s" % [eid for _r, eid in rects])
+    # ---------- S3：添加（独立表单，v7c 反馈 1） ----------
+    click_rect_center(popup, popup._add_btn_rect())
+    settle(app, 150)
+    add_form = popup._add_form
+    check("S3 右上角 ＋ 打开独立添加表单",
+          add_form is not None and add_form.isVisible())
+    if add_form is not None:
+        rects = list(add_form._layout_cache)
+        target = next((r for r, eid in rects if eid == "a"), None)
+        check("S3 添加表单候选含桌面条目 a", target is not None,
+              "%s" % [eid for _r, eid in rects])
+        # 候选格互不重叠且都在表单内（"排版堆叠乱了"的回归点）
+        all_rects = [r for r, _e in rects]
+        dup = any(all_rects[i].intersects(all_rects[j])
+                  for i in range(len(all_rects))
+                  for j in range(i + 1, len(all_rects)))
+        check("S3 候选格互不重叠", not dup)
+        check("S3 候选格都在表单内",
+              all(add_form.rect().contains(r) for r in all_rects))
+    else:
+        target = None
     if target is not None:
-        click_rect_center(popup, target)
+        click_rect_center(add_form, target)
         settle(app, 300)
         names = [m.get("name") for m in st.find_entry("f").get("apps", [])]
         check("S3 点选加入：成员含 a", "a" in names, "%s" % names)
@@ -192,8 +234,9 @@ def run(app):
               "a" in [m.get("name") for m in
                       reloaded.find_entry("f").get("apps", [])]
               and reloaded.find_entry("a") is None)
-        check("S3 弹窗仍在（添加后面板收起）",
-              w._popup is popup and popup.isVisible())
+        check("S3 弹窗仍在（添加后表单收起）",
+              w._popup is popup and popup.isVisible()
+              and not add_form.isVisible())
 
     # ---------- S4：提取成员到桌面 ----------
     popup.extractRequested.emit("M:f:0")   # 提取 m1

@@ -512,7 +512,7 @@ class SettingsDialog(QDialog):
         self._row(c, card, "桌面文件", btns, "重新扫描只增删差异，不会重排已摆好的位置")
         lay.addWidget(card)
 
-        card, c = self._card(body, "调试")
+        card, c = self._card(body, "开发者调试")
         self.chk_dev = Switch()
         self.chk_dev.setChecked(bool(self.storage.get_setting("dev_mode")))
         self.chk_dev.toggled.connect(self._apply_dev_mode)
@@ -611,13 +611,14 @@ class SettingsDialog(QDialog):
         m = grid_flow.current_metrics()
         if m is None:
             # 快照未就绪（对话框先于几何创建 / 悬浮兜底）：至少把滑条
-            # 摆到 storage 里的占比上，别让它停在 0% 造成"设置丢了"的错觉
+            # 摆到**实际生效**的占比上，别让它停在 0% 造成"设置丢了"的
+            # 错觉。走 resolved_icon_fit()（medium 也有确定值），旧实现读
+            # `icon_fit()` 拿到 None -> 滑条留在 30% -> "中档却显示 30%"。
             self.lbl_icon_px.setText("")
-            fit0 = self.storage.icon_fit()
+            fit0 = self.storage.resolved_icon_fit()
             if getattr(self, "lbl_icon_fit", None) is not None:
-                self.lbl_icon_fit.setText(
-                    "%d%%" % int(round(fit0 * 100)) if fit0 is not None else "")
-            if sld is not None and fit0 is not None:
+                self.lbl_icon_fit.setText("%d%%" % int(round(fit0 * 100)))
+            if sld is not None:
                 sld.blockSignals(True)
                 sld.setValue(max(sld.minimum(),
                                  min(int(round(fit0 * 100)), sld.maximum())))
@@ -631,18 +632,15 @@ class SettingsDialog(QDialog):
         self._sync_fit_controls(fit)
 
     def _effective_fit(self, m=None):
-        """当前**实际生效**的图标占比（medium 用 native_px/cell_w 解算）。"""
-        from . import grid_sizing, win32_layer
+        """当前**实际生效**的图标占比（medium 用 native_px/cell_w 解算）。
+
+        v7c（反馈 3）：解算逻辑收到 `storage.resolved_icon_fit()`——设置页
+        显示的"图标 Npx"必须与桌面真正画出来的尺寸同源，否则面板说 57%
+        桌面画 54%（换屏后两者分叉），用户眼里就是"默认档位不对"。
+        """
+        from . import grid_flow
         m = m if m is not None else grid_flow.current_metrics()
-        fit = self.storage.icon_fit()
-        if fit is not None:
-            return fit
-        try:
-            native = win32_layer.native_icon_size()
-        except Exception:
-            native = 48
-        cw = m.cw if m is not None else grid_sizing.cell_from_native(native)[0]
-        return grid_sizing.fit_for(native, cw, "medium")
+        return self.storage.resolved_icon_fit(m.cw if m is not None else None)
 
     def _sync_fit_controls(self, fit):
         """把三档下拉与自定义滑条同步到 fit（阻断信号，避免回写死循环）。

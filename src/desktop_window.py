@@ -1084,8 +1084,8 @@ class DesktopWindow(QWidget):
                 scale = float(entry.get("icon_scale", 1.0) or 1.0)
             except (TypeError, ValueError):
                 scale = 1.0
-        return grid_sizing.icon_layout(m.cw, m.ch, self.storage.icon_fit(),
-                                       scale=scale)
+        return grid_sizing.icon_layout(
+            m.cw, m.ch, self.storage.resolved_icon_fit(m.cw), scale=scale)
 
     def _add_icon(self, entry):
         """增量新增一个图标（add_app / rescan / 文件夹提取等）。
@@ -2354,10 +2354,10 @@ class DesktopWindow(QWidget):
             auto_act.setChecked(bool(self.storage.get_setting("auto_arrange")))
             auto_act.triggered.connect(self._toggle_auto_arrange)
             view.addAction("立即整理（重新排列）", self._tidy)
-            dev_act = view.addAction("显示网格调试信息")
-            dev_act.setCheckable(True)
-            dev_act.setChecked(self._dev_mode())
-            dev_act.triggered.connect(self._toggle_dev_mode)
+            # 2026-10-20 用户反馈 4：「显示网格调试信息」不属于日常操作，
+            # 从桌面右键「查看」里移除——它在 设置 ▸ 高级 ▸ 开发者调试
+            # 卡片里（settings_dialog.chk_dev），入口只有一个，避免两处
+            # 状态各说各话。
 
             # 刷新 / 粘贴（与系统桌面同一位置）
             menu.addAction("刷新", self.rescan_desktop)

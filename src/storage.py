@@ -365,14 +365,51 @@ class Storage:
     def icon_fit(self):
         """图标在格子里的占比（v7 §3.1）；None 表示"跟随档位"。
 
-        优先级：`icon_fit`（显式占比）> `icon_tier` 映射（medium -> None，
-        由 `grid_sizing.fit_for()` 用 native_px/cell_w 解算）。
+        v7c（反馈 3）：**档位是唯一真相源**。三档预设时忽略 `icon_fit`
+        里的残留浮点值——旧实现"显式占比优先"留下了两个旋钮，一旦
+        `icon_fit` 被写成某个旧浮点（历史版本 / 手拖滑条后档位又被改），
+        启动就按旧值渲染，"中"档看着小一号；用户点一次「中」写回 None
+        才恢复。现在：预设档 -> 按档位取值（medium 为 None，由
+        `resolved_icon_fit()` 用 native_px/cell_w 解算）；只有「自定义」
+        档才读 `icon_fit` 本身。
         """
         from . import grid_sizing
+        tier = self.icon_tier()
+        if tier != grid_sizing.TIER_CUSTOM:
+            return grid_sizing.parse_fit(tier)
         raw = self.get_setting("icon_fit")
-        if raw is not None:
-            return grid_sizing.parse_fit(raw)
-        return grid_sizing.parse_fit(self.icon_tier())
+        if raw is None:
+            return None
+        return grid_sizing.parse_fit(raw)
+
+    def resolved_icon_fit(self, cw=None) -> float:
+        """**实际生效**的图标占比（0.30~0.90），永远有值。
+
+        medium 档的占比 = `native_px / cell_w`（"图标与原桌面一致"的回归
+        锁），必须由本函数解算，**不允许调用方各自写死 0.57**：
+        旧实现里 `icon_layout()` 拿不到 native 就退常量 0.57，而
+        `settings_dialog._effective_fit()` 走 `fit_for()`——换屏（native
+        60 / cell 100）时两者差 3px，正是"默认档位看着小一号"的来源。
+
+        cw 传当前 cell 宽（GridMetrics 快照）；不传时回退 `cell_size()`。
+        """
+        from . import grid_sizing
+        fit = self.icon_fit()
+        if fit is not None:
+            return fit
+        native = 0
+        try:
+            from . import win32_layer
+            native = int(win32_layer.native_icon_size())
+        except Exception:
+            native = 0
+        if not cw:
+            try:
+                from . import grid_flow
+                cw = int(grid_flow.cell_size(self)[0])
+            except Exception:
+                cw = 0
+        return grid_sizing.fit_for(native, int(cw or 0), "medium")
 
     def apply_icon_fit(self, fit, tier=None):
         """**唯一写入点**：同时写 `icon_fit` 与 `icon_tier`。

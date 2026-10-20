@@ -9,17 +9,17 @@
 
 #define MyAppName "桌面整理Demo"
 #define MyAppNameEn "DesktopOrganizerDemo"
-#define MyAppVersion "2.1.0"
+#define MyAppVersion "2.1.1"
 #define MyAppPublisher "DesktopOrganizerDemo"
 #define MyAppExe "DesktopOrganizerDemo.exe"
 
 ; 打包目录名 / 产物名参数化：运行中的旧实例会锁住 dist\<BuildDir>，
 ; 换名重打时用 ISCC /DBuildDir=xxx /DOutBase=xxx 覆盖即可，不必改脚本。
 #ifndef BuildDir
-  #define BuildDir "DesktopOrganizerDemo_v7b"
+  #define BuildDir "DesktopOrganizerDemo_v7c"
 #endif
 #ifndef OutBase
-  #define OutBase "DesktopOrganizerDemo_v7b_Setup"
+  #define OutBase "DesktopOrganizerDemo_v7c_Setup"
 #endif
 
 [Setup]

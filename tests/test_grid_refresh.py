@@ -106,7 +106,9 @@ def main(app):
     m = grid_flow.current_metrics()
     check("G1 refresh_grid 后 cols = 手动值 6", m.cols == 6, "cols=%d" % m.cols)
 
-    lay = grid_sizing.icon_layout(m.cw, m.ch, st.icon_tier())
+    # v7c（反馈 3）：期望值必须与桌面同源——占比走 storage.resolved_icon_fit()
+    # （medium = native_px/cell_w），别再自己按档位串算一份
+    lay = grid_sizing.icon_layout(m.cw, m.ch, st.resolved_icon_fit(m.cw))
     icon = w.icons["a"]
     check("G2 图标尺寸 = 新 cell × 档位",
           (icon.width(), icon.height()) == (lay.widget_w, lay.widget_h),

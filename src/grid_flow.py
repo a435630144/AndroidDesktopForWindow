@@ -854,12 +854,22 @@ def icon_center_offset(storage, entry=None) -> Cell:
     """
     from . import grid_sizing
     cw, ch = cell_size(storage)
+    # 2026-10-20 反馈 3：占比**必须**与 DesktopWindow._icon_layout 同源。
+    # 走 storage.resolved_icon_fit()（medium = native_px/cw 解算）；
+    # 没有该方法的替身 storage（探针 / 单元测试）退回旧的档位串路径。
+    resolved = getattr(storage, "resolved_icon_fit", None)
     fit = None
-    raw_fit = getattr(storage, "icon_fit", None)
-    try:
-        fit = raw_fit() if callable(raw_fit) else None
-    except Exception:
-        fit = None
+    if callable(resolved):
+        try:
+            fit = resolved(cw)
+        except Exception:
+            fit = None
+    if fit is None:
+        raw_fit = getattr(storage, "icon_fit", None)
+        try:
+            fit = raw_fit() if callable(raw_fit) else None
+        except Exception:
+            fit = None
     if fit is None:
         raw = getattr(storage, "icon_tier", None)
         try:

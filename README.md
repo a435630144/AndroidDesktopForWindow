@@ -4,9 +4,9 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前版本 **v7b**（安装包 2.1.0，v7 迭代的第二个包），**55 个测试脚本 / 1166 条断言全绿**；**v7a 实机的 17 条反馈已全部闭环**（尺寸两层解耦 / 双布局并存 / 拖拽连锁避让 / 组件命中 / 文件夹文件名与尺寸 / 启动即接管 + 小组件模式），等实机验收。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v7.md](docs/指导文档_v7.md)，实施计划见 [docs/实施计划_v7.md](docs/实施计划_v7.md)。
+> 🚧 **项目处于活跃开发中**：当前版本 **v7c**（安装包 2.1.1，v7 迭代的第三个包），**57 个测试脚本 / 约 1200 条断言全绿**；**v7a 的 17 条 + v7b 后的 4 条实机反馈全部闭环**（尺寸两层解耦 / 双布局并存 / 拖拽连锁避让 / 组件命中 / 文件夹文件名与尺寸 / 启动即接管 + 小组件模式 / 文件夹表单独立 + 色板 16 色 / 组件改尺寸后碰撞同步 / 图标默认「中」单源），等实机验收。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v7.md](docs/指导文档_v7.md)，实施计划见 [docs/实施计划_v7.md](docs/实施计划_v7.md)。
 
-[![release](https://img.shields.io/badge/release-v2.1.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-55%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v2.1.1-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-57%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -166,6 +166,7 @@ pwsh -File scripts/build_portable.ps1
 | v6 → v6g | 双模式（整理 / 原生）/ 组件入网格 / 桌面目录同步 / 壁纸保留 / Win+D 守护，以及 14 项实机反馈修复 | 1.7.0 |
 | v7a | 尺寸两层模型（`cell_from_native` + `solve_dims`）+ 网格原点可手动定位 | 2.0.0 |
 | v7b | **v7a 实机 17 项反馈全部闭环**：双布局并存 / 拖拽连锁避让 / 组件透明区命中 / 下拉浮层实心 / 文件夹文件名+尺寸+右上角入口 / 单图标尺寸 / 启动即接管+小组件模式 | 2.1.0 |
+| v7c | **v7b 之后的 4 项反馈闭环**：文件夹「添加应用 / 换颜色」改独立表单（16 预设+自动+自定义，换色不再重建成员）/ 组件手动改尺寸后碰撞形状同步（含四角双向步进）/ 图标默认「中」双源合并 / 网格调试信息移入设置面板 | 2.1.1 |
 
 **v7 实施中**（规格 [docs/指导文档_v7.md](docs/指导文档_v7.md)，计划 [docs/实施计划_v7.md](docs/实施计划_v7.md)）：
 

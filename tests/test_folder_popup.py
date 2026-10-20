@@ -165,8 +165,15 @@ def main(app):
     check("F4 空白名不提交（保持原名）", c3 == [])
 
     # ---------- F5：色板 + 自动色 ----------
-    check("F5 预设色板 8 色", len(theme.FOLDER_TINTS) == 8,
-          "%s" % (theme.FOLDER_TINTS,))
+    # 2026-10-20 反馈 1：预设从 8 色扩到 16 色（多几个预设），
+    # 前 8 个必须原样保留——老 state 里存的就是这些色号。
+    check("F5 预设色板 ≥12 色（反馈 1 扩容）", len(theme.FOLDER_TINTS) >= 12,
+          "%d 色" % len(theme.FOLDER_TINTS))
+    check("F5 老 8 色序号不变（蓝紫/粉红/橙/黄/绿/青/蓝/紫）",
+          [c.name() for c in theme.FOLDER_TINTS[:8]] == [
+              "#5e5ce6", "#e85d74", "#f0983e", "#f5cd52",
+              "#58ba78", "#40b0be", "#5484ee", "#946cd6"],
+          "%s" % [c.name() for c in theme.FOLDER_TINTS[:8]])
     # auto_tint：注入假 pixmap 函数（纯红/纯蓝各半 -> (128,0,128) 量级）
     def fake_pm(app, size, dpr=1.0):
         pm = QPixmap(size, size)
@@ -190,7 +197,7 @@ def main(app):
     check("F5 folder_tint 缺省回退预设", t2 == theme.FOLDER_TINTS[0])
 
     # ---------- F6：＋添加面板 ----------
-    popup._open_add_panel()
+    popup._open_add_form()          # 反馈 1：添加改成独立表单
     settle(app, 50)
     cands = popup._add_candidates()
     check("F6 候选排除文件夹自身与已有成员",

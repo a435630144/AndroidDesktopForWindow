@@ -238,7 +238,63 @@ class FloatingWidget(QWidget):
         self.entry["y"] = g.y()
         self.entry["w"] = g.width()
         self.entry["h"] = g.height()
+        # 2026-10-20 用户反馈 2：**视觉尺寸才是碰撞形状的唯一真相**。
+        # 旧实现只存 w/h，跨度（colspan/rowspan）只由显式缩放/右键菜单写；
+        # 任何"改了像素尺寸但没走那两条路"的情况（悬浮态拉手柄、无界模式
+        # 改尺寸后切回网格、将来新增的缩放入口）都会让 entry 的跨度停在
+        # 旧值——组件看着 4×1，拖动预览却按 2×1 挤图标。
+        self._sync_span_from_geometry()
         self.storage.save()
+
+    def _span_from_geometry(self):
+        """按当前像素尺寸反推跨度（网格模式下的"碰撞形状"）。"""
+        try:
+            cw, ch = grid_flow.cell_size(self.storage)
+        except Exception:
+            return None
+        if cw <= 0 or ch <= 0:
+            return None
+        cs = max(1, int(round(self.width() / float(cw))))
+        rs = max(1, int(round(self.height() / float(ch))))
+        return cs, rs
+
+    def _sync_span_from_geometry(self):
+        """视觉尺寸 ↔ entry 跨度对齐；不一致时以**视觉**为准写回。
+
+        幂等：尺寸本来就是 span×cell 时什么也不做（正常拖动落定走这里
+        不会产生额外写入，也不会误发 gridChanged）。
+
+        跳过条件：
+          - 非锚定（悬浮组件不占格）；
+          - 无界模式（没有格跨度概念，尺寸就是像素）；
+          - entry 还没有 col/row（spawn 中，WidgetLayer 还没分配格位——
+            此时写占位会和它的 find_widget_slot 抢 (0,0)）；
+          - 像素尺寸与跨度的乘积差不到半格（避免 DPI 取整噪声抖动）。
+        """
+        if not self.anchored:
+            return False
+        if "col" not in self.entry or "row" not in self.entry:
+            return False        # 未定位：占位由 WidgetLayer 分配，别抢跑
+        if grid_flow.free_mode(self.storage):
+            return False
+        got = self._span_from_geometry()
+        if got is None:
+            return False
+        cs, rs = got
+        cw, ch = grid_flow.cell_size(self.storage)
+        # 半格容差：|w - cs*cw| < cw/2 时不算"尺寸变了"
+        if abs(self.width() - cs * cw) > cw // 2 or \
+                abs(self.height() - rs * ch) > ch // 2:
+            return False
+        cur = grid_flow.widget_span(self.storage, self.entry)
+        if (cs, rs) == cur:
+            return False
+        col, row = grid_flow.clamp_widget_cell(
+            self.storage, int(self.entry.get("col", 0)),
+            int(self.entry.get("row", 0)), cs, rs)
+        self.entry["col"], self.entry["row"] = col, row
+        self._write_occupancy(col, row, cs, rs)
+        return True
 
     def _save_geom_free(self):
         """v6 §1.3 无界模式几何持久化：fx/fy = 松手像素位。
@@ -337,6 +393,12 @@ class FloatingWidget(QWidget):
 
         逐格步进（而非一次性算总量）是刻意选择：跨越别组件时能停在
         **最后一个合法尺寸**上，而不是整步失败或直接叠上去。
+
+        2026-10-20 用户反馈 2：**四个角点必须同时改两个方向**。旧实现
+        `d = dcol if edge in ("e","w") else drow` 让 nw/ne/se/sw 四个角
+        只吃行方向（横向怎么拖都不变），用户想把 2×2 拖成 4×1 时角点
+        完全"拉不动宽"，只能分别去抓两条边——这和他描述的"手动改过
+        尺寸后碰撞形状不对"是同一段交互里的一串误会。
         """
         if self._rz_span0 is None or self._rz_cell0 is None:
             return
@@ -351,23 +413,31 @@ class FloatingWidget(QWidget):
             return grid_flow.widget_cell_fits(self.storage, ncol, nrow,
                                               ncs, nrs, exclude_id=wid)
 
-        d = int(dcol) if edge in ("e", "w") else int(drow)
-        sign = 1 if d >= 0 else -1
-        for _ in range(abs(d)):
-            ncs, nrs, ncol, nrow = cs, rs, col, row
-            if edge == "e":
-                ncs = cs + sign
-            elif edge == "w":
-                ncs = cs - sign
-                ncol = col + sign
-            elif edge == "s":
-                nrs = rs + sign
-            elif edge == "n":
-                nrs = rs - sign
-                nrow = row + sign
-            if ncs < 1 or nrs < 1 or not can(ncol, nrow, ncs, nrs):
-                break
-            cs, rs, col, row = ncs, nrs, ncol, nrow
+        def walk_h(delta):
+            nonlocal cs, col
+            sign = 1 if delta >= 0 else -1
+            for _ in range(abs(int(delta))):
+                ncs, ncol = (cs + sign, col) if edge.endswith("e") \
+                    else (cs - sign, col + sign)
+                if ncs < 1 or not can(ncol, row, ncs, rs):
+                    break
+                cs, col = ncs, ncol
+
+        def walk_v(delta):
+            nonlocal rs, row
+            sign = 1 if delta >= 0 else -1
+            for _ in range(abs(int(delta))):
+                nrs, nrow = (rs + sign, row) if edge.startswith("s") \
+                    else (rs - sign, row + sign)
+                if nrs < 1 or not can(col, nrow, cs, nrs):
+                    break
+                rs, row = nrs, nrow
+
+        # 角点：横向 + 纵向都走（"e" in "se" / "w" in "nw" / …）
+        if "e" in edge or "w" in edge:
+            walk_h(dcol)
+        if "n" in edge or "s" in edge:
+            walk_v(drow)
         if (cs, rs, col, row) == (self._rz_span0[0], self._rz_span0[1],
                                   self._rz_cell0[0], self._rz_cell0[1]):
             return
@@ -487,6 +557,15 @@ class FloatingWidget(QWidget):
     def resizeEvent(self, e):
         super().resizeEvent(e)
         self.on_resized()
+        # 反馈 2：尺寸变了就把跨度/占位对上（`_resize_step` 已写过时这里
+        # 是 no-op）。放在 resizeEvent 而不是只放 _save_geom，是因为松手
+        # 之前拖动预览期间就该按新尺寸避让。
+        if not getattr(self, "_syncing_span", False):
+            self._syncing_span = True
+            try:
+                self._sync_span_from_geometry()
+            finally:
+                self._syncing_span = False
 
     def on_resized(self):
         """尺寸变化钩子（span 切换 / DPI 变化 / 悬浮缩放手柄）：

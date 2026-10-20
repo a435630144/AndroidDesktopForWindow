@@ -7,7 +7,8 @@
       右键单设 + 设置页改全局默认
   G2  文件名（#7）：文件夹成员显示文件名（推翻 v7 §7.2「紧凑阵不显示」）
   G3  右上角按钮组（#8）：○ = 文件夹样式、＋ = 快速添加、× = 关闭；
-      底部工具条取消
+      底部工具条取消；两者各开**独立表单**（2026-10-20 反馈 1）——
+      不再内联堆叠、换色不再重排弹窗（成员不重放动画）
   G4  归属唯一（#8）：＋ 的候选只能是当前在桌面上的元素；同一元素不能
       同时属于桌面和多个文件夹
 
@@ -22,7 +23,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PySide6.QtCore import QEvent, QEventLoop, QPoint, QPointF, Qt, QTimer
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QColor, QMouseEvent
 from PySide6.QtWidgets import QApplication
 
 from src import folder_layout
@@ -180,27 +181,62 @@ def test_popup(app):
     check("G3 关闭按钮在组内最右",
           hdr["close"].left() > hdr["add"].left() > hdr["style"].left())
 
-    # ○ 展开样式条：窗口长高且位置不动
-    h0, y0 = pop.height(), pop.y()
+    # ○ 打开**独立**颜色表单（反馈 1：不再内联、弹窗不长高、成员不重排）
+    h0, y0, w0 = pop.height(), pop.y(), pop.width()
     send_click(pop, hdr["style"].center())
     settle(app)
-    check("G3 ○ 展开文件夹样式（色板）", pop._palette_open is True)
-    check("G3 样式条为色板腾出高度", pop.height() > h0,
-          "h0=%d h1=%d" % (h0, pop.height()))
-    check("G3 展开样式不移动弹窗位置",
-          pop.y() == y0 or abs(pop.y() - y0) <= 8, "y0=%d y1=%d" % (y0, pop.y()))
-    check("G3 色板 9 个色块", len(pop._palette_layout()) == 9)
-    h1 = pop.height()
+    form = pop._tint_form
+    check("G3 ○ 打开独立颜色表单", form is not None and form.isVisible(),
+          "%r" % (form,))
+    check("G3 换色不再改变弹窗尺寸（不再重排成员）",
+          (pop.height(), pop.width()) == (h0, w0),
+          "h %d->%d w %d->%d" % (h0, pop.height(), w0, pop.width()))
+    if form is not None:
+        entries = form._entries()
+        colors = [c for k, c in entries if isinstance(c, QColor)]
+        check("G3 颜色预设 ≥ 12 个（反馈 1：多增加几个预设）",
+              len(colors) >= 12, "presets=%d" % len(colors))
+        check("G3 颜色表单含「自动」与「自定义」",
+              any(k == "auto" for k, _c in entries)
+              and any(k == "custom" for k, _c in entries))
+        check("G3 颜色表单不覆盖弹窗",
+              not form.frameGeometry().intersects(pop.frameGeometry()),
+              "%s vs %s" % (form.frameGeometry(), pop.frameGeometry()))
+        # 换色不应触发弹窗成员重建：成员控件实例保持不变
+        before = [c for c in pop.findChildren(AppIcon)]
+        pop._set_tint(QColor(232, 93, 116))
+        settle(app)
+        after = [c for c in pop.findChildren(AppIcon)]
+        check("G3 换色不重建成员图标（不重放动画）",
+              len(before) == len(after)
+              and all(a is b for a, b in zip(before, after)),
+              "before=%d after=%d" % (len(before), len(after)))
     send_click(pop, pop._header_rects()["style"].center())
     settle(app)
-    check("G3 再点 ○ 收起并还原高度",
-          pop._palette_open is False and pop.height() == h0,
-          "h=%d want=%d" % (pop.height(), h0))
+    check("G3 再点 ○ 收起颜色表单",
+          pop._tint_form is None or not pop._tint_form.isVisible())
 
-    # ＋ 快速添加
+    # ＋ 打开独立的「添加应用」表单
     send_click(pop, pop._header_rects()["add"].center())
     settle(app)
-    check("G3 ＋ 展开快速添加面板", pop._add_panel_open is True)
+    addf = pop._add_form
+    check("G3b ＋ 打开独立添加表单", addf is not None and addf.isVisible(),
+          "%r" % (addf,))
+    if addf is not None:
+        check("G3b 添加表单不覆盖弹窗",
+              not addf.frameGeometry().intersects(pop.frameGeometry()))
+        cells = addf._layout_cache
+        check("G3b 添加表单候选格互不重叠",
+              all(not cells[i][0].intersects(cells[j][0])
+                  for i in range(len(cells)) for j in range(i + 1, len(cells))),
+              "cells=%d" % len(cells))
+        check("G3b 添加表单候选格都在表单内",
+              all(addf.rect().contains(r) for r, _eid in cells),
+              "cells=%d rect=%s" % (len(cells), addf.rect()))
+    send_click(pop, pop._header_rects()["add"].center())
+    settle(app)
+    check("G3b 再点 ＋ 收起添加表单",
+          pop._add_form is None or not pop._add_form.isVisible())
 
     # G4 候选唯一性
     cands = [e["id"] for e in pop._add_candidates()]

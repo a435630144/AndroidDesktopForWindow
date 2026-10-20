@@ -4,7 +4,9 @@
 需求（2026-10-18 用户）：开发期默认开启；设置里可开关；开启时给网格
 边缘渲染可视化边框，供排查布局问题。
 **2026-10-19 改为默认关闭**：满屏调试网格盖在壁纸上，用户误以为
-"桌面被覆盖/壁纸丢了"。排查布局时从右键「查看 ▸ 显示网格调试信息」开。
+"桌面被覆盖/壁纸丢了"。排查布局时从 设置 ▸ 高级 ▸ 开发者调试 开。
+**2026-10-20 反馈 4**：桌面右键「查看 ▸ 显示网格调试信息」已移除——
+调试信息属于开发者功能，入口只留设置面板（D8 锁住，防回潮）。
 
 运行：python tests/test_dev_mode.py   （offscreen，无需显示桌面）
 
@@ -17,6 +19,7 @@
       异常的盲区见 DEVLOG 6.2 A3 / 坑表 #24）
   D5 dev_mode 关 -> 同区域无调试色（不画）
   D6 设置对话框：chk_dev 初始态同步 + 勾选落 setting + 触发重绘
+  D8 桌面右键「查看」菜单**不含**该项（反馈 4），设置页仍是唯一入口
 """
 import os
 import sys
@@ -199,6 +202,37 @@ def main(app):
           st.grid_dims_mode() == "auto", st.grid_dims_mode())
     check("D7 勾选 auto 后 spin 重新禁用",
           dlg2.spin_cols.isEnabled() is False)
+
+    # ---------- D8：桌面右键不再是入口（2026-10-20 反馈 4） ----------
+    st8 = make_state(dev=False, native=True)     # native -> 整理模式才建菜单
+    w8 = DesktopWindow(st8)
+    w8.resize(W, H)
+    w8._update_grid_metrics()
+    menu = w8._build_context_menu()
+    # 子菜单是 Python 所有的 QMenu：必须持引用，否则被 GC（DEVLOG 坑 #39）
+    subs, view_texts = [], None
+    for act in menu.actions():
+        sub = act.menu()
+        if sub is None:
+            continue
+        subs.append(sub)
+        if sub.title() == "查看":
+            view_texts = [x.text() for x in sub.actions()]
+    check("D8 右键仍有「查看」菜单", view_texts is not None)
+    view_texts = view_texts or []
+    check("D8 右键「查看」里没有「显示网格调试信息」",
+          "显示网格调试信息" not in view_texts, "%s" % view_texts)
+    check("D8 「查看」保留了日常项（图标大小 / 自动排列）",
+          any("图标大小" in t for t in view_texts)
+          and "自动排列图标" in view_texts, "%s" % view_texts)
+
+    from src.settings_dialog import SettingsDialog as _SD
+    fake3 = SimpleNamespace(update=lambda: None, rebuild=lambda: None)
+    dlg3 = _SD(fake3, st8, None)
+    check("D8 设置面板仍是唯一入口（chk_dev 存在且可切）",
+          getattr(dlg3, "chk_dev", None) is not None)
+    dlg3.chk_dev.setChecked(True)
+    check("D8 设置面板开关落 setting", st8.get_setting("dev_mode") is True)
 
     print()
     if failures:

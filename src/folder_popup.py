@@ -340,10 +340,12 @@ class FolderPopup(QWidget):
         # M5 交互态
         self._empty = False          # 空文件夹态
         self._empty_hint = ""        # 空态提示文案
-        self._palette_open = False   # 色板浮层
-        self._palette_rects = []     # [(QRect, QColor|None)] None = 「自动」
-        self._add_panel_open = False # ＋ 添加面板
-        self._add_rects = []         # [(QRect, entry_id)] 添加面板候选格
+        # 2026-10-20 用户反馈 1：「样式」与「快速添加」不再画在弹窗里，
+        # 各自由一个**独立表单**承载（folder_forms.py）。原因见该模块
+        # docstring：内联浮层挤在按成员数算出的宽度里必然排版堆叠；换色
+        # 要弹窗长高 → _build 重建成员 → 全部重放一次出场动画。
+        self._tint_form = None
+        self._add_form = None
         self._editor = None          # 行内输入框（重命名）
         self._close_hover = False
         self._title_hover = False
@@ -369,17 +371,10 @@ class FolderPopup(QWidget):
         bar_h = 0
         return icon_size, m, pad, title_h, bar_h
 
-    def _palette_strip_h(self):
-        """色板展开时顶部多出来的一条（不遮住成员格）。"""
-        if not self._palette_open:
-            return 0
-        m = self.storage.icon_chrome_scale()
-        return int(round(30 * m)) + int(round(12 * m))
-
     def _members_rect(self):
         """成员网格区域（标题 / 色板条之下）。"""
         _s, m, pad, title_h, _bar = self._metrics()
-        top = title_h + self._palette_strip_h()
+        top = title_h
         return QRect(pad // 2, top, max(1, self.width() - pad),
                      max(1, self.height() - top - pad // 2))
 
@@ -480,7 +475,7 @@ class FolderPopup(QWidget):
         content_w = cols * bw + (cols - 1) * gap_x
         content_h = rows * bh + (rows - 1) * gap_y
         w = pad + content_w
-        h = title_h + self._palette_strip_h() + content_h + pad
+        h = title_h + content_h + pad
         # 高度不超过可用屏幕的 82%：桌面文件全拖进来的极端情况不顶出屏幕
         # 2026-10-20（用户反馈 F4，覆盖 v6 §6.2 的居中决策）：**贴着源图标
         # 展开**——下方优先、下方放不下翻上方、都放不下夹紧进屏幕。旧实现
@@ -520,7 +515,7 @@ class FolderPopup(QWidget):
             # 玻璃背板：必须在 show() 之前抓屏，否则会把自己抓进去
             self._backdrop = effects.glass_backdrop(
                 QRect(self.x(), self.y(), self.width(), self.height()))
-        top = title_h + self._palette_strip_h()
+        top = title_h
         for i, app in enumerate(members):
             member_payload = "M:%s:%d" % (self.entry.get("id"), i)
             entry = {"id": member_payload, "type": "app", "app": app}
@@ -548,6 +543,11 @@ class FolderPopup(QWidget):
             running = False
         if not running:
             self._zoom = 1.0
+        # 表单贴着弹窗：弹窗因成员增减改了大小，表单位置要跟着走
+        for attr in ("_tint_form", "_add_form"):
+            form = getattr(self, attr, None)
+            if form is not None and form.isVisible():
+                form.show_beside(self)
         self.update()
 
     # ---------- 开合动效 ----------
@@ -681,22 +681,15 @@ class FolderPopup(QWidget):
         self.renamed.emit()      # 源图标刷新标签 / tooltip
         self.update()
 
-    # ---------- M5：背景色板 ----------
-    def _palette_layout(self):
-        """色板几何：一行 8 色 + 「自动」，位于标题下方的专用色板条。"""
-        _s, m, pad, title_h, _b = self._metrics()
-        sw = int(round(30 * m))
-        gap = int(round(8 * m))
-        total = sw * 9 + gap * 8
-        x0 = (self.width() - total) // 2
-        y = title_h + int(round(4 * m))
-        rects = []
-        for i, c in enumerate(theme.FOLDER_TINTS):
-            rects.append((QRect(x0 + i * (sw + gap), y, sw, sw), c))
-        rects.append((QRect(x0 + 8 * (sw + gap), y, sw, sw), None))  # 「自动」
-        return rects
-
+    # ---------- M5：背景色 / 快速添加（2026-10-20 反馈 1 改为独立表单） ----------
     def _set_tint(self, color):
+        """写色并刷新文件夹图标。
+
+        注意**不要**调 `refresh()`：那会走 `_build()` 销毁重建全部成员
+        图标、每人重放一次 `appear_in` —— 用户看到的就是"换个颜色，文件夹
+        里的图标全部重新渲染一遍"（反馈 1 的后半句）。换色只影响弹窗背板
+        的 tint 覆盖层与源图标瓷砖，`update()` 重画一次即可。
+        """
         if color is None:
             color = self.auto_tint(self.entry.get("apps", []))
             if color is None:
@@ -704,21 +697,71 @@ class FolderPopup(QWidget):
         self.entry["tint"] = color.name()
         self.storage.save()
         self.tintChanged.emit()
-        self._palette_open = False
-        self.refresh()                  # 收起色板条：高度要还原
         self.update()
 
-    # ---------- ＋ 快速添加面板（右上角 ＋，反馈 8） ----------
-    def _open_add_panel(self):
-        was_palette = self._palette_open
-        self._add_panel_open = not self._add_panel_open
-        self._palette_open = False
-        if was_palette:
-            # 色板条收起 = 高度变化，必须重排
-            self._build(None, keep_backdrop=True, keep_pos=True)
-            self._regrab_backdrop()
-        else:
-            self.update()
+    def _open_tint_form(self):
+        """右上角 ○：独立的颜色表单（贴弹窗右侧展开）。"""
+        from .folder_forms import TintForm
+        if self._tint_form is not None and self._tint_form.isVisible():
+            self._tint_form.hide_form()
+            return
+        self._close_forms()
+        try:
+            cur = QColor(self.entry.get("tint") or "")
+            if not cur.isValid():
+                cur = None
+        except Exception:
+            cur = None
+        form = TintForm(self.storage, current=cur, parent=None)
+        form.tintPicked.connect(self._set_tint)
+        form.closed.connect(self._on_form_closed)
+        self._tint_form = form
+        form.show_beside(self)
+
+    def _open_add_form(self):
+        """右上角 ＋：独立的「添加应用」表单（贴弹窗右侧展开）。"""
+        from .folder_forms import AddAppsForm
+        if self._add_form is not None and self._add_form.isVisible():
+            self._add_form.hide_form()
+            return
+        self._close_forms()
+        form = AddAppsForm(self.storage, self._add_candidates())
+        form.picked.connect(self._on_add_picked)
+        form.closed.connect(self._on_form_closed)
+        self._add_form = form
+        other = self._tint_form
+        form.show_beside(self, avoid=other)
+
+    def _on_add_picked(self, entry_id):
+        """表单点选一个应用：加入成功后**立刻收起表单**。
+
+        候选列表是打开那一刻的快照——留在屏上会出现"刚加进去的应用还在
+        候选里"，再点一次被唯一性守卫静默拒绝，看着像点了没反应。
+        加完就收起、下次点 ＋ 重新取快照，语义单一。
+        """
+        ok = self._add_member_by_id(entry_id)
+        form = self._add_form
+        if ok and form is not None:
+            form.hide_form()
+
+    def _on_form_closed(self):
+        sender = self.sender()
+        for attr in ("_tint_form", "_add_form"):
+            if getattr(self, attr, None) is sender:
+                setattr(self, attr, None)
+        self.update()
+
+    def _close_forms(self):
+        for attr in ("_tint_form", "_add_form"):
+            form = getattr(self, attr, None)
+            if form is not None:
+                setattr(self, attr, None)
+                try:
+                    form.closed.disconnect()
+                except Exception:
+                    pass
+                form.hide()
+                form.deleteLater()
 
     def _member_keys(self):
         """本文件夹成员的身份键集合（id / target / name 三选一命中即同一元素）。"""
@@ -772,25 +815,6 @@ class FolderPopup(QWidget):
             out.append(e)
         return out
 
-    def _add_panel_layout(self, limit=24):
-        """添加面板网格几何：[(QRect, entry_id)]（4 列，超限不显示）。"""
-        _s, m, pad, title_h, _b = self._metrics()
-        area = self._members_rect()
-        icon_size = max(40, int(self.storage.icon_metric() * 0.72))
-        cols = 4
-        pitch_x = area.width() // cols
-        pitch_y = icon_size + int(round(34 * m))
-        rows_avail = max(1, area.height() // pitch_y)
-        rects = []
-        for i, e in enumerate(self._add_candidates()[:limit]):
-            r, c = i % cols, i // cols
-            if c >= rows_avail:
-                break
-            rects.append((QRect(area.left() + r * pitch_x,
-                                area.top() + c * pitch_y,
-                                pitch_x, pitch_y), e["id"]))
-        return rects, icon_size
-
     def _add_member_by_id(self, entry_id):
         """把桌面条目加入文件夹（＋ 点选 / 拖入共用）。返回是否成功。
 
@@ -812,7 +836,6 @@ class FolderPopup(QWidget):
         self.entry.setdefault("apps", []).append(app)
         self.storage.save()
         self.memberAdded.emit(entry_id)   # DesktopWindow：移出布局 + 动画
-        self._add_panel_open = False
         self.refresh()
         return True
 
@@ -850,19 +873,12 @@ class FolderPopup(QWidget):
     zoom = Property(float, _get_zoom, _set_zoom)
 
     def _toggle_style_panel(self):
-        """右上角 ○：展开 / 收起文件夹样式（背景色板）。
-
-        色板在标题下方占一条独立高度（不覆盖成员格）——所以开合要走一次
-        keep_pos 重排，窗口原地长高 / 收矮。
-        """
-        self._palette_open = not self._palette_open
-        self._add_panel_open = False
-        self._build(None, keep_backdrop=True, keep_pos=True)
-        self._regrab_backdrop()
+        """右上角 ○：打开独立的颜色表单（反馈 1：不再内联、不再重排弹窗）。"""
+        self._open_tint_form()
 
     def _toggle_add_panel(self):
-        """右上角 ＋：快速添加桌面应用（候选只列当前桌面上的元素）。"""
-        self._open_add_panel()
+        """右上角 ＋：打开独立的「添加应用」表单（候选只列当前桌面上的元素）。"""
+        self._open_add_form()
 
     def mousePressEvent(self, e):
         if e.button() != Qt.LeftButton:
@@ -882,17 +898,6 @@ class FolderPopup(QWidget):
         if self._title_rect().contains(pos):
             self._open_rename()
             return
-        if self._palette_open:
-            for rect, color in self._palette_layout():
-                if rect.contains(pos):
-                    self._set_tint(color)
-                    return
-        if self._add_panel_open:
-            rects, _sz = self._add_panel_layout()
-            for rect, eid in rects:
-                if rect.contains(pos):
-                    self._add_member_by_id(eid)
-                    return
 
     def paintEvent(self, e):
         p = QPainter(self)
@@ -952,8 +957,8 @@ class FolderPopup(QWidget):
         for key in ("close", "add", "style"):
             r = hdr[key]
             hovered = self._bar_hover.get(key, False)
-            active = ((key == "add" and self._add_panel_open)
-                      or (key == "style" and self._palette_open))
+            active = ((key == "add" and self._form_visible("_add_form"))
+                      or (key == "style" and self._form_visible("_tint_form")))
             if hovered or active:
                 p.setBrush(QColor(255, 255, 255, 30) if hovered
                            else QColor(theme.ACCENT.red(), theme.ACCENT.green(),
@@ -993,49 +998,14 @@ class FolderPopup(QWidget):
             p.drawText(area.adjusted(0, 0, 0, -26),
                        Qt.AlignHCenter | Qt.AlignBottom,
                        "从桌面拖入，或点右上角 ＋ 添加")
-        # 色板浮层（标题下一条 8 色 + 自动）
-        if self._palette_open:
-            for rect_, color in self._palette_layout():
-                if color is None:
-                    # 「自动」：描边圆形 + 字母 A
-                    p.setPen(QPen(theme.TEXT_DIM, 1))
-                    p.setBrush(theme.SURFACE_RAISED)
-                    p.drawEllipse(QRectF(rect_))
-                    p.setPen(theme.TEXT)
-                    p.setFont(theme.ui_font(11, bold=True))
-                    p.drawText(rect_, Qt.AlignCenter, "A")
-                else:
-                    p.setPen(QPen(theme.BORDER_STRONG, 1))
-                    p.setBrush(color)
-                    p.drawEllipse(QRectF(rect_))
-        # ＋ 添加面板（成员区上的次级浮层）
-        if self._add_panel_open:
-            rects, icon_size = self._add_panel_layout()
-            area = self._members_rect()
-            panel = QRectF(area.left(), area.top(), area.width(), area.height())
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor(18, 19, 24, 216))
-            p.drawRoundedRect(panel, theme.RADIUS_PANEL, theme.RADIUS_PANEL)
-            dpr = self.devicePixelRatioF()
-            for rect_, eid in rects:
-                hovered = self._bar_hover.get(("item", eid), False)
-                if hovered:
-                    p.setBrush(theme.SURFACE_RAISED)
-                    p.drawRoundedRect(QRectF(rect_.adjusted(2, 2, -2, -2)), 8, 8)
-                e = self.storage.find_entry(eid)
-                if e is None:
-                    continue
-                app = e.get("app") or {}
-                pm = appsource.icon_pixmap(app, icon_size, dpr)
-                px = rect_.center().x() - icon_size // 2
-                py = rect_.top() + 4
-                p.drawPixmap(px, py, pm)
-                p.setPen(theme.TEXT_DIM)
-                p.setFont(theme.ui_font(10))
-                name = app.get("name", "")
-                p.drawText(QRect(rect_.left(), py + icon_size + 2,
-                                 rect_.width(), 16),
-                           Qt.AlignHCenter, name)
+
+    def _form_visible(self, attr) -> bool:
+        """对应表单当前是否展开（按钮高亮用）。"""
+        form = getattr(self, attr, None)
+        try:
+            return form is not None and form.isVisible()
+        except RuntimeError:
+            return False
 
     def mouseMoveEvent(self, e):
         pos = e.pos()
@@ -1043,10 +1013,6 @@ class FolderPopup(QWidget):
         self._title_hover = self._title_rect().contains(pos)
         for key, rect in self._header_rects().items():
             self._bar_hover[key] = rect.contains(pos)
-        if self._add_panel_open:
-            rects, _sz = self._add_panel_layout()
-            for rect, eid in rects:
-                self._bar_hover[("item", eid)] = rect.contains(pos)
         any_hover = (self._close_hover or self._title_hover
                      or any(self._bar_hover.values()))
         self.setCursor(Qt.PointingHandCursor if any_hover else Qt.ArrowCursor)
@@ -1066,5 +1032,6 @@ class FolderPopup(QWidget):
         e.accept()
 
     def closeEvent(self, e):
+        self._close_forms()      # 表单是独立窗口，弹窗关掉必须一起收
         self.closed.emit()
         super().closeEvent(e)
