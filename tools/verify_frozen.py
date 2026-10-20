@@ -30,8 +30,9 @@ GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
 GW_HWNDNEXT, GW_CHILD = 2, 5
 # 可传 argv[1] 指定被测 exe（如验证 v2 新包）；默认测标准 dist 产物
+ROOT = Path(__file__).resolve().parent.parent
 EXE = sys.argv[1] if len(sys.argv) > 1 else \
-    r"C:\Users\43563\WorkBuddy\2026-10-16-01-23-19\desktop-organizer\dist\DesktopOrganizerDemo\DesktopOrganizerDemo.exe"
+    str(ROOT / "dist" / "DesktopOrganizerDemo" / "DesktopOrganizerDemo.exe")
 
 RESULTS = []
 

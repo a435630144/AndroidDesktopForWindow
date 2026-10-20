@@ -203,11 +203,11 @@ def check_constants() -> None:
 
 ABS_RX = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:/[^\s`)\]\"'<>]*")
 ALLOW_PREFIX = (
-    "C:/Users/43563/WorkBuddy",       # 本项目路径（可移植性另论，但不是"另一台机器"）
+    "D:/WorkBuddy/2026-10-17-23-50-28/PhoneDesktopForWindow",  # 本项目当前唯一准位（2026-10-20 迁入工作区）
     "C:/Users/43563/.workbuddy",      # 托管 venv / node
     "C:/Users/43563/.workbuddy/",
 )
-ABS_EXEMPT_WORDS = ("另一台机器", "本机不存在", "他机", "示例", "旧路径")
+ABS_EXEMPT_WORDS = ("另一台机器", "本机不存在", "他机", "示例", "旧路径", "旧机器", "旧位置")
 
 
 def check_abs_paths() -> None:

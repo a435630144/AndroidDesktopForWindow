@@ -6,8 +6,10 @@
 import ctypes
 import sys
 from ctypes import wintypes
+from pathlib import Path
 
-sys.path.insert(0, "C:/Users/43563/WorkBuddy/2026-10-16-01-23-19/desktop-organizer")
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
@@ -35,7 +37,7 @@ GW_CHILD, GW_HWNDNEXT = 5, 2
 SW_MINIMIZE, SW_RESTORE = 6, 9
 KEEP_CLASSES = {"Progman", "WorkerW", "SHELLDLL_DefView", "Shell_TrayWnd",
                 "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow"}
-SHOT_DIR = "C:/Users/43563/WorkBuddy/2026-10-16-01-23-19/desktop-organizer/dist/shots"
+SHOT_DIR = str(ROOT / "dist" / "shots")
 
 app = QApplication(sys.argv)
 storage = Storage()
