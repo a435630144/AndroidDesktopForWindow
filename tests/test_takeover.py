@@ -1,18 +1,22 @@
 # -*- coding: utf-8 -*-
-"""v6 §7.2：设置项合并——「接管系统桌面」（反馈 11）。
+"""接管语义：`takeover_desktop` 是唯一语义入口（v6 §7.2），
+v7 反馈 16 起**界面不再提供开关**——启动即接管。
 
-契约：`takeover_desktop` 成为唯一语义入口，「隐藏原生图标」不再是独立开关；
-`hide_native_icons` 降级为兼容键（读写同步，旧 state 一次性迁移）。
-托盘「显示/隐藏桌面整理」保留为纯显隐入口，不再承载模式语义。
+契约演进：
+  - v6：接管开关在设置页 / 托盘 / 右键三处可见，用户可关掉回原生桌面。
+  - v7（反馈 16）：开关下线。旧 state 里被关掉过的，加载时**一次性**
+    强制回 True（否则三处入口同时消失，用户无从打开）；标记位
+    `takeover_v7_forced` 保证只做一次。
+  - 唯一"回原生桌面"的途径：退出程序；托盘保留"显示原生桌面"纯显隐。
 
   K1 新 state 默认接管开启 + 键已落盘
   K2 set_takeover 双写：takeover_desktop 与 hide_native_icons 同步
-  K3 旧 state 迁移：只有 hide_native_icons=False 时接管也为 False
+  K3 旧 state 迁移：v7 起**强制接管**（覆盖历史的 False）
   K4 两键矛盾时 takeover_desktop 优先
   K5 窗口 _organize_mode() 跟随 takeover()（不再直读 hide_native_icons）
-  K6 设置对话框只有一个接管开关（无独立「桌面整理模式」项）+ 双键同步
-  K7 托盘：「接管系统桌面」勾选态来自 takeover()，显隐入口仍在
-  K8 关闭接管 → 恢复原生图标可见
+  K6 设置页**不再有**接管开关；托盘**不再有**接管项
+  K7 托盘有独立的「小组件模式」开关，显隐入口仍在
+  K8 关闭接管（内部 API）→ 恢复原生图标可见
 
 运行：python tests/test_takeover.py   （offscreen）
 """
@@ -123,7 +127,7 @@ def main(app):
     check("K2 set_takeover(True) 双键同步为 True",
           st.takeover() is True and st.get_setting("hide_native_icons") is True)
 
-    # ---------- K3 旧 state 迁移 ----------
+    # ---------- K3 旧 state 迁移（v7 反馈 16：强制接管） ----------
     old = TMP / "test_takeover_old.json"
     old.write_text(json.dumps({
         "settings": {"schema_version": 2, "hide_native_icons": False,
@@ -132,16 +136,24 @@ def main(app):
         "widgets": [],
     }, ensure_ascii=False), encoding="utf-8")
     st_old = Storage(path=str(old))
-    check("K3 旧 state（无 takeover_desktop）按 hide_native_icons 迁移",
-          st_old.takeover() is False,
+    check("K3 旧 state 关闭态在 v7 被强制接管",
+          st_old.takeover() is True,
           "takeover=%s hide=%s" % (st_old.takeover(),
                                    st_old.get_setting("hide_native_icons")))
+    check("K3 强制迁移留标记位（只做一次）",
+          st_old.get_setting("takeover_v7_forced") is True)
+    # 标记位已存在时不再覆盖（保留内部 API 手工调整的能力）
+    st_old.set_takeover(False)
+    st_old2 = Storage(path=str(old))
+    check("K3b 标记位已存在时尊重手动值", st_old2.takeover() is False,
+          "takeover=%s" % (st_old2.takeover(),))
     old.write_text(json.dumps({
-        "settings": {"schema_version": 2, "hide_native_icons": True},
+        "settings": {"schema_version": 2, "hide_native_icons": True,
+                     "takeover_v7_forced": True},
         "layout": [], "widgets": [],
     }, ensure_ascii=False), encoding="utf-8")
-    st_old2 = Storage(path=str(old))
-    check("K3b 旧 state 开启态也正确迁移", st_old2.takeover() is True)
+    st_old3 = Storage(path=str(old))
+    check("K3c 旧 state 开启态仍为接管", st_old3.takeover() is True)
 
     # ---------- K4 矛盾时新键优先 ----------
     st4 = fresh("prio")
@@ -182,7 +194,7 @@ def main(app):
     finally:
         win32_layer.set_native_icons_visible = real
 
-    # ---------- K6 设置对话框单开关 ----------
+    # ---------- K6 设置页不再有接管开关（反馈 16） ----------
     from src.settings_dialog import SettingsDialog
     st6 = fresh("dialog")
     st6._data["settings"]["auto_clone_desktop"] = False
@@ -191,40 +203,34 @@ def main(app):
     dlg = SettingsDialog(fw, st6, layer=None)
     boxes = [c for c in dlg.findChildren(QCheckBox)]
     takeover_boxes = [c for c in boxes if "接管系统桌面" in c.text()]
-    check("K6 存在唯一「接管系统桌面」开关", len(takeover_boxes) == 1,
+    check("K6 设置页已移除「接管系统桌面」开关", len(takeover_boxes) == 0,
           "found=%d" % len(takeover_boxes))
-    check("K6 不再有独立「桌面整理模式」项",
+    check("K6 也没有独立的「桌面整理模式」项",
           not any("桌面整理模式" in c.text() for c in boxes),
           "%s" % [c.text()[:14] for c in boxes])
-    if takeover_boxes:
-        cb = takeover_boxes[0]
-        check("K6 勾选态来自 takeover()", cb.isChecked() is True)
-        cb.setChecked(False)
-        app.processEvents()
-        check("K6 取消勾选 → 双键同步 False",
-              st6.takeover() is False
-              and st6.get_setting("hide_native_icons") is False)
-        check("K6 取消勾选 → 通知窗口应用原生设置", fw.native_applied >= 1)
-        cb.setChecked(True)
-        app.processEvents()
-        check("K6b 重新勾选 → 接管恢复 True", st6.takeover() is True)
+    check("K6 模式页仍然存在（布局选择还在）",
+          getattr(dlg, "cmb_layout_mode", None) is not None)
     dlg.deleteLater()
 
-    # ---------- K7 托盘 ----------
+    # ---------- K7 托盘（反馈 16：接管项删除，小组件模式补位） ----------
     from src.tray import SystemTray
     st7 = fresh("tray")
     st7.set_takeover(True)
     fw7 = FakeWindow(st7)
     t = SystemTray(fw7, st7, layer=FakeLayer())
-    check("K7 托盘有「接管系统桌面」项", "接管系统桌面" in t.act_organize.text(),
-          "text=%s" % t.act_organize.text())
-    check("K7 勾选态来自 takeover()", t.act_organize.isChecked() is True)
-    check("K7 显隐入口保留", "桌面整理" in t.act_toggle.text(),
-          "text=%s" % t.act_toggle.text())
-    t._toggle_organize(False)     # QAction.triggered 在 PySide6 上是无参重载，直调槽
+    check("K7 托盘不再有「接管系统桌面」项",
+          not hasattr(t, "act_organize"), "act_organize 仍存在")
+    check("K7 托盘有「小组件模式」开关",
+          "小组件模式" in t.act_widgets.text(), "text=%s" % t.act_widgets.text())
+    check("K7 小组件模式勾选态来自 show_widgets",
+          t.act_widgets.isChecked() is bool(st7.get_setting("show_widgets")))
+    t._toggle_widgets(False)
     app.processEvents()
-    check("K7 托盘取消接管 → 双键同步 False",
-          st7.takeover() is False and st7.get_setting("hide_native_icons") is False)
+    check("K7 关掉小组件模式 → show_widgets=False",
+          st7.get_setting("show_widgets") is False)
+    check("K7 关小组件不影响接管", st7.takeover() is True)
+    check("K7 显隐入口保留", "桌面" in t.act_toggle.text(),
+          "text=%s" % t.act_toggle.text())
     t._sync_checks()
     check("K7b 显隐项勾选态跟随窗口可见性（与模式解耦）",
           t.act_toggle.isChecked() is fw7.isVisible())

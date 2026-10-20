@@ -320,19 +320,22 @@ def main(app):
                   fake_z.index(phw) < fake_z.index(shw),
                   "z=%s" % (fake_z,))
 
-            # ---------- F11：成员紧凑网格（反馈 6，参照手机文件夹） ----------
-            # 旧实现一上来就 4 列，4 个成员排成一行又稀又长；参考图是
-            # 2×2 / 3×3 的紧凑阵。列数按数量分档，图标比桌面小一档，
-            # 且**不显示文件名**（密度靠去掉标签行换来）。
-            check("F11 1~4 个成员 -> 2 列",
-                  [pop._member_cols(n) for n in (1, 2, 3, 4)] == [2, 2, 2, 2],
-                  "%s" % [pop._member_cols(n) for n in (1, 2, 3, 4)])
-            check("F11b 5~9 个成员 -> 3 列（九宫格）",
-                  [pop._member_cols(n) for n in (5, 6, 9)] == [3, 3, 3],
-                  "%s" % [pop._member_cols(n) for n in (5, 6, 9)])
-            check("F11c 10 个以上 -> 4 列",
-                  [pop._member_cols(n) for n in (10, 13, 20)] == [4, 4, 4],
+            # ---------- F11：成员网格（v7 反馈 7 / 14 的**新契约**） ----------
+            # 反馈 14 推翻了"按数量分 2/3/4 列"的旧规则：尺寸是「上限 ×
+            # 成员数」——默认上限 3×3，最小 2×2，按数量收缩、优先排满一行。
+            # 1~2 个 -> 2 列（2×2）；3 个 -> 3 列（3×2）；
+            # 超过 9 个只加行，不再改列（保持视觉节奏）。
+            check("F11 1~2 个成员 -> 2 列（2×2）",
+                  [pop._member_cols(n) for n in (0, 1, 2)] == [2, 2, 2],
+                  "%s" % [pop._member_cols(n) for n in (0, 1, 2)])
+            check("F11b 3~9 个成员 -> 3 列（优先排满一行）",
+                  [pop._member_cols(n) for n in (3, 4, 5, 6, 9)] == [3, 3, 3, 3, 3],
+                  "%s" % [pop._member_cols(n) for n in (3, 4, 5, 9)])
+            check("F11c 超过 9 个仍锁 3 列（只加行，不丢成员）",
+                  [pop._member_cols(n) for n in (10, 13, 20)] == [3, 3, 3],
                   "%s" % [pop._member_cols(n) for n in (10, 13, 20)])
+            check("F11c2 10 个成员 -> 3×4（容量够，成员全在）",
+                  pop._grid_shape(10) == (3, 4), "%s" % (pop._grid_shape(10),))
             base_icon = int(st3.icon_metric())
             check("F11d 成员图标比桌面图标小一档",
                   pop._member_icon_size() < base_icon,
@@ -341,20 +344,24 @@ def main(app):
             members = [c for c in pop.findChildren(AppIcon) if c.in_folder]
             check("F11e 文件夹内成员已生成", len(members) >= 1,
                   "n=%d" % len(members))
-            check("F11f 成员不画文件名（紧凑格）",
-                  all(getattr(c, "_no_label", False) for c in members),
+            # 反馈 7 反向覆盖 v7 §7.2：成员**必须**显示文件名
+            check("F11f 成员画文件名（反馈 7 反转旧规格）",
+                  all(not getattr(c, "_no_label", True) for c in members),
                   "%s" % [getattr(c, "_no_label", None) for c in members])
             cw0, _ch0 = grid_flow.cell_size(st3)
+            pw0, _ph0 = pop._member_pitch()
             check("F11g 成员间距小于一个桌面格（紧凑）",
-                  pop._member_pitch() < cw0,
-                  "pitch=%d cell_w=%d" % (pop._member_pitch(), cw0))
+                  pw0 < cw0, "pitch=%d cell_w=%d" % (pw0, cw0))
             if members:
                 ic0 = members[0]
-                check("F11h 成员控件尺寸 = 成员图标 + 紧凑留白",
-                      ic0.width() == pop._member_box()
-                      and ic0.height() == pop._member_box(),
-                      "got=(%d,%d) box=%d" % (ic0.width(), ic0.height(),
-                                              pop._member_box()))
+                bw0, bh0 = pop._member_box()
+                check("F11h 成员控件尺寸 = 成员格（含文件名行）",
+                      ic0.width() == bw0 and ic0.height() == bh0,
+                      "got=(%d,%d) box=(%d,%d)" % (ic0.width(), ic0.height(),
+                                                   bw0, bh0))
+                check("F11i 成员格高度含标签行（比图标高）",
+                      bh0 > pop._member_icon_size() + 4,
+                      "box_h=%d icon=%d" % (bh0, pop._member_icon_size()))
 
             # 幕布吞点击：点击幕布 -> 发射 clicked 且弹窗关闭
             got_click = []

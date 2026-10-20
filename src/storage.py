@@ -82,7 +82,13 @@ DEFAULT_SETTINGS = {
     "page_axis": "horizontal",  # 翻页方向：horizontal（默认，左右）| vertical
     "extra_pages": [],         # 无界模式空白页页码列表（如 [3,5]）
     "takeover_desktop": True,  # 「接管系统桌面」合并开关（替代 hide_native_icons
-                               # 语义入口；旧键仍兼容读取）
+                               # 语义入口；旧键仍兼容读取）。
+                               # v7 反馈 16 起**界面不再提供开关**：启动即接管，
+                               # 加载时一次性强制为 True（见 _load 的迁移块）。
+    "takeover_v7_forced": False,  # 上述一次性迁移的标记位
+    # v7 反馈 14：文件夹默认展开尺寸（上限，[列, 行]，最小 2×2）。
+    # 单个文件夹可在自己的 entry["frame"] 里覆盖（右键「文件夹大小」）。
+    "folder_frame_default": [3, 3],
     "auto_sync_desktop": True,  # 监听桌面目录自动同步（v6 §7.4：新增/删除/
                                 # 重命名 debounce 1s 后增量更新，不重排已有布局）
     "columns": "auto",         # 每行图标数："auto"=按工作区尺寸自动计算（M1 GridMetrics，
@@ -182,6 +188,14 @@ class Storage:
         else:
             self._data["settings"]["hide_native_icons"] = bool(
                 self._data["settings"]["takeover_desktop"])
+        # v7 反馈 16：接管开关下线（启动即接管）。历史 state 里若被关掉过，
+        # 一次性改回 True——右键 / 托盘 / 设置页三处入口同时移除后，用户
+        # 再也没有打开它的地方，留着 False 就是"程序看起来坏了"。
+        # 标记位保证只做一次，不反复覆盖后续的手工调整。
+        if not self._data["settings"].get("takeover_v7_forced"):
+            self._data["settings"]["takeover_desktop"] = True
+            self._data["settings"]["hide_native_icons"] = True
+            self._data["settings"]["takeover_v7_forced"] = True
         self._normalize_layout()
         # v7 §10.3：旧键 columns（整数 = 手动列数）一次性迁移进 grid_cols。
         # 判据用**文件里的原始 settings**（合并默认值后 grid_dims_mode 必然存在）。
@@ -610,6 +624,40 @@ class Storage:
         """重置：清空网格（不删任何文件），由调用方决定是否重新克隆。"""
         self._data["layout"] = []
         self.save()
+
+    # ---------- 文件夹尺寸（v7 反馈 14） ----------
+    def folder_frame_default(self):
+        """全局默认文件夹尺寸上限 (cols, rows)，缺省 3×3。"""
+        from . import folder_layout
+        return folder_layout.frame_pair(
+            self.get_setting("folder_frame_default"),
+            folder_layout.DEFAULT_FRAME)
+
+    def folder_frame(self, entry):
+        """单个文件夹的实际尺寸上限：entry["frame"] 优先，否则全局默认。
+
+        返回值是**上限**，实际格数还要按成员数收缩（folder_layout.grid_shape）。
+        """
+        from . import folder_layout
+        return folder_layout.frame_pair(
+            (entry or {}).get("frame"), self.folder_frame_default())
+
+    def set_folder_frame(self, entry_id, cols: int, rows: int) -> bool:
+        """设置单个文件夹的尺寸上限；与全局默认相同时删掉覆盖键。
+
+        返回是否真的改动了数据（调用方据此决定要不要刷新弹窗）。
+        """
+        from . import folder_layout
+        entry = self.find_entry(entry_id)
+        if entry is None or entry.get("type") != "folder":
+            return False
+        pair = folder_layout.frame_pair([cols, rows], self.folder_frame_default())
+        if pair == self.folder_frame_default():
+            entry.pop("frame", None)
+        else:
+            entry["frame"] = [pair[0], pair[1]]
+        self.save()
+        return True
 
     def folder_member_ids(self) -> set:
         """所有虚拟文件夹成员的应用 id。

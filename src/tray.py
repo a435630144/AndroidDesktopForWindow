@@ -59,18 +59,17 @@ class SystemTray:
     def _build_menu(self):
         m = self.menu
         m.clear()
-        self.act_toggle = QAction("隐藏桌面整理", m, checkable=True)
+        self.act_toggle = QAction("显示原生桌面", m, checkable=True)
         self.act_toggle.setChecked(self.window.isVisible())
         self.act_toggle.triggered.connect(self._toggle_window)
         m.addAction(self.act_toggle)
 
-        # v6 §7.2：模式开关统一为「接管系统桌面」（与设置对话框同一语义，
-        # 共用 storage.takeover / set_takeover）。act_toggle 只做显隐。
-        self.act_organize = QAction("接管系统桌面（隐藏原生图标，框选/自动克隆）",
-                                    m, checkable=True)
-        self.act_organize.setChecked(self.storage.takeover())
-        self.act_organize.triggered.connect(self._toggle_organize)
-        m.addAction(self.act_organize)
+        # 反馈 16：「接管系统桌面」开关删除（启动即接管，开关冗余）。
+        # 托盘保留纯显隐入口 + 独立的小组件模式开关。
+        self.act_widgets = QAction("小组件模式", m, checkable=True)
+        self.act_widgets.setChecked(bool(self.storage.get_setting("show_widgets")))
+        self.act_widgets.triggered.connect(self._toggle_widgets)
+        m.addAction(self.act_widgets)
 
         act_add = QAction("添加应用…", m)
         act_add.triggered.connect(self._add_apps)
@@ -125,18 +124,14 @@ class SystemTray:
         self.window.toggle()
         self._sync_checks()
 
-    def _toggle_organize(self, checked):
-        """切换「接管系统桌面」：开=隐藏原生图标全盘接管；关=恢复系统原生桌面。"""
-        self.storage.set_takeover(bool(checked))
-        self.window.apply_native_icons_setting()
-        if checked:
-            if not self.storage.layout:
-                self.storage.ensure_desktop_clone()
-            self.storage.set_setting("auto_clone_desktop", True)
-            self.window.rebuild()
-        self.notify("接管系统桌面" + ("已开启" if checked else "已关闭"),
-                    "隐藏原生图标并由整理桌面接管，可框选 / 批量拖动" if checked
-                    else "已恢复系统原生桌面，右键 / 点击 / 框选全部原生")
+    def _toggle_widgets(self, checked):
+        """小组件模式（反馈 16）：只开关小组件，不影响图标接管。"""
+        on = bool(checked)
+        self.storage.set_setting("show_widgets", on)
+        if self.layer is not None:
+            self.layer.set_visible(on)
+        self.notify("小组件模式" + ("已开启" if on else "已关闭"),
+                    "桌面小组件会显示在壁纸上" if on else "桌面只保留图标")
 
     def _add_apps(self):
         if self.openAddApps:
@@ -177,9 +172,10 @@ class SystemTray:
     # ---------- 状态同步 ----------
     def _sync_checks(self):
         self.act_toggle.setChecked(self.window.isVisible())
-        self.act_toggle.setText("隐藏桌面整理" if self.window.isVisible() else "显示桌面整理")
+        self.act_toggle.setText("显示原生桌面" if self.window.isVisible()
+                                else "返回整理桌面")
         self.act_autostart.setChecked(autostart.is_enabled())
-        self.act_organize.setChecked(self.storage.takeover())
+        self.act_widgets.setChecked(bool(self.storage.get_setting("show_widgets")))
         for entry in self.storage.widgets:
             act = self._widget_actions.get(entry["id"])
             if act is not None:

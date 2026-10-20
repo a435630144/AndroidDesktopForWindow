@@ -4,9 +4,9 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: current version **v7a** (installer 2.0.0, first package of the v7 line) with all 51 test files green; **v7 is in implementation** (two-layer sizing / coexisting dual layouts / drag & hit-testing rework / folder & overlay polish), B1 sizing foundation is delivered. Bug reports and ideas are welcome via Issues — current spec: [docs/指导文档_v7.md](docs/指导文档_v7.md), plan: [docs/实施计划_v7.md](docs/实施计划_v7.md) (both Chinese).
+> 🚧 **Under active development**: current version **v7b** (installer 2.1.0, second package of the v7 line) with **55 test scripts / 1166 assertions green**; **all 17 field-report items from v7a are closed** (two-layer sizing / coexisting dual layouts / chained drag displacement / widget hit-testing / folder labels & sizing / takeover-by-default + widgets mode), pending field verification. Bug reports and ideas are welcome via Issues — current spec: [docs/指导文档_v7.md](docs/指导文档_v7.md), plan: [docs/实施计划_v7.md](docs/实施计划_v7.md) (both Chinese).
 
-[![release](https://img.shields.io/badge/release-v2.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-51%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v2.1.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-55%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -108,7 +108,7 @@ PhoneDesktopForWindow/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip (needs pwsh 7)
 │   ├── installer.iss        # Inno Setup 6 installer (must be UTF-8 BOM)
 │   └── check_docs.py        # Docs consistency check (dead links / duplicate sections / doc-vs-code drift)
-├── tests/                   # 49 standalone scripts (no pytest); judge by exit code
+├── tests/                   # 55 standalone scripts (no pytest); judge by exit code
 │   ├── smoke_test.py        # Headless logic regression (storage/clone/layout)
 │   └── test_*.py            # One per contract: reflow, dual mode, hit-testing, popup, widgets…
 └── tools/                   # Runtime probes probe*.py + packaged-build verification verify_*.py

@@ -839,7 +839,7 @@ def _page_local_pos(storage, col: int, row: int, centered: bool = False) -> Cell
     return x, y
 
 
-def icon_center_offset(storage) -> Cell:
+def icon_center_offset(storage, entry=None) -> Cell:
     """图标 widget 在 cell 内的居中留白 ((cw-w)//2, (ch-h)//2)（反馈 1）。
 
     2026-10-19 用户反馈："图标大小为中或者小的时候不应该位于网格左上角
@@ -847,16 +847,32 @@ def icon_center_offset(storage) -> Cell:
     时整套图标偏左上，留白全堆在右下。
 
     尺寸来源与 DesktopWindow._icon_layout 同源（grid_sizing.icon_layout ×
-    当前快照 cell × 档位），大档 widget == cell 时偏移自然为 (0,0)。
+    当前快照 cell × 档位）。v7 B2 起档位改为 `storage.icon_fit()` 的
+    实际占比（custom 档才对得上）；entry 传入时再乘它的 icon_scale
+    （反馈 12：单图标大小覆盖）——否则放大后的图标仍然按 100% 居中，
+    看起来是"往右下角长"。
     """
     from . import grid_sizing
     cw, ch = cell_size(storage)
-    raw = getattr(storage, "icon_tier", None)
+    fit = None
+    raw_fit = getattr(storage, "icon_fit", None)
     try:
-        tier = raw() if callable(raw) else (raw or grid_sizing.DEFAULT_TIER)
+        fit = raw_fit() if callable(raw_fit) else None
     except Exception:
-        tier = grid_sizing.DEFAULT_TIER
-    lay = grid_sizing.icon_layout(cw, ch, tier)
+        fit = None
+    if fit is None:
+        raw = getattr(storage, "icon_tier", None)
+        try:
+            fit = raw() if callable(raw) else (raw or grid_sizing.DEFAULT_TIER)
+        except Exception:
+            fit = grid_sizing.DEFAULT_TIER
+    scale = 1.0
+    if isinstance(entry, dict):
+        try:
+            scale = float(entry.get("icon_scale", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            scale = 1.0
+    lay = grid_sizing.icon_layout(cw, ch, fit, scale=scale)
     return max(0, (cw - lay.widget_w) // 2), max(0, (ch - lay.widget_h) // 2)
 
 
@@ -890,7 +906,7 @@ def entry_pos(storage, entry) -> Cell:
         x, y = cell_pos(storage, int(entry.get("col", 0)),
                         int(entry.get("row", 0)))
         # 反馈 1：widget 小于 cell 时在格内居中（不能贴左上角）
-        dx, dy = icon_center_offset(storage)
+        dx, dy = icon_center_offset(storage, entry)
         return x + dx, y + dy
     if "fx" not in entry or "fy" not in entry:
         entry["fx"], entry["fy"] = _page_local_pos(

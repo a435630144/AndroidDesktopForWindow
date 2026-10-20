@@ -151,7 +151,7 @@ def main(app):
 
     # ---------- U5 旧控件兼容 ----------
     need = ["chk_autostart", "cmb_tier", "sld_icon_fit", "chk_auto_cols",
-            "spin_cols", "sld_opacity", "chk_takeover", "chk_autoclone",
+            "spin_cols", "sld_opacity", "chk_autoclone",
             "chk_widgets", "chk_tray", "chk_dev", "btn_rescan", "btn_reset",
             "btn_close", "cmb_layout_mode", "chk_autosync",
             "cmb_page_axis", "chk_auto_arrange", "chk_match_native"]
@@ -167,7 +167,8 @@ def main(app):
 
     # ---------- U6 模式页归属 ----------
     inside = page_widgets(dlg, 3)
-    check("U6 接管开关在「模式」页", id(dlg.chk_takeover) in inside)
+    # 反馈 16：接管开关下线（启动即接管），模式页只留布局与同步项
+    check("U6 接管开关已下线", not hasattr(dlg, "chk_takeover"))
     check("U6 自动克隆在「模式」页", id(dlg.chk_autoclone) in inside)
     check("U6 自动同步在「模式」页", id(dlg.chk_autosync) in inside)
     check("U6 布局模式下拉在「模式」页", id(dlg.cmb_layout_mode) in inside)

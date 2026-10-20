@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame,
 
 from . import autostart
 from . import grid_flow
+from .ui_choice import ComboBox
 from . import theme
 
 
@@ -293,7 +294,7 @@ class SettingsDialog(QDialog):
 
     def _page_appearance(self, body, lay):
         card, c = self._card(body, "图标")
-        self.cmb_tier = QComboBox()
+        self.cmb_tier = ComboBox()
         for label, tier in (("小", "small"), ("中（= 原生）", "medium"),
                             ("大", "large"), ("自定义", "custom")):
             self.cmb_tier.addItem(label, tier)
@@ -331,6 +332,20 @@ class SettingsDialog(QDialog):
                   fit_box, "选「自定义」后可拖动（30%~90%）；三档预设下只读")
         lay.addWidget(card)
         self._refresh_icon_labels()
+
+        # 反馈 12：**已配置额外大小的图标**管理区。
+        # 存在意义是"反悔入口"——把图标缩到 30% 会小到点不到，右键菜单
+        # 都调不出来；这里可以一键恢复 100%。
+        card, c = self._card(body, "已配置额外大小的图标")
+        self._scaled_box = QVBoxLayout()
+        self._scaled_box.setContentsMargins(0, 0, 0, 0)
+        self._scaled_box.setSpacing(4)
+        holder = QWidget(card)
+        holder.setLayout(self._scaled_box)
+        c.addWidget(holder)
+        self._scaled_rows = []
+        lay.addWidget(card)
+        self._refresh_scaled_icons()
 
         card, c = self._card(body, "外观")
         self.sld_opacity = QSlider(Qt.Horizontal)
@@ -401,8 +416,35 @@ class SettingsDialog(QDialog):
         lay.addWidget(card)
         self._refresh_grid_spins()
 
+        # 文件夹默认尺寸（反馈 14）：默认 3×3，最小 2×2；成员少时弹窗会按
+        # 实际数量收缩（2 个 -> 2×2），这里设的是**上限**。
+        card, c = self._card(body, "文件夹")
+        fdef = self.storage.folder_frame_default()
+        fbox = QWidget()
+        fh = QHBoxLayout(fbox)
+        fh.setContentsMargins(0, 0, 0, 0)
+        fh.setSpacing(8)
+        self.sp_folder_cols = QSpinBox()
+        self.sp_folder_cols.setRange(2, 6)
+        self.sp_folder_cols.setSuffix(" 列")
+        self.sp_folder_cols.setFixedWidth(82)
+        self.sp_folder_cols.setValue(int(fdef[0]))
+        self.sp_folder_cols.valueChanged.connect(self._apply_folder_frame_default)
+        self.sp_folder_rows = QSpinBox()
+        self.sp_folder_rows.setRange(2, 6)
+        self.sp_folder_rows.setSuffix(" 行")
+        self.sp_folder_rows.setFixedWidth(82)
+        self.sp_folder_rows.setValue(int(fdef[1]))
+        self.sp_folder_rows.valueChanged.connect(self._apply_folder_frame_default)
+        fh.addWidget(self.sp_folder_cols)
+        fh.addWidget(self.sp_folder_rows)
+        self._row(c, card, "默认展开大小", fbox,
+                  "默认 3×3；成员不足时按数量收缩（2 个 = 2×2），"
+                  "单个文件夹可在其右键菜单里单独设置")
+        lay.addWidget(card)
+
         card, c = self._card(body, "翻页与排列")
-        self.cmb_page_axis = QComboBox()
+        self.cmb_page_axis = ComboBox()
         self.cmb_page_axis.addItem("左右翻页", "horizontal")
         self.cmb_page_axis.addItem("上下翻页", "vertical")
         self.cmb_page_axis.setCurrentIndex(
@@ -421,14 +463,17 @@ class SettingsDialog(QDialog):
 
     def _page_mode(self, body, lay):
         card, c = self._card(body, "桌面接管")
-        self.chk_takeover = Switch()
-        self.chk_takeover.setChecked(self.storage.takeover())
-        self.chk_takeover.toggled.connect(self._apply_takeover)
-        self._row(c, card, "接管系统桌面",
-                  self.chk_takeover,
-                  "隐藏原生图标，由整理桌面全盘接管；关闭即恢复原生桌面")
+        # 反馈 16：**启动即接管**——「接管系统桌面」开关冗余，已删除。
+        # 想回到原生桌面就退出程序；只想用小组件就把「通用 → 显示桌面
+        # 小组件」打开、图标仍由本程序接管（两者互不牵连）。
+        note = QLabel("程序启动即接管系统桌面（原生图标隐藏）。"
+                      "不需要时从这里退出程序即可恢复原生桌面；"
+                      "小组件有独立的开关，见「通用」页。")
+        note.setObjectName("rowHint")
+        note.setWordWrap(True)
+        c.addWidget(note)
 
-        self.cmb_layout_mode = QComboBox()
+        self.cmb_layout_mode = ComboBox()
         self.cmb_layout_mode.addItem("网格模式（自动对齐）", "grid")
         self.cmb_layout_mode.addItem("无界模式（自由摆布）", "free")
         self.cmb_layout_mode.setCurrentIndex(
@@ -787,6 +832,73 @@ class SettingsDialog(QDialog):
         self.storage.reset_grid_origin()
         self._refresh_grid()
         self._sync_origin_controls()
+
+    def _refresh_scaled_icons(self):
+        """重建「已配置额外大小的图标」列表（反馈 12 的反悔入口）。"""
+        box = getattr(self, "_scaled_box", None)
+        if box is None:
+            return
+        while box.count():
+            item = box.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        self._scaled_rows = []
+        scaled = []
+        for e in self.storage.layout:
+            if e.get("type") != "app":
+                continue
+            try:
+                s = float(e.get("icon_scale", 1.0) or 1.0)
+            except (TypeError, ValueError):
+                s = 1.0
+            if abs(s - 1.0) > 1e-6:
+                scaled.append((e, s))
+        if not scaled:
+            lb = QLabel("没有单独设置过大小的图标")
+            lb.setObjectName("rowHint")
+            box.addWidget(lb)
+            return
+        for e, s in scaled:
+            row = QWidget()
+            h = QHBoxLayout(row)
+            h.setContentsMargins(0, 2, 0, 2)
+            h.setSpacing(10)
+            app = e.get("app") or {}
+            name = app.get("name") or e.get("id") or "?"
+            pct = int(round(s * 100))
+            lb = QLabel("%s · %d%%" % (name, pct))
+            lb.setObjectName("rowTitle")
+            btn = QPushButton("恢复 100%")
+            btn.setFixedWidth(96)
+            eid = e.get("id")
+            btn.clicked.connect(
+                lambda _c=False, eid=eid: self._reset_icon_scale(eid))
+            h.addWidget(lb, 1)
+            h.addWidget(btn, 0)
+            box.addWidget(row)
+            self._scaled_rows.append((eid, pct, btn))
+
+    def _reset_icon_scale(self, entry_id):
+        """把某个图标的大小恢复成 100%（并刷新本页列表）。"""
+        hook = getattr(self.window, "set_icon_scale", None)
+        if callable(hook):
+            hook(entry_id, 100, True)
+        else:
+            e = self.storage.find_entry(entry_id)
+            if e is not None:
+                e.pop("icon_scale", None)
+                self.storage.save()
+        self._refresh_scaled_icons()
+
+    def _apply_folder_frame_default(self, _value=0):
+        """文件夹默认展开尺寸（反馈 14）：写全局默认并让已开的弹窗重排。"""
+        c = int(self.sp_folder_cols.value())
+        r = int(self.sp_folder_rows.value())
+        self.storage.set_setting("folder_frame_default", [c, r])
+        hook = getattr(self.window, "refresh_folder_popup", None)
+        if callable(hook):
+            hook()
 
     def _apply_page_axis(self, _index):
         axis = self.cmb_page_axis.currentData() or "horizontal"

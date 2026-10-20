@@ -29,7 +29,9 @@ from PySide6.QtCore import (QEasingCurve, QMimeData, QPoint, QPointF,
 from PySide6.QtGui import (QBrush, QColor, QDragEnterEvent, QDragLeaveEvent,
                            QDragMoveEvent, QDropEvent, QFontMetrics,
                            QLinearGradient, QPen, QPixmap, QPainter)
-from PySide6.QtWidgets import QApplication, QMenu, QToolTip, QWidget
+from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMenu,
+                               QSlider, QSpinBox, QToolTip, QVBoxLayout,
+                               QWidget, QWidgetAction)
 
 from . import appsource
 from . import drag_merge
@@ -91,6 +93,8 @@ class AppIcon(QWidget):
     removeRequested = Signal(str)       # 右键移除（entry id）
     removeFromFolder = Signal(str)      # 文件夹内右键移出（payload "M:fid:idx"）
     dissolveRequested = Signal(str)     # 解散文件夹（entry id）
+    frameRequested = Signal(str, int, int)   # 文件夹尺寸上限（entry id, 列, 行）
+    iconScaleChanged = Signal(str, int)      # 单图标大小（entry id, 百分比）
     openLocation = Signal(dict)         # 在资源管理器中定位（桌面文件）
     dragStarted = Signal()
     dragFinished = Signal()
@@ -108,6 +112,7 @@ class AppIcon(QWidget):
         # 图标本身由 icon_size 已经放大——2026-10-18 DPI 感知）
         self._m = max(0.5, float(chrome_scale))
         self._no_label = not bool(show_label)
+        self._compact = False      # 文件夹内紧凑格（单行小标签路径）
         # v6 批次 A2（指导文档 §2.2）：grid_sizing.IconLayout 三档方案。
         # 传入时 chrome 全部按 cell/widget 比例派生（标签单行小字 elide，
         # 密度加密后瘦身——旧绝对值 24m/40m 在 cell 变小后会把图标挤成小点）；
@@ -120,15 +125,22 @@ class AppIcon(QWidget):
             self._label_font_px = int(layout.font_px)
             self.setFixedSize(int(layout.widget_w), int(layout.widget_h))
         elif compact:
-            # 文件夹内部格（2026-10-19 反馈 6）：手机文件夹是**紧凑图标阵**，
-            # 没有文件名、没有大片留白——参照 iOS/安卓文件夹内部。
+            # 文件夹内部格（2026-10-19 反馈 6）：手机文件夹是**紧凑图标阵**。
+            # 2026-10-20 反馈 7 反转了"不显示文件名"的旧规格：成员要有名字。
+            # 有标签时格高 = 图标 + 内边距 + 单行标签（标签单行 elide，
+            # 两行会把格高撑到桌面图标那么大，失去文件夹的密度感）。
             pad = max(2, int(round(4 * self._m)))
             self.icon_size = int(icon_size)
             self._box_x = pad
-            self._no_label = True
-            self._label_h = 0
-            self._label_font_px = 11
-            self.setFixedSize(icon_size + pad * 2, icon_size + pad * 2)
+            self._compact = True
+            self._label_font_px = max(10, int(round(11 * self._m)))
+            if self._no_label:
+                self._label_h = 0
+                self.setFixedSize(icon_size + pad * 2, icon_size + pad * 2)
+            else:
+                self._label_h = max(12, int(round(self._label_font_px * 1.45)))
+                self.setFixedSize(icon_size + pad * 2,
+                                  icon_size + pad * 2 + self._label_h)
         else:
             self.icon_size = icon_size
             self._box_x = None
@@ -486,6 +498,23 @@ class AppIcon(QWidget):
     def _paint_label(self, p: QPainter):
         name = self._display_name()
         if not name:
+            return
+        if self._compact:
+            # 文件夹成员：图标正下方一行小字（居中 + 末尾省略），
+            # 与图标同一列宽，长文件名不会溢出到邻格（反馈 7）
+            font = theme.ui_font(self._label_font_px)
+            p.setFont(font)
+            fm = QFontMetrics(font)
+            rect = QRect(self._box_x, 2 + self.icon_size,
+                         max(1, self.width() - self._box_x * 2),
+                         max(1, self._label_h))
+            line = fm.elidedText(name, Qt.ElideRight, rect.width())
+            if line:
+                p.setPen(theme.LABEL_SHADOW)
+                p.drawText(rect.adjusted(1, 1, 0, 0),
+                           Qt.AlignHCenter | Qt.AlignVCenter, line)
+                p.setPen(theme.LABEL_COLOR)
+                p.drawText(rect, Qt.AlignHCenter | Qt.AlignVCenter, line)
             return
         if self._layout is not None:
             # v6 A2：单行小字 elide（手机 launcher 语言——密度加密后旧两行
@@ -959,13 +988,31 @@ class AppIcon(QWidget):
 
     # ---------- 右键菜单 ----------
     def contextMenuEvent(self, e):
+        self._build_context_menu().exec(e.globalPos())
+
+    def _build_context_menu(self):
+        """构建图标右键菜单（拆出来便于单测：v7 反馈 14 的尺寸子菜单）。"""
         menu = QMenu(self)
         menu.setStyleSheet(theme.MENU_QSS)
+        # 子菜单是 Python 所有的 QMenu，需要持引用防 GC（DEVLOG 坑 #39）
+        self._ctx_submenus = []
         if self.in_folder:
             menu.addAction("打开", self._open)
             menu.addAction("移出文件夹", self._remove_from_folder)
         elif self.is_folder:
             menu.addAction("打开", self._open_folder)
+            # 反馈 14：单个文件夹的展开尺寸（上限；实际按成员数收缩）
+            from . import folder_layout
+            size_menu = menu.addMenu("文件夹大小")
+            self._ctx_submenus.append(size_menu)
+            cur = folder_layout.frame_pair(self.entry.get("frame"))
+            for c, r in folder_layout.FRAME_PRESETS:
+                act = size_menu.addAction(folder_layout.label(c, r))
+                act.setCheckable(True)
+                act.setChecked((c, r) == cur)
+                act.triggered.connect(
+                    lambda _c=False, c=c, r=r:
+                    self.frameRequested.emit(self.entry["id"], c, r))
             menu.addAction("解散文件夹", self._dissolve)
             menu.addAction("从整理桌面移除", self._remove_self)
         elif self.is_file:
@@ -974,8 +1021,78 @@ class AppIcon(QWidget):
             menu.addAction("从整理桌面移除", self._remove_self)
         else:
             menu.addAction("打开", self._open)
+            # 反馈 12：单个图标调大小（默认 100%，滑条 50%~200%，
+            # 可直接键入 >200；<50% 给警告——太小会点不到，设置页另有
+            # 「已配置额外大小的图标」管理区可以一键恢复）
+            scale_w = self._scale_action_widget(menu)
+            if scale_w is not None:
+                menu.addAction("图标大小")
+                wa = QWidgetAction(menu)
+                wa.setDefaultWidget(scale_w)
+                menu.addAction(wa)
             menu.addAction("从整理桌面移除", self._remove_self)
-        menu.exec(e.globalPos())
+        return menu
+
+    def _scale_action_widget(self, menu):
+        """「图标大小」滑条 + 数字框（QMenu 内嵌，反馈 12）。
+
+        滑条与数字框双向同步：滑条只给 50%~200%（常用区间），数字框可以
+        键入更大值（4K 屏 / 触屏用户可能真需要 250%）；低于 50% 时下方
+        出现一行警告，但**不阻止**——用户要有权把自己的图标调小。
+        """
+        try:
+            cur = int(round(float(self.entry.get("icon_scale", 1.0) or 1.0) * 100))
+        except (TypeError, ValueError):
+            cur = 100
+        cur = max(10, min(400, cur))
+        holder = QWidget(menu)
+        lay = QVBoxLayout(holder)
+        lay.setContentsMargins(14, 4, 14, 6)
+        lay.setSpacing(4)
+        row = QWidget(holder)
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(8)
+        sld = QSlider(Qt.Horizontal, row)
+        sld.setRange(50, 200)
+        sld.setValue(max(50, min(200, cur)))
+        sld.setFixedWidth(160)
+        spin = QSpinBox(row)
+        spin.setRange(10, 400)
+        spin.setSuffix("%")
+        spin.setValue(cur)
+        spin.setFixedWidth(76)
+        rl.addWidget(sld)
+        rl.addWidget(spin)
+        warn = QLabel("小于 50% 可能小到点不到", holder)
+        warn.setStyleSheet("color: #E85858; font-size: 11px;")
+        warn.setVisible(cur < 50)
+        lay.addWidget(row)
+        lay.addWidget(warn)
+
+        def _emit(pct):
+            self.iconScaleChanged.emit(self.entry["id"], int(pct))
+
+        def _from_slider(v):
+            if spin.value() != v:
+                spin.blockSignals(True)
+                spin.setValue(int(v))
+                spin.blockSignals(False)
+            warn.setVisible(int(v) < 50)
+            _emit(v)
+
+        def _from_spin(v):
+            if sld.value() != v:
+                sld.blockSignals(True)
+                sld.setValue(max(50, min(200, int(v))))
+                sld.blockSignals(False)
+            warn.setVisible(int(v) < 50)
+            _emit(v)
+
+        sld.valueChanged.connect(_from_slider)
+        spin.valueChanged.connect(_from_spin)
+        self._scale_widgets = (holder, sld, spin, warn)   # 测试可定位
+        return holder
 
     def _open(self):
         if not self.is_folder:

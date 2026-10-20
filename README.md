@@ -4,9 +4,9 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前版本 **v7a**（安装包 2.0.0，v7 迭代的第一个包），51 个测试文件全绿；**v7 正在实施**（尺寸两层解耦 / 双布局并存 / 拖拽与命中系统重做 / 文件夹与浮层细节），B1 尺寸地基已交付。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v7.md](docs/指导文档_v7.md)，实施计划见 [docs/实施计划_v7.md](docs/实施计划_v7.md)。
+> 🚧 **项目处于活跃开发中**：当前版本 **v7b**（安装包 2.1.0，v7 迭代的第二个包），**55 个测试脚本 / 1166 条断言全绿**；**v7a 实机的 17 条反馈已全部闭环**（尺寸两层解耦 / 双布局并存 / 拖拽连锁避让 / 组件命中 / 文件夹文件名与尺寸 / 启动即接管 + 小组件模式），等实机验收。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v7.md](docs/指导文档_v7.md)，实施计划见 [docs/实施计划_v7.md](docs/实施计划_v7.md)。
 
-[![release](https://img.shields.io/badge/release-v2.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-51%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v2.1.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-55%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -164,15 +164,17 @@ pwsh -File scripts/build_portable.ps1
 |---|---|---|
 | v5 | 网格自适应 / iOS 局部让位 / 组件跨度化 / 文件夹弹窗重做 / 分页 | 1.3.0 |
 | v6 → v6g | 双模式（整理 / 原生）/ 组件入网格 / 桌面目录同步 / 壁纸保留 / Win+D 守护，以及 14 项实机反馈修复 | 1.7.0 |
+| v7a | 尺寸两层模型（`cell_from_native` + `solve_dims`）+ 网格原点可手动定位 | 2.0.0 |
+| v7b | **v7a 实机 17 项反馈全部闭环**：双布局并存 / 拖拽连锁避让 / 组件透明区命中 / 下拉浮层实心 / 文件夹文件名+尺寸+右上角入口 / 单图标尺寸 / 启动即接管+小组件模式 | 2.1.0 |
 
 **v7 实施中**（规格 [docs/指导文档_v7.md](docs/指导文档_v7.md)，计划 [docs/实施计划_v7.md](docs/实施计划_v7.md)）：
 
-- [x] **B1** 尺寸地基：`cell_from_native` 由原生图标推导格子、档位只改格内占比（`icon_fit`）、行数=纯裁剪、网格原点可手动定位（源码 `v7a`，待出包）
+- [x] **B1** 尺寸地基：`cell_from_native` 由原生图标推导格子、档位只改格内占比（`icon_fit`）、行数=纯裁剪、网格原点可手动定位
 - [x] **B2** 双布局并存：网格与无界各自保存，切换零换算零清空（含图标尺寸单源，`icon_px` 退役）
-- [ ] **B3** 拖拽：组件 hover 按 frame 判定 / 中心合并 · 外环让位双区模型 / 提示时机
-- [ ] **B4** 命中系统：组件与弹窗补逐像素 `WM_NCHITTEST`，透明区不再吞点击
+- [x] **B3** 拖拽：预览避让的连锁结果一并进动画清单（布局为唯一真相），组件落定无条件重排
+- [x] **B4** 命中系统：组件矩形领地内不再吞点击（alpha=2 全窗填充 + `WM_NCHITTEST`→`HTCLIENT`）；逐像素 `AlphaMask` 经评估**不再需要**
 - [ ] **B5** 文件夹与视觉细节：图标比例、弹窗贴边、编辑控制点
-- [ ] **B6** 浮层与分页：自定义新增分页、下拉弹层配色
+- [x] **B6** 浮层与分页：下拉弹层实心（`ui_choice.ComboBox`）、分页入口两模式可用
 - [ ] **v7.1**（延后）：组件中心 / 组件商店（模块化组件生态）
 
 更远：整理模式原生能力补齐（F2 重命名 / Delete 回收站 / 剪贴板）、Ctrl+Z 撤销、多显示器。

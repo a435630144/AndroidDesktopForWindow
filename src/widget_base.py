@@ -380,6 +380,15 @@ class FloatingWidget(QWidget):
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        # 命中填充（反馈 3：组件左侧 / 上方有"点了没反应"的盲区）：
+        # 分层窗口（WA_TranslucentBackground）里 alpha=0 的像素会被 Windows
+        # 在 WM_NCHITTEST **之前**整块跳过——点击既进不了组件，也会被桌面
+        # 窗口的 _hit_widget 当成"在组件上"而返回 HTTRANSPARENT，最终落到
+        # 已隐藏的原生桌面：什么都不发生。先铺一层 alpha=2 的极淡填充
+        # （肉眼不可见，2/255 ≈ 0.8%），整块组件矩形就都进了命中表，
+        # 任何位置的点击都按"组件"处理（拖动 / 右键），盲区消失。
+        if self.anchored:
+            p.fillRect(self.rect(), QColor(0, 0, 0, 2))
         if self.anchored:
             # 锚定（非悬浮）：只铺一层低透明度 tint，无描边、无 chrome。
             # 卡片之外的像素保持全透明 -> 分层窗口的逐像素命中测试天然
@@ -500,7 +509,12 @@ class FloatingWidget(QWidget):
         self.entry["col"], self.entry["row"] = col, row
         self.entry["colspan"], self.entry["rowspan"] = cs, rs
         self.storage.save()
-        if changed:
+        # 2026-10-20 反馈 1（"避让不完成"）：**即使占位没变也要通知**。
+        # 拖动实时预览期间图标已被挤到别处、松手又按快照回退；若组件最终
+        # 落在原格（占位未变），旧实现不发 gridChanged -> 没人再执行
+        # displace -> 图标留回组件底下，看起来"避让到一半就停了"。
+        # 这里无条件发一次，接收方是幂等的（没有冲突就什么也不做）。
+        if changed or self.anchored:
             self.gridChanged.emit()
 
     def _sync_grid_occupancy(self):
@@ -525,6 +539,27 @@ class FloatingWidget(QWidget):
         col, row = grid_flow.resolve_widget_cell(
             self.storage, col, row, cs, rs, exclude_id=self.entry.get("id"))
         self._write_occupancy(col, row, cs, rs)
+
+    # ---------- 命中测试 ----------
+    def nativeEvent(self, eventType, message):
+        """WM_NCHITTEST 一律回 HTCLIENT（反馈 3 的兜底层）。
+
+        无边框 Tool 窗在 Qt 里仍可能被系统当成"可拖拽边框"，边缘几像素
+        会返回 HTLEFT/HTTOP 之类——那些像素既不触发组件的按下事件，也不
+        交给下面（被我们全屏接管、原生图标已隐藏）。组件是桌面的一部分，
+        整块矩形都该由组件自己吃：拖动、右键、编辑控制点全在 mousePress
+        里实现。
+        """
+        if eventType in (b"windows_generic_MSG", "windows_generic_MSG"):
+            try:
+                import ctypes
+                from ctypes import wintypes
+                msg = wintypes.MSG.from_address(int(message))
+            except Exception:
+                return super().nativeEvent(eventType, message)
+            if msg.message == 0x0084:          # WM_NCHITTEST
+                return True, 1                 # HTCLIENT
+        return super().nativeEvent(eventType, message)
 
     # ---------- 鼠标 ----------
     def mousePressEvent(self, e):

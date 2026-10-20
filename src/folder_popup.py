@@ -52,6 +52,7 @@ from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
 
 from . import appsource
 from . import effects
+from . import folder_layout
 from . import grid_flow
 from . import theme
 from . import win32_layer
@@ -363,66 +364,102 @@ class FolderPopup(QWidget):
         m = self.storage.icon_chrome_scale()
         pad = int(round(16 * m))
         title_h = int(round(36 * m))
-        bar_h = int(round(46 * m))     # M5 底部工具条
+        # 反馈 8：底部工具条取消——「样式」「快速添加」都移到右上角按钮组，
+        # 弹窗底边直接贴成员格（iOS 文件夹没有底部工具条）。
+        bar_h = 0
         return icon_size, m, pad, title_h, bar_h
 
+    def _palette_strip_h(self):
+        """色板展开时顶部多出来的一条（不遮住成员格）。"""
+        if not self._palette_open:
+            return 0
+        m = self.storage.icon_chrome_scale()
+        return int(round(30 * m)) + int(round(12 * m))
+
     def _members_rect(self):
-        """成员网格区域（标题下、工具条上）。"""
-        _s, m, pad, title_h, bar_h = self._metrics()
-        return QRect(pad // 2, title_h, self.width() - pad,
-                     self.height() - title_h - bar_h)
+        """成员网格区域（标题 / 色板条之下）。"""
+        _s, m, pad, title_h, _bar = self._metrics()
+        top = title_h + self._palette_strip_h()
+        return QRect(pad // 2, top, max(1, self.width() - pad),
+                     max(1, self.height() - top - pad // 2))
 
     def _member_icon_size(self):
         """文件夹内部图标边长（比桌面图标小一档；手机文件夹的密度）。"""
         base = max(40, int(self.storage.icon_metric()))
         return max(34, int(round(base * 0.62)))
 
+    def _member_label_h(self):
+        """成员名的单行标签高度（与 AppIcon 紧凑格同一公式）。"""
+        m = self.storage.icon_chrome_scale()
+        font_px = max(10, int(round(11 * m)))
+        return max(12, int(round(font_px * 1.45)))
+
     def _member_box(self):
-        """单个成员占位方块（含内部留白）边长。"""
+        """单个成员占位方块 (宽, 高)：图标 + 内边距 + 单行文件名（反馈 7）。"""
         m = self.storage.icon_chrome_scale()
         pad = max(2, int(round(4 * m)))
-        return self._member_icon_size() + pad * 2
+        icon = self._member_icon_size()
+        return icon + pad * 2, icon + pad * 2 + self._member_label_h()
+
+    def _grid_shape(self, n: int):
+        """按文件夹尺寸上限 + 实际成员数算 (列, 行)（folder_layout 纯函数）。
+
+        反馈 14：默认上限 3×3，最小 2×2，按数量收缩、优先排满一行。
+        """
+        return folder_layout.grid_shape(n, self.storage.folder_frame(self.entry))
 
     def _member_cols(self, n: int) -> int:
-        """成员列数（2026-10-19 反馈 6，参照手机文件夹）：
-
-        1~4 个 -> 2 列（2×2 / 2×1），5~9 个 -> 3 列（九宫格），
-        10 个以上 -> 4 列。旧实现一上来就 4 列，4 个成员排成一行显得
-        又稀又长，和用户给的参考图（2×2 / 3×3）完全不同。
-        """
-        if n <= 0:
-            return 2
-        if n <= 4:
-            return 2
-        if n <= 9:
-            return 3
-        return 4
+        """成员列数（= 当前上限内能铺满一行的列数）。"""
+        return self._grid_shape(n)[0]
 
     def _member_pitch(self):
-        """成员格间距：紧凑，只留一个小间隙（没有文件名行）。"""
+        """成员格间距 (横向, 纵向)：紧凑，只留一个小间隙。"""
         m = self.storage.icon_chrome_scale()
-        box = self._member_box()
-        gap = max(4, int(round(12 * m)))
-        return box + gap
+        bw, bh = self._member_box()
+        gap = max(4, int(round(10 * m)))
+        return bw + gap, bh + gap
 
     def _title_rect(self):
         _s, m, pad, title_h, _b = self._metrics()
-        return QRect(pad, 6, self.width() - pad * 2, title_h - 8)
+        # 标题左边界留出按钮组：标题不能画到右上角三个按钮下面
+        return QRect(pad, 6, max(1, self.width() - pad * 2 - 86), title_h - 8)
+
+    # ---------- 右上角按钮组（反馈 8：○ = 样式，＋ = 快速添加） ----------
+    def _header_btn_size(self):
+        return max(20, int(round(22 * self.storage.icon_chrome_scale())))
+
+    def _header_rects(self):
+        """右上角按钮矩形：{"close", "add", "style"}（从右往左排列）。"""
+        m = self.storage.icon_chrome_scale()
+        s = self._header_btn_size()
+        gap = max(4, int(round(6 * m)))
+        top = max(6, int(round(10 * m)))
+        right = self.width() - max(6, int(round(10 * m)))
+        out = {}
+        for key in ("close", "add", "style"):
+            out[key] = QRect(right - s, top, s, s)
+            right -= s + gap
+        return out
 
     def _close_rect(self):
-        s = max(20, int(round(24 * self.storage.icon_chrome_scale())))
-        return QRect(self.width() - s - 10, 10, s, s)
+        return self._header_rects()["close"]
+
+    def _add_btn_rect(self):
+        return self._header_rects()["add"]
+
+    def _style_btn_rect(self):
+        return self._header_rects()["style"]
 
     def _bar_rects(self):
-        """底部工具条两个 pill：[("add", rect), ("color", rect)]。"""
-        _s, m, pad, _t, bar_h = self._metrics()
-        y = self.height() - bar_h + int(round(8 * m))
-        h = bar_h - int(round(16 * m))
-        w = (self.width() - pad * 3) // 2
-        return [("add", QRect(pad, y, w, h)),
-                ("color", QRect(pad * 2 + w, y, w, h))]
+        """底部工具条已取消（反馈 8）；保留空实现供旧调用探测。"""
+        return []
 
-    def _build(self, anchor_rect, keep_backdrop=False):
+    def _build(self, anchor_rect, keep_backdrop=False, keep_pos=False):
+        """重排弹窗（成员格 / 尺寸 / 定位）。
+
+        keep_pos=True：色板开合这类"只改高度"的重排——位置保持不动，
+        否则会按 anchor=None 回退到屏幕居中，弹窗会从图标旁边跳走。
+        """
         for child in self.findChildren(AppIcon):
             child.deleteLater()
         # 成员部件全部销毁：飞行中的成员拖拽已死亡，标志位一并复位。
@@ -432,18 +469,18 @@ class FolderPopup(QWidget):
         icon_size, m, pad, title_h, bar_h = self._metrics()
         members = self.entry.get("apps", [])
         self._empty = not members
-        self._empty_hint = ("空文件夹\n从桌面拖入，或点底部「＋ 添加」"
+        self._empty_hint = ("空文件夹\n点右上角 ＋ 从桌面添加"
                             if self._empty else "")
-        # iOS 文件夹网格：按成员数选 2 / 3 / 4 列（2026-10-19 反馈 6
-        # 参照手机文件夹截图：4 个 = 2×2，5~9 个 = 3×3 紧凑方阵）
+        # 反馈 14：尺寸 = 上限 × 成员数（2 个 -> 2×2，3 个 -> 3×2，默认 3×3）
         n = len(members)
-        cols = self._member_cols(n)
-        rows = max(1, (len(members) + cols - 1) // cols)
-        box = self._member_box()
-        pitch = self._member_pitch()
-        w = pad + cols * box + (cols - 1) * max(0, pitch - box)
-        content_h = rows * box + (rows - 1) * max(0, pitch - box)
-        h = title_h + content_h + bar_h + pad
+        cols, rows = self._grid_shape(n)
+        bw, bh = self._member_box()
+        px, py = self._member_pitch()
+        gap_x, gap_y = px - bw, py - bh
+        content_w = cols * bw + (cols - 1) * gap_x
+        content_h = rows * bh + (rows - 1) * gap_y
+        w = pad + content_w
+        h = title_h + self._palette_strip_h() + content_h + pad
         # 高度不超过可用屏幕的 82%：桌面文件全拖进来的极端情况不顶出屏幕
         # 2026-10-20（用户反馈 F4，覆盖 v6 §6.2 的居中决策）：**贴着源图标
         # 展开**——下方优先、下方放不下翻上方、都放不下夹紧进屏幕。旧实现
@@ -456,7 +493,11 @@ class FolderPopup(QWidget):
         geo = screen.availableGeometry()
         max_h = int(geo.height() * 0.82)
         self.setFixedSize(max(240, w), min(max(150, h), max_h))
-        if anchor_rect is not None:
+        if keep_pos:
+            x, y = self.x(), self.y()
+            x = max(geo.left() + 8, min(x, geo.right() - self.width() - 8))
+            y = max(geo.top() + 8, min(y, geo.bottom() - self.height() - 8))
+        elif anchor_rect is not None:
             x, y = place_beside(
                 (anchor_rect.x(), anchor_rect.y(),
                  anchor_rect.width(), anchor_rect.height()),
@@ -468,28 +509,30 @@ class FolderPopup(QWidget):
             x = max(geo.left() + 8, min(x, geo.right() - self.width() - 8))
             y = max(geo.top() + 8, min(y, geo.bottom() - self.height() - 8))
         self.move(x, y)
-        if anchor_rect is not None:
+        if anchor_rect is not None and not keep_pos:
             # 玻璃从图标位置涌出：缩放中心 = 图标中心（弹窗本地坐标）
             self._zoom_center = self.mapFromGlobal(anchor_rect.center())
+        elif keep_pos:
+            pass      # 原地改高度：缩放中心保持原值
         else:
             self._zoom_center = QPointF(self.width() / 2, self.height() / 2)
         if not keep_backdrop:
             # 玻璃背板：必须在 show() 之前抓屏，否则会把自己抓进去
             self._backdrop = effects.glass_backdrop(
                 QRect(self.x(), self.y(), self.width(), self.height()))
+        top = title_h + self._palette_strip_h()
         for i, app in enumerate(members):
             member_payload = "M:%s:%d" % (self.entry.get("id"), i)
             entry = {"id": member_payload, "type": "app", "app": app}
             icon = AppIcon(entry, self._member_icon_size(), in_folder=True,
                            parent=self, chrome_scale=m, compact=True,
-                           show_label=False)
+                           show_label=True)   # 反馈 7：成员必须有文件名
             icon.drag_payload = member_payload
             icon.dragStarted.connect(self._on_drag_start)
             icon.dragFinished.connect(self._on_drag_finish)
             icon.activated.connect(self.launchApp.emit)
             icon.removeFromFolder.connect(self.removeMember.emit)
-            icon.move(pad // 2 + (i % cols) * pitch,
-                      title_h + (i // cols) * pitch)
+            icon.move(pad // 2 + (i % cols) * px, top + (i // cols) * py)
             # 弹窗内图标错峰淡入（玻璃涌出后依次浮现）
             icon.appear_in(120 + i * 45)
             icon.show()
@@ -640,13 +683,13 @@ class FolderPopup(QWidget):
 
     # ---------- M5：背景色板 ----------
     def _palette_layout(self):
-        """色板浮层几何：一行 8 色 + 「自动」，位于工具条上方。"""
-        _s, m, pad, _t, bar_h = self._metrics()
+        """色板几何：一行 8 色 + 「自动」，位于标题下方的专用色板条。"""
+        _s, m, pad, title_h, _b = self._metrics()
         sw = int(round(30 * m))
         gap = int(round(8 * m))
         total = sw * 9 + gap * 8
         x0 = (self.width() - total) // 2
-        y = self.height() - bar_h - sw - int(round(12 * m))
+        y = title_h + int(round(4 * m))
         rects = []
         for i, c in enumerate(theme.FOLDER_TINTS):
             rects.append((QRect(x0 + i * (sw + gap), y, sw, sw), c))
@@ -662,22 +705,69 @@ class FolderPopup(QWidget):
         self.storage.save()
         self.tintChanged.emit()
         self._palette_open = False
+        self.refresh()                  # 收起色板条：高度要还原
         self.update()
 
-    # ---------- M5：＋ 添加面板 ----------
+    # ---------- ＋ 快速添加面板（右上角 ＋，反馈 8） ----------
     def _open_add_panel(self):
+        was_palette = self._palette_open
         self._add_panel_open = not self._add_panel_open
         self._palette_open = False
-        self.update()
+        if was_palette:
+            # 色板条收起 = 高度变化，必须重排
+            self._build(None, keep_backdrop=True, keep_pos=True)
+            self._regrab_backdrop()
+        else:
+            self.update()
+
+    def _member_keys(self):
+        """本文件夹成员的身份键集合（id / target / name 三选一命中即同一元素）。"""
+        keys = set()
+        for m in self.entry.get("apps") or []:
+            if not m:
+                continue
+            for k in ("id", "target", "name"):
+                v = m.get(k)
+                if v:
+                    keys.add((k, v))
+        return keys
 
     def _add_candidates(self):
-        """桌面条目候选：排除文件夹自身与已在文件夹里的成员（按名称）。"""
-        member_names = {m.get("name") for m in self.entry.get("apps", [])}
+        """可加入的候选 = **当前在桌面上的应用**（反馈 8）。
+
+        排除三类，保证"同一元素同一时刻只能属于桌面或某一个文件夹"：
+          1. 本文件夹自己；
+          2. 本文件夹已有成员（按 id / target / name 三重比对——文件夹
+             成员可能是早期版本写进去的、没有 id 的裸 dict）；
+          3. **任何**文件夹的成员（虚拟文件夹是布局概念，成员在磁盘桌面上
+             依然存在，只看本文件夹会让同一个元素出现在两个文件夹里）。
+        """
+        mine = self._member_keys()
+        taken_ids = set(self.storage.folder_member_ids())
+        taken = set()
+        for e in self.storage.layout:
+            if e.get("type") != "folder":
+                continue
+            for m in e.get("apps") or []:
+                if not m:
+                    continue
+                for k in ("id", "target", "name"):
+                    v = m.get(k)
+                    if v:
+                        taken.add((k, v))
         out = []
         for e in self.storage.layout:
-            if e.get("type") != "app" or e.get("id") == self.entry.get("id"):
+            if e.get("type") != "app":
                 continue
-            if (e.get("app") or {}).get("name") in member_names:
+            app = e.get("app") or {}
+            if not app:
+                continue
+            if e.get("id") == self.entry.get("id"):
+                continue
+            if e.get("id") in taken_ids:
+                continue
+            keys = [(k, app.get(k)) for k in ("id", "target", "name") if app.get(k)]
+            if any(k in taken or k in mine for k in keys):
                 continue
             out.append(e)
         return out
@@ -702,18 +792,29 @@ class FolderPopup(QWidget):
         return rects, icon_size
 
     def _add_member_by_id(self, entry_id):
-        """把桌面条目加入文件夹（＋ 点选 / 拖入共用）。"""
+        """把桌面条目加入文件夹（＋ 点选 / 拖入共用）。返回是否成功。
+
+        唯一性守卫（反馈 8）：只接受"当前在桌面上的应用条目"，且该应用
+        不能已经是任何文件夹的成员——否则同一个元素会同时出现在桌面和
+        多个文件夹里（历史 bug，见 DEVLOG 坑 #81）。
+        """
         e = self.storage.find_entry(entry_id)
         if e is None or e.get("type") != "app":
-            return
-        app = e.get("app")
-        if not app or app in self.entry.get("apps", []):
-            return
+            return False
+        app = e.get("app") or {}
+        if not app:
+            return False
+        if entry_id in self.storage.folder_member_ids():
+            return False
+        keys = [(k, app.get(k)) for k in ("id", "target", "name") if app.get(k)]
+        if any(k in self._member_keys() for k in keys):
+            return False
         self.entry.setdefault("apps", []).append(app)
         self.storage.save()
         self.memberAdded.emit(entry_id)   # DesktopWindow：移出布局 + 动画
         self._add_panel_open = False
         self.refresh()
+        return True
 
     # ---------- 拖放：桌面图标拖到弹窗上加入 ----------
     def dragEnterEvent(self, e):
@@ -748,26 +849,39 @@ class FolderPopup(QWidget):
 
     zoom = Property(float, _get_zoom, _set_zoom)
 
+    def _toggle_style_panel(self):
+        """右上角 ○：展开 / 收起文件夹样式（背景色板）。
+
+        色板在标题下方占一条独立高度（不覆盖成员格）——所以开合要走一次
+        keep_pos 重排，窗口原地长高 / 收矮。
+        """
+        self._palette_open = not self._palette_open
+        self._add_panel_open = False
+        self._build(None, keep_backdrop=True, keep_pos=True)
+        self._regrab_backdrop()
+
+    def _toggle_add_panel(self):
+        """右上角 ＋：快速添加桌面应用（候选只列当前桌面上的元素）。"""
+        self._open_add_panel()
+
     def mousePressEvent(self, e):
         if e.button() != Qt.LeftButton:
             return
         pos = e.pos()
-        # NOACTIVATE 窗口收不到键盘焦点，Esc 不可用；提供右上角 × 明确关闭
-        if self._close_rect().contains(pos):
+        hdr = self._header_rects()
+        # 右上角三件套（反馈 8）：× 关闭 / ＋ 快速添加 / ○ 文件夹样式
+        if hdr["close"].contains(pos):
             self.close()
+            return
+        if hdr["add"].contains(pos):
+            self._toggle_add_panel()
+            return
+        if hdr["style"].contains(pos):
+            self._toggle_style_panel()
             return
         if self._title_rect().contains(pos):
             self._open_rename()
             return
-        for key, rect in self._bar_rects():
-            if rect.contains(pos):
-                if key == "add":
-                    self._open_add_panel()
-                else:
-                    self._palette_open = not self._palette_open
-                    self._add_panel_open = False
-                self.update()
-                return
         if self._palette_open:
             for rect, color in self._palette_layout():
                 if rect.contains(pos):
@@ -833,18 +947,39 @@ class FolderPopup(QWidget):
         p.setFont(f)
         p.drawText(tr, Qt.AlignHCenter | Qt.AlignVCenter,
                    self.entry.get("name") or "文件夹")
-        # 右上角 ×（自绘十字：比"×"字符字形更居中精致）
-        r = self._close_rect()
-        hovered = self._close_hover
-        if hovered:
-            p.setBrush(QColor(255, 255, 255, 30))
-            p.setPen(Qt.NoPen)
-            p.drawEllipse(r)
-        p.setPen(QPen(theme.TEXT_DIM, 1.5, Qt.SolidLine, Qt.RoundCap))
-        cx, cy = r.center().x(), r.center().y()
-        d = r.width() * 0.24
-        p.drawLine(QPointF(cx - d, cy - d), QPointF(cx + d, cy + d))
-        p.drawLine(QPointF(cx + d, cy - d), QPointF(cx - d, cy + d))
+        # 右上角按钮组（反馈 8）：× 关闭 / ＋ 快速添加 / ○ 文件夹样式
+        hdr = self._header_rects()
+        for key in ("close", "add", "style"):
+            r = hdr[key]
+            hovered = self._bar_hover.get(key, False)
+            active = ((key == "add" and self._add_panel_open)
+                      or (key == "style" and self._palette_open))
+            if hovered or active:
+                p.setBrush(QColor(255, 255, 255, 30) if hovered
+                           else QColor(theme.ACCENT.red(), theme.ACCENT.green(),
+                                       theme.ACCENT.blue(), 60))
+                p.setPen(Qt.NoPen)
+                p.drawEllipse(r)
+            cx, cy = r.center().x(), r.center().y()
+            if key == "close":
+                # 自绘十字：比"×"字符字形更居中精致
+                p.setPen(QPen(theme.TEXT_DIM, 1.5, Qt.SolidLine, Qt.RoundCap))
+                d = r.width() * 0.24
+                p.drawLine(QPointF(cx - d, cy - d), QPointF(cx + d, cy + d))
+                p.drawLine(QPointF(cx + d, cy - d), QPointF(cx - d, cy + d))
+            elif key == "add":
+                # ＋：快速添加桌面应用
+                p.setPen(QPen(theme.TEXT_DIM, 1.5, Qt.SolidLine, Qt.RoundCap))
+                e1 = r.width() * 0.26
+                p.drawLine(QPointF(cx - e1, cy), QPointF(cx + e1, cy))
+                p.drawLine(QPointF(cx, cy - e1), QPointF(cx, cy + e1))
+            else:
+                # ○：文件夹样式——圆环内填当前文件夹色，一眼看出是"换色"
+                tint = self.folder_tint(self.entry)
+                p.setPen(QPen(theme.TEXT_DIM, 1.4))
+                p.setBrush(QColor(tint.red(), tint.green(), tint.blue(), 235))
+                d = r.width() * 0.30
+                p.drawEllipse(QRectF(cx - d, cy - d, d * 2, d * 2))
         # 空态提示（成员网格区居中两行）
         if self._empty:
             p.setPen(theme.TEXT)
@@ -857,27 +992,8 @@ class FolderPopup(QWidget):
             p.setFont(f3)
             p.drawText(area.adjusted(0, 0, 0, -26),
                        Qt.AlignHCenter | Qt.AlignBottom,
-                       "从桌面拖入，或点底部「＋ 添加」")
-        # 底部工具条：两个 pill 按钮
-        for key, rect_ in self._bar_rects():
-            hovered = self._bar_hover.get(key, False)
-            active = ((key == "add" and self._add_panel_open)
-                      or (key == "color" and self._palette_open))
-            p.setPen(Qt.NoPen)
-            if active:
-                p.setBrush(QColor(theme.ACCENT.red(), theme.ACCENT.green(),
-                                  theme.ACCENT.blue(), 60))
-            elif hovered:
-                p.setBrush(theme.SURFACE_RAISED)
-            else:
-                p.setBrush(QColor(255, 255, 255, 18))
-            p.drawRoundedRect(QRectF(rect_), 12, 12)
-            p.setPen(theme.TEXT if (hovered or active) else theme.TEXT_DIM)
-            f4 = theme.ui_font(12)
-            p.setFont(f4)
-            label = "＋ 添加图标" if key == "add" else "颜色"
-            p.drawText(rect_, Qt.AlignCenter, label)
-        # 色板浮层（工具条上方一行 8 色 + 自动）
+                       "从桌面拖入，或点右上角 ＋ 添加")
+        # 色板浮层（标题下一条 8 色 + 自动）
         if self._palette_open:
             for rect_, color in self._palette_layout():
                 if color is None:
@@ -925,7 +1041,7 @@ class FolderPopup(QWidget):
         pos = e.pos()
         self._close_hover = self._close_rect().contains(pos)
         self._title_hover = self._title_rect().contains(pos)
-        for key, rect in self._bar_rects():
+        for key, rect in self._header_rects().items():
             self._bar_hover[key] = rect.contains(pos)
         if self._add_panel_open:
             rects, _sz = self._add_panel_layout()

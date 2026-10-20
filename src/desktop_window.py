@@ -1017,6 +1017,8 @@ class DesktopWindow(QWidget):
         icon.mergeRequested.connect(self._on_merge)
         icon.removeRequested.connect(self._on_remove_entry)
         icon.dissolveRequested.connect(self._on_dissolve)
+        icon.frameRequested.connect(self._on_folder_frame)
+        icon.iconScaleChanged.connect(self._on_icon_scale)
         icon.openLocation.connect(self._on_open_location)
         icon.dragStarted.connect(self._on_drag_started)
         icon.dragFinished.connect(self._on_drag_finished)
@@ -1032,8 +1034,9 @@ class DesktopWindow(QWidget):
                           if self.storage.find_entry(eid) is not None}
         size = self._icon_size()                 # v6 §1.3：双模式图标边长
         chrome = self.storage.icon_chrome_scale()
-        layout = self._icon_layout()               # v6 A2：三档 × 当前 cell
         for idx, entry in enumerate(self.storage.layout):
+            # v6 A2：三档 × 当前 cell；反馈 12 再乘该条目的 icon_scale
+            layout = self._icon_layout(entry)
             icon = AppIcon(entry, size, parent=self, chrome_scale=chrome,
                            layout=layout)
             self._wire_icon(icon)
@@ -1059,7 +1062,7 @@ class DesktopWindow(QWidget):
         self.update()
 
     # ---------- 增量更新（2026-10-18 M4：去 rebuild 化） ----------
-    def _icon_layout(self):
+    def _icon_layout(self, entry=None):
         """图标 layout（v6 A2 / v7 B1 §2.2，**双模式同源**）。
 
         档位（storage.icon_fit）× 当前 cell（GridMetrics 快照，屏幕驱动）
@@ -1068,12 +1071,21 @@ class DesktopWindow(QWidget):
         v7 B2（反馈 11）：**无界模式不再返回 None**。旧实现在无界模式把
         尺寸交给 `icon_px`，切模式 = 图标从 cell×占比 跳到 96px，整套
         图标"挤成一坨"。现在两模式共用同一份 layout，切模式尺寸零变化。
+
+        entry 传入时再乘它的 `icon_scale`（反馈 12：单图标大小覆盖）。
         """
         from . import grid_sizing
         m = grid_flow.current_metrics()
         if m is None:
             return None
-        return grid_sizing.icon_layout(m.cw, m.ch, self.storage.icon_fit())
+        scale = 1.0
+        if isinstance(entry, dict):
+            try:
+                scale = float(entry.get("icon_scale", 1.0) or 1.0)
+            except (TypeError, ValueError):
+                scale = 1.0
+        return grid_sizing.icon_layout(m.cw, m.ch, self.storage.icon_fit(),
+                                       scale=scale)
 
     def _add_icon(self, entry):
         """增量新增一个图标（add_app / rescan / 文件夹提取等）。
@@ -1082,7 +1094,7 @@ class DesktopWindow(QWidget):
             return self.icons[entry["id"]]
         size = self._icon_size()
         chrome = self.storage.icon_chrome_scale()
-        layout = self._icon_layout()               # v6 A2：三档 × 当前 cell
+        layout = self._icon_layout(entry)          # v6 A2 + 反馈 12 单图标倍数
         icon = AppIcon(entry, size, parent=self, chrome_scale=chrome,
                        layout=layout)
         self._wire_icon(icon)
@@ -1408,7 +1420,7 @@ class DesktopWindow(QWidget):
             e["col"], e["row"] = dst
             moves[e["id"]] = dst
         self._widget_preview_rect = rect
-        self._animate_icons_to_layout(moves)
+        self._animate_icons_to_layout(moves, sync_all=True)
 
     def _on_widget_drop(self, widget_id: str, gx: int, gy: int):
         """组件松手：预览态回退到快照（组件自身吸附落定后的
@@ -1594,13 +1606,32 @@ class DesktopWindow(QWidget):
         self._animate_icons_to_layout(moves, skip=dragged_id)
         self._cull_moved_icons(moves)   # v6 §4：跨页位移按落点页显隐
 
-    def _animate_icons_to_layout(self, moves: dict, skip=None):
+    def _animate_icons_to_layout(self, moves: dict, skip=None, sync_all=False):
         """把发生位移的图标弹簧滑到新格（reduced-motion 时直接跳位）。
 
         只动画 moves 里的图标——位移集合最小化是 M2 的核心性质，
         顺带避免每次 dragMove 全量迭代 200 个图标。
+
+        sync_all=True（组件拖动实时预览专用，反馈 1）：**除了 moves，
+        还要把"布局位置与视觉位置不一致"的图标全部滑回去**。
+        预览每次重算都先 `_restore_snap` 把数据回退到快照——上一轮被
+        挤走、这一轮已回到原格的图标不在本次 moves 里，不补动画的话
+        它们会**停在上一轮的目标格**上，与刚被挤过去的图标叠在一起，
+        正是用户看到的"避让预览阶段就堆叠"。
         """
-        for eid in moves:
+        targets = dict(moves or {})
+        if sync_all:
+            for e in self.storage.layout:
+                eid = e.get("id")
+                if eid in targets or eid == skip:
+                    continue
+                icon = self.icons.get(eid)
+                if icon is None:
+                    continue
+                tx, ty = self._entry_pos(e)
+                if icon.pos() != QPoint(tx, ty):
+                    targets[eid] = (int(e.get("col", 0)), int(e.get("row", 0)))
+        for eid in targets:
             if eid == skip:
                 continue
             icon = self.icons.get(eid)
@@ -2012,6 +2043,68 @@ class DesktopWindow(QWidget):
             except RuntimeError:
                 pass
 
+    def set_icon_scale(self, entry_id, percent, refresh: bool = True) -> bool:
+        """设置单个图标的大小（百分比，反馈 12）。
+
+        100% 等价于"没配过"——直接删键，便于设置页的管理区只看差异项。
+        取值范围 10%~400%：滑条给 50~200 的常用区间，数字框可键入更大
+        值；低于 50% 时右键面板会显示警告，但不阻止（用户有权调小）。
+        """
+        e = self.storage.find_entry(entry_id)
+        if e is None or e.get("type") != "app":
+            return False
+        try:
+            pct = int(percent)
+        except (TypeError, ValueError):
+            return False
+        pct = max(10, min(400, pct))
+        if pct == 100:
+            e.pop("icon_scale", None)
+        else:
+            e["icon_scale"] = round(pct / 100.0, 3)
+        if refresh:
+            self.storage.save()
+            self.refresh_grid()
+        return True
+
+    def _on_icon_scale(self, entry_id, percent):
+        """右键滑条改大小：120ms 合并 rebuild（拖动时可能连发几十次）。"""
+        if not self.set_icon_scale(entry_id, percent, refresh=False):
+            return
+        t = getattr(self, "_icon_scale_timer", None)
+        if t is None:
+            t = QTimer(self)
+            t.setSingleShot(True)
+            t.setInterval(120)
+            t.timeout.connect(self._flush_icon_scale)
+            self._icon_scale_timer = t
+        t.start()
+
+    def _flush_icon_scale(self):
+        self.storage.save()
+        self.refresh_grid()
+
+    def refresh_folder_popup(self):
+        """设置页改了「文件夹默认大小」后让已打开的弹窗按新上限重排。"""
+        if self._popup is not None:
+            self._popup.refresh()
+
+    def _on_folder_frame(self, entry_id, cols, rows):
+        """右键「文件夹大小」（反馈 14）：写 entry["frame"] 并立即重排弹窗。
+
+        设置的是**上限**；成员少时弹窗会按实际数量收缩（2 个 -> 2×2）。
+        """
+        if not self.storage.set_folder_frame(entry_id, cols, rows):
+            return
+        icon = self.icons.get(entry_id)
+        if icon is not None:
+            try:
+                icon.refresh_meta()
+            except RuntimeError:
+                pass
+        if self._popup is not None and self._popup.entry.get("id") == entry_id:
+            self._popup.refresh()
+
     def _on_popup_member_added(self, entry_id):
         """＋ 添加面板 / 拖入：桌面条目并入文件夹。成员 apps 的追加由
         popup._add_member_by_id 完成，这里只把桌面上的源条目移出布局
@@ -2290,8 +2383,10 @@ class DesktopWindow(QWidget):
             menu.addAction("切换到无界模式（自由摆布）" if not free_now
                            else "切换到网格模式（对齐网格）",
                            self._toggle_layout_mode)
-            if free_now:
-                menu.addAction("添加空白页", self._add_blank_page)
+            # 分页（反馈 17）：**两种模式都有**——旧实现把「添加空白页」
+            # 写在 `if free_now:` 里，网格模式下用户根本找不到分页入口。
+            menu.addAction("添加空白页", self._add_blank_page)
+            if self._page in grid_flow.extra_pages(self.storage):
                 menu.addAction("删除当前空白页", self._remove_blank_page)
             # 网格原点定位是**开发者功能**（v7 §3.4），入口只在设置页
             # 「高级 → 调试」里，且要开发者开关打开才可配置。
@@ -2300,12 +2395,26 @@ class DesktopWindow(QWidget):
 
         if self._selected:
             menu.addAction("删除选中（%d）" % len(self._selected), self._remove_selected)
+        # 小组件模式（反馈 16）：取代旧的「隐藏 / 显示桌面整理」。
+        # 桌面接管是常开的（程序打开就接管），右键只需要一个能单独
+        # 开关小组件的入口。
+        wid_act = menu.addAction("小组件模式")
+        wid_act.setCheckable(True)
+        wid_act.setChecked(bool(self.storage.get_setting("show_widgets")))
+        wid_act.triggered.connect(self._toggle_widgets_mode)
         menu.addAction("设置…", self.openSettingsRequested.emit)
-        menu.addSeparator()
-        if self._organize_mode():
-            menu.addAction("恢复系统原生桌面图标", self._exit_organize_mode)
-        menu.addAction("隐藏桌面整理", self.hide_desktop)
         return menu
+
+    def _toggle_widgets_mode(self, checked: bool):
+        """小组件模式开关（反馈 16）：只影响小组件显隐，不动图标接管。"""
+        on = bool(checked)
+        self.storage.set_setting("show_widgets", on)
+        layer = self._widget_layer
+        if layer is not None:
+            try:
+                layer.set_visible(on)
+            except Exception:
+                pass
 
     def _fill_new_menu(self, new_menu):
         """「新建」子菜单：文件夹 + 系统注册的全部 ShellNew 模板（反馈 6）。"""

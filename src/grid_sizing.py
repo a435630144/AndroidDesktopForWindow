@@ -204,7 +204,8 @@ def fit_for(native_px, cw: int, fit_or_tier) -> float:
     return _clamp(f, FIT_MIN, FIT_MAX)
 
 
-def icon_layout(cw: int, ch: int, fit_or_tier="medium") -> IconLayout:
+def icon_layout(cw: int, ch: int, fit_or_tier="medium",
+                scale: float = 1.0) -> IconLayout:
     """cell + 图标占比 -> 图标 widget 尺寸方案（v7 §3.1）。
 
     第三参接受 float（占比）或档位串；档位串走 `TIER_FIT_FALLBACK`
@@ -212,12 +213,21 @@ def icon_layout(cw: int, ch: int, fit_or_tier="medium") -> IconLayout:
 
     widget = icon_box + 2*CHROME_X（横向 chrome 仍是常量，见 §3.1 说明）；
     高度 = icon_box + 标签区。cell 只用来算 icon_box，不再乘档位。
+
+    scale（反馈 12）：**单图标覆盖倍数**，默认 1.0。它只乘在 icon_box 上
+    （标签区跟着图标边长走），不改变格子与全局档位——"每个图标一个乘数"
+    是 v7 §4 决策 A 的最后一层。
     """
     f = parse_fit(fit_or_tier)
     if f is None:
         f = TIER_FIT_FALLBACK["medium"]
+    try:
+        s = float(scale)
+    except (TypeError, ValueError):
+        s = 1.0
+    s = _clamp(s, 0.1, 4.0)
     cw = max(1, int(cw))
-    box = max(ICON_BOX_MIN, int(round(cw * f)))
+    box = max(ICON_BOX_MIN, int(round(cw * f * s)))
     chrome_x = CHROME_X
     w = max(1, box + 2 * chrome_x)
     lh = label_height(box)
