@@ -42,11 +42,12 @@ UI 对标 iOS 文件夹 + Liquid Glass 材质语言：
 """
 import traceback
 
-from PySide6.QtCore import (QAbstractAnimation, QEasingCurve,
+from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent,
                             QParallelAnimationGroup, QPoint,
                             QPointF, QPropertyAnimation, QRect, QRectF, Qt,
                             Signal, Property)
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen, QPixmap
+from PySide6.QtGui import (QColor, QCursor, QFont, QGuiApplication, QPainter,
+                           QPen, QPixmap)
 from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
 
 from . import appsource
@@ -207,6 +208,7 @@ class BandInputBox(QWidget):
     def __init__(self, text="", placeholder="", title="", parent=None):
         super().__init__(parent)
         self.title = title
+        self._done = False          # 提交/取消只允许发生一次
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(240, 36)
@@ -234,6 +236,12 @@ class BandInputBox(QWidget):
         self.show()
         self.line.setFocus()
         self.line.selectAll()
+        # 2026-10-20 反馈 6：桌面带里的窗口大多是 NOACTIVATE，点到别处
+        # 焦点**不会转移**，focusOutEvent 永远不来 -> 用户以为"必须按 Enter"。
+        # 应用级事件过滤按"点在哪"判定，比依赖焦点可靠。
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
 
     def attach_above(self, other_window):
         """挂桌面带并插到 other_window 之上（弹窗内浮现的输入框）。"""
@@ -252,6 +260,9 @@ class BandInputBox(QWidget):
 
     # ---------- 提交 / 取消 ----------
     def _commit(self):
+        if getattr(self, "_done", False):
+            return                       # 焦点丢失与点击可能各来一次，只提交一次
+        self._done = True
         t = self.line.text().strip()
         if t:
             self.committed.emit(t)
@@ -260,8 +271,22 @@ class BandInputBox(QWidget):
         self.close()
 
     def _cancel(self):
+        if getattr(self, "_done", False):
+            return
+        self._done = True
         self.cancelled.emit()
         self.close()
+
+    def eventFilter(self, obj, ev):
+        """点到框外即提交（比 focusOutEvent 可靠，见 show_at 注释）。"""
+        if ev.type() == QEvent.MouseButtonPress and not self._done:
+            try:
+                inside = self.frameGeometry().contains(QCursor.pos())
+            except Exception:
+                inside = True
+            if not inside:
+                self._commit()
+        return super().eventFilter(obj, ev)
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:
@@ -270,11 +295,17 @@ class BandInputBox(QWidget):
             super().keyPressEvent(e)
 
     def focusOutEvent(self, e):
-        # 失焦提交（指导文档 §4.2）：点到别处即落定
+        # 焦点真转移时也提交（指导文档 §4.2）
         self._commit()
         super().focusOutEvent(e)
 
     def close(self):
+        app = QApplication.instance()
+        if app is not None:
+            try:
+                app.removeEventFilter(self)
+            except Exception:
+                pass
         try:
             win32_layer.unregister_band_window(int(self.winId()))
         except Exception:

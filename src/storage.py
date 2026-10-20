@@ -200,11 +200,21 @@ class Storage:
         旧版建文件夹写 `target["app"] = None`（2026-10-20 起改为 `{}`）。
         在入口处一次性归一化，save 后落盘自然写回 `{}`——已在用的 state.json
         无需手工修，也不会在下一次合并新文件夹时把 None 重新写出去。
+
+        2026-10-20 追加：再治愈「同一元素同时在桌面与文件夹」。
+        成因是 `seed_desktop_clone()` / 增量同步只拿**顶层条目**做 diff，
+        而虚拟文件夹里的图标在磁盘桌面上依然存在，于是一次 rescan 就把
+        它们重复播回桌面。后果是从文件夹拖出成员时 `add_app()` 命中同 id
+        直接 return（不新增），成员却已从文件夹 pop 掉 —— 用户看到
+        "拖出来就消失了"（反馈 2）。这里按"保留文件夹成员、删桌面重复"处理：
+        用户把东西收进文件夹就是这个意图，桌面那份才是多余的。
         """
         for e in self._data.get("layout") or []:
             if isinstance(e, dict) and not isinstance(e.get("app"), dict):
                 if "app" in e:
                     e["app"] = {}
+        if self.dedupe_folder_members():
+            self.save()
 
     def _migrate(self, raw_schema: int = 2):
         """旧版本 state.json 兼容：
@@ -589,15 +599,68 @@ class Storage:
         self._data["layout"] = []
         self.save()
 
+    def folder_member_ids(self) -> set:
+        """所有虚拟文件夹成员的应用 id。
+
+        虚拟文件夹是**布局概念**，磁盘上文件还在桌面目录里——所以
+        「重新扫描 / 自动同步」必须排除这些 id，否则会把已收纳的图标
+        又播回桌面，造成"同一元素同时在桌面和文件夹"（2026-10-20 反馈 2/8）。
+        """
+        out = set()
+        for e in self._data.get("layout", []):
+            if e.get("type") != "folder":
+                continue
+            for m in e.get("apps") or []:
+                if m and m.get("id"):
+                    out.add(m["id"])
+        return out
+
+    def dedupe_folder_members(self) -> int:
+        """同一 app id 同时在桌面与文件夹 -> 删掉桌面那份，保留文件夹成员。
+
+        不修这个的直接后果：从文件夹拖出成员时 `add_app()` 命中同 id 的
+        桌面条目 -> 直接 return（不新增），而成员已从文件夹 pop 掉 --
+        视觉上就是"拖出来就消失了"。
+        """
+        dup = self.folder_member_ids()
+        if not dup:
+            return 0
+        lay = self._data.get("layout", [])
+        before = len(lay)
+        self._data["layout"] = [
+            e for e in lay
+            if not (e.get("type") == "app" and e.get("id") in dup)
+        ]
+        return before - len(self._data["layout"])
+
     def seed_desktop_clone(self, replace: bool = False):
-        """把桌面文件克隆进网格（replace=True 先清空；已存在的跳过）。"""
+        """把桌面文件克隆进网格（replace=True 先清空；已存在的跳过）。
+
+        「已存在」要**同时**看顶层条目和文件夹成员：虚拟文件夹里的图标
+        在磁盘桌面上依然存在，只看顶层会让 rescan 把它们重复播回来。
+        """
         from . import appsource  # 延迟导入，避免模块级循环依赖
         if replace:
             self._data["layout"] = []
-        existing = {e.get("app", {}).get("target") for e in self._data["layout"] if e.get("type") == "app"}
+        existing_targets = set()
+        existing_ids = set()
+        for e in self._data["layout"]:
+            if e.get("type") == "app":
+                a = e.get("app") or {}
+                if a.get("target"):
+                    existing_targets.add(a["target"])
+                if e.get("id"):
+                    existing_ids.add(e["id"])
+            for m in e.get("apps") or []:
+                if not m:
+                    continue
+                if m.get("target"):
+                    existing_targets.add(m["target"])
+                if m.get("id"):
+                    existing_ids.add(m["id"])
         added = 0
         for f in appsource.scan_desktop_files():
-            if f["target"] in existing:
+            if f["target"] in existing_targets or f["id"] in existing_ids:
                 continue
             self.add_app(f)
             added += 1
@@ -695,11 +758,25 @@ class Storage:
         if removed_ids:
             self._data["layout"] = kept
 
-        existing = {(e.get("app") or {}).get("target")
-                    for e in kept if e.get("type") == "app"}
+        existing = set()
+        existing_ids = set()
+        for e in kept:
+            if e.get("type") == "app":
+                a = e.get("app") or {}
+                if a.get("target"):
+                    existing.add(a["target"])
+                if e.get("id"):
+                    existing_ids.add(e["id"])
+            for m in e.get("apps") or []:
+                if not m:
+                    continue
+                if m.get("target"):
+                    existing.add(m["target"])
+                if m.get("id"):
+                    existing_ids.add(m["id"])
         new_ids = []
         for f in files:
-            if f["target"] in existing:
+            if f["target"] in existing or f["id"] in existing_ids:
                 continue
             entry = self.add_app(f)
             if entry is not None and entry.get("id") not in new_ids:

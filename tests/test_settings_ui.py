@@ -274,6 +274,16 @@ def main(app):
                               "btn_reset_origin")
                   if getattr(dlg, n, None) is None])
     if getattr(dlg, "chk_origin", None) is not None:
+        # 2026-10-20 反馈 5：原点是**开发者功能**，dev_mode 关时整组只读
+        dlg.chk_dev.setChecked(False)
+        app.processEvents()
+        check("U14b 开发者关时原点整组禁用",
+              not dlg.chk_origin.isEnabled()
+              and not dlg.btn_reset_origin.isEnabled(),
+              "chk_en=%s btn_en=%s" % (dlg.chk_origin.isEnabled(),
+                                       dlg.btn_reset_origin.isEnabled()))
+        dlg.chk_dev.setChecked(True)      # 以下断言在开发者模式打开下进行
+        app.processEvents()
         check("U14 自动模式下原点开关关闭、spin 与按钮禁用",
               (not dlg.chk_origin.isChecked())
               and not dlg.sp_ox.isEnabled()

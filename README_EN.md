@@ -152,6 +152,7 @@ pwsh -File scripts/build_portable.ps1
 | [HANDOVER.md](HANDOVER.md) | **Handover manual**: module map, core mechanics, safety rules, open items, **§10 documentation standards**, takeover checklist |
 | [docs/指导文档_v7.md](docs/指导文档_v7.md) | **Current spec** (Chinese): v7 — two-layer sizing / coexisting dual layouts / drag & hit-testing / folder & overlays |
 | [docs/实施计划_v7.md](docs/实施计划_v7.md) | **Current implementation plan** (Chinese): B1 split into T1–T15 |
+| [docs/反馈研判_v7_1.md](docs/反馈研判_v7_1.md) | **Triage of the 17 field reports against v7a** (Chinese): which are not-yet-started batches, which are real bugs, rebatched plan + 3 open decisions |
 | [docs/DESKBOX_REFERENCE.md](docs/DESKBOX_REFERENCE.md) | DeskBox research report and lessons applicable to this project (Chinese) |
 | [docs/archive/](docs/archive/README.md) | **Archive**: Phase 1 / v5 / v6g specs and plans (frozen, reference only) |
 

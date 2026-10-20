@@ -152,6 +152,7 @@ pwsh -File scripts/build_portable.ps1
 | [HANDOVER.md](HANDOVER.md) | **接手手册**：模块地图、核心机制、安全铁律、开放项、**§10 文档更新标准**、接手检查清单 |
 | [docs/指导文档_v7.md](docs/指导文档_v7.md) | **当前规格**：v7 —— 尺寸两层模型 / 双布局并存 / 拖拽与命中 / 文件夹与浮层（21 项反馈 → A–G 归组） |
 | [docs/实施计划_v7.md](docs/实施计划_v7.md) | **当前实施计划**：B1 拆 T1–T15，每卡含文件 / 签名 / 验证命令 / 预期红 |
+| [docs/反馈研判_v7_1.md](docs/反馈研判_v7_1.md) | **v7a 实机 17 项反馈的研判**：哪些是尚未开工的批次、哪些是真 bug、批次重组与 3 个待拍板决策 |
 | [docs/DESKBOX_REFERENCE.md](docs/DESKBOX_REFERENCE.md) | 竞品 DeskBox 调研与可借鉴点分级清单 |
 | [docs/archive/](docs/archive/README.md) | **归档区**：Phase 1 / v5 / v6g 的规格与计划（已冻结，仅供回溯） |
 

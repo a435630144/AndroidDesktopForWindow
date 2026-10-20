@@ -225,40 +225,23 @@ def main(app):
               and w.storage.icon_tier() == "medium",
               "%s / %s" % (w._current_icon_tier(), w.storage.icon_tier()))
 
-    # ---------- M12/M13：网格原点入口（v7 §3.2 / 反馈 21） ----------
+    # ---------- M12/M13：网格原点**不在**右键里（2026-10-20 反馈 5 反转） ----------
+    # 原点定位是开发者功能：入口只在设置页「高级 → 调试」，且开发者开关
+    # 打开后才可配置。桌面右键无论自动 / 手动都不出现这两项。
     m4 = w._build_context_menu()
     texts4 = menu_texts(m4)
-    check("M12 菜单有「定位网格原点」", any("定位网格原点" in t for t in texts4),
-          "%s" % texts4[-8:])
+    check("M12 右键不出现「定位网格原点」",
+          not any("定位网格原点" in t for t in texts4), "%s" % texts4[-8:])
     check("M13 自动模式下不出现「重置网格位置」",
           "重置网格位置" not in texts4, "%s" % texts4[-8:])
     w.storage.set_grid_origin("manual", 100, 50)
     settle(app)
     m5 = w._build_context_menu()
     texts5 = menu_texts(m5)
-    check("M13 手动模式下出现「重置网格位置」", "重置网格位置" in texts5,
-          "%s" % texts5[-8:])
-    # 定位项常驻（这是进入手动模式的快捷入口），触发后进入取点态
-    pick = next((a for a in m5.actions() if "定位网格原点" in a.text()), None)
-    check("M12b 定位项可触发", pick is not None and pick.isEnabled(),
-          "%s" % (pick,))
-    if pick is not None:
-        w._picking_origin = False
-        pick.trigger()
-        settle(app)
-        check("M12c 触发后进入取点态", w._picking_origin is True,
-              "got %r" % (w._picking_origin,))
-        w._cancel_pick_origin()
-    # 重置项：清空两键回居中
-    rst = next((a for a in m5.actions() if a.text() == "重置网格位置"), None)
-    if rst is not None:
-        rst.trigger()
-        settle(app)
-        check("M13b 重置后回自动居中",
-              w.storage.grid_origin() is None
-              and w.storage.grid_origin_mode() == "auto",
-              "%r / %s" % (w.storage.grid_origin(),
-                           w.storage.grid_origin_mode()))
+    check("M12b 手动模式下右键也不出现「定位网格原点」",
+          not any("定位网格原点" in t for t in texts5), "%s" % texts5[-8:])
+    check("M13b 手动模式下右键也不出现「重置网格位置」",
+          "重置网格位置" not in texts5, "%s" % texts5[-8:])
 
     w2.close()
     w.close()

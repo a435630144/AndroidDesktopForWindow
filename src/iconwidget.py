@@ -854,11 +854,12 @@ class AppIcon(QWidget):
                 ghost.close()
             self._press_pos = None
             self.dragFinished.emit()
-            # 落位回弹：带动量的手势才配弹跳（苹果规范：动量弹簧 ~0.8，
-            # 无动量点按用临界阻尼）。欠阻尼 0.62 ≈ 7% 一次衰减过冲，
-            # 替代旧 OutBack（过冲量与时长无关的多项式拱，形状不对）。
-            self._animate(b"press_scale", 1.06, 1.0, 300,
-                          effects.spring_curve(0.62, 300))
+            # 松手收尾：**不再放大回弹**（2026-10-20 反馈 10）。
+            # 旧实现从 1.06 起用欠阻尼 0.62 弹回 1.0——网格模式有落位动画
+            # 盖着还好，无界模式位置没变，那一下"鼓包"格外突兀。
+            # 改成从当前缩放临界阻尼归位：无过冲，末值精确 1.0。
+            self._animate(b"press_scale", self._press_scale, 1.0, 140,
+                          effects.spring_curve(1.0, 140))
         except RuntimeError:
             # 拖动期间本部件已被删除/重建（drop -> rebuild() 的 deleteLater、
             # FolderPopup 关闭等），信号源 C++ 对象已不存在。必须吞掉：

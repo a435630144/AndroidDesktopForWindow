@@ -2052,7 +2052,15 @@ class DesktopWindow(QWidget):
             except Exception:
                 col = row = None
         app = folder["apps"].pop(idx)
-        self.storage.add_app(app, col, row)
+        known = {e.get("id") for e in self.storage.layout}
+        entry = self.storage.add_app(app, col, row)
+        # 防御：若同一 id 已在桌面（历史数据里"桌面+文件夹"重复过），
+        # add_app 会直接返回已有条目而不新增——不处理的话成员已从文件夹
+        # pop 掉、桌面上那个又可能不在当前页，用户看到的就是"拖出来没了"。
+        # 把它挪到松手处并确保可见，比静默丢弃好得多。
+        if (entry is not None and entry.get("id") in known
+                and col is not None and row is not None):
+            entry["col"], entry["row"] = int(col), int(row)
         if not folder["apps"]:
             self.storage.remove_entry(fid)
         self.storage.compact_layout()
@@ -2286,16 +2294,11 @@ class DesktopWindow(QWidget):
             if free_now:
                 menu.addAction("添加空白页", self._add_blank_page)
                 menu.addAction("删除当前空白页", self._remove_blank_page)
-            # v7 §3.2 / 反馈 21：网格原点。定位项**常驻**（这是进入手动模式的
-            # 唯一快捷入口）；重置项只在手动模式下出现（自动模式下无意义）。
-            menu.addSeparator()
-            menu.addAction("定位网格原点（点击桌面确定）",
-                           self._begin_pick_origin)
-            if self.storage.grid_origin_mode() == "manual":
-                menu.addAction("重置网格位置", self._reset_grid_origin)
+            # 网格原点定位是**开发者功能**（v7 §3.4），入口只在设置页
+            # 「高级 → 调试」里，且要开发者开关打开才可配置。
+            # 2026-10-20 用户反馈 5：桌面右键不该出现这两项。
             menu.addSeparator()
 
-        menu.addAction("添加应用…", self.openAddAppsRequested.emit)
         if self._selected:
             menu.addAction("删除选中（%d）" % len(self._selected), self._remove_selected)
         menu.addAction("设置…", self.openSettingsRequested.emit)
@@ -2303,14 +2306,6 @@ class DesktopWindow(QWidget):
         if self._organize_mode():
             menu.addAction("恢复系统原生桌面图标", self._exit_organize_mode)
         menu.addAction("隐藏桌面整理", self.hide_desktop)
-
-        # 构建标识（2026-10-19 版本混淆事故）：用户报"还是没修好"，实际是
-        # 跑着上一轮的包。灰显不可点，只为一眼回答"这是哪个构建"。
-        from . import version
-        menu.addSeparator()
-        ver_act = menu.addAction(version.label())
-        ver_act.setEnabled(False)
-        ver_act.setObjectName("ctxVersion")
         return menu
 
     def _fill_new_menu(self, new_menu):
