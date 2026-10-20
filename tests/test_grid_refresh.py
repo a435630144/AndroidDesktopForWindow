@@ -130,8 +130,12 @@ def main(app):
     check("G4 改列数立即重算（无需重开接管）",
           after_cols == 5 and after_cols != before_cols,
           "before=%s after=%s" % (before_cols, after_cols))
-    check("G4 设置值已落盘", st2.get_setting("columns") == 5,
-          "%s" % (st2.get_setting("columns"),))
+    # v7 §10.3：列数的权威键是 grid_cols + grid_dims_mode（旧键 columns 已迁移）
+    check("G4 设置值已落盘（grid_cols / grid_dims_mode）",
+          st2.get_setting("grid_cols") == 5
+          and st2.grid_dims_mode() == "manual",
+          "grid_cols=%s mode=%s" % (st2.get_setting("grid_cols"),
+                                    st2.grid_dims_mode()))
 
     # ---------- G5：切档位 ----------
     # 2026-10-19 反馈 4：icon_match_native 默认开 —— 图标本体锁死在原生
@@ -151,14 +155,15 @@ def main(app):
           "icon=%s want=%s" % ((w2.icons["a"].width(),
                                 w2.icons["a"].height()),
                                (lay_small.widget_w, lay_small.widget_h)))
-    check("G5b 对齐原生：档位只改格距，图标本体不变",
-          m3.cw > m2.cw and lay_small.icon_box == box_before,
-          "cw %d->%d box %d->%d" % (m2.cw, m3.cw, box_before,
-                                    lay_small.icon_box))
+    # v7 §3.1 契约反转：档位只改**图标本体**，格距纹丝不动（v6 是反过来的）
+    check("G5b 切档位不改格距、只改图标本体",
+          m3.cw == m2.cw and m3.ch == m2.ch and lay_small.icon_box < box_before,
+          "cell %dx%d->%dx%d box %d->%d" % (m2.cw, m2.ch, m3.cw, m3.ch,
+                                            box_before, lay_small.icon_box))
 
     # ---------- G6：自动列数 ----------
-    # 先切回原档位——否则 G5 的 small 档会让 cell 变大、铺满列数天然变少，
-    # 这不是"没恢复铺满"，而是测试自己把几何改了（顺序耦合）。
+    # 先切回原档位，保持与 G5 之前的档位一致（v7 起档位已不改 cell，
+    # 这里只是让后续断言的上下文干净）。
     dlg.cmb_tier.setCurrentIndex(dlg.cmb_tier.findData(tier_orig))
     settle(app)
     dlg.chk_auto_cols.setChecked(True)

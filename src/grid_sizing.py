@@ -1,55 +1,74 @@
 # -*- coding: utf-8 -*-
-"""网格尺寸体系（v6 批次 A，指导文档_网格与无界双模式_v6.md §2）。
+"""网格尺寸体系 —— v7 两层模型（指导文档_v7.md §2.1 / §3.1 / §3.2）。
 
-**输入只有用户屏幕 availableGeometry**（DPI 感知后的逻辑像素）——
-没有任何从某台机器反推的常数（用户反馈："公式不是以我的电脑为准，
-而是去获取用户电脑的设置信息"）。
+## 层一 · 格距（cell）：只由**原生图标边长**决定，与档位无关
 
-### cell 尺寸公式（§2.1，网格模式）
+    widget_w0 = native_px + 2*CHROME_X
+    label_h0  = max(LABEL_H_MIN, round(_font_for_box(native_px)*1.5) + 4)
+    widget_h0 = native_px + label_h0
+    cell_w    = round(widget_w0 / FIT_BASE)      # FIT_BASE = 0.74
+    cell_h    = round(widget_h0 / FIT_BASE)
 
-    REF_SHORT = 1080.0            # 参考屏逻辑短边（设计基准，非机器参数）
-    CELL_REF  = (78.0, 96.0)      # 参考屏上的 cell（逻辑 px）
-    k    = clamp(min(W, H) / REF_SHORT, 0.7, 1.8)   # 短边归一化
-    cell = (round(78 * k), round(96 * k))
+`FIT_BASE=0.74` 直接沿用 v6 `TIERS["medium"]`，所以**升级后格距与 v6 一模一样**
+（本机 native 48 -> 84x91），用户的 `col/row` 零迁移。
 
-为什么不再乘 dpr：`availableGeometry` 返回的已是 DPI 感知的逻辑像素
-（125% 缩放把 2560x1440 物理折算成 2048x1152 逻辑），cell 再乘 dpr
-会让高 DPI 大屏的 cell 反而更大、列数更少——背离"按分辨率自适应"
-的诉求。短边归一化保证任意分辨率/缩放的机器每屏格数密度一致：
+v6 的病根是 `cell_for_native(native_px, tier)` 把档位除进了 cell —— 切档位
+= 改格距 = 改行列数。v7 起档位不再参与 cell。
 
-    1920x1080 -> 78x96 -> 23 列 x 10 行
-    2048x1152 -> 83x102 -> 23 列 x 10 行
-    1366x768  -> 55x68  -> 23 列 x 10 行
-    2560x1440 -> 104x128 -> 23 列 x 10 行
+## 层二 · 图标占比（icon_fit）：只改图标本体
 
-### 图标三档（§2.2）
+    icon_box = round(cell_w * icon_fit)          # icon_fit ∈ [0.30, 0.90]
 
-widget 整体（图标 + 标签）按档位比例 x cell 渲染；AppIcon 内部自适应
-（chrome 全部按 cell/widget 比例派生——旧绝对值 24m/40m 在 cell 变小后
-会把图标挤成小点；标签改单行小字 elide，密度加密后必须瘦身）：
+三档是这个比例的预设，「中」档 = `native_px / cell_w`（本机 0.571），
+恰好等于原生桌面图标边长 —— 这是"图标跟原桌面一致"的回归锁。
 
-    档位   比例    @cell 83x102 -> widget / icon_box / label
-    small  0.58    48x59 / 34 / 9px 单行
-    medium 0.74    61x75 / 47 / 10px 单行（默认）
-    large  1.00    83x102 / 69 / 14px 单行
+    TIER_FIT          = {"small": 0.42, "medium": None, "large": 0.82}
+    TIER_FIT_FALLBACK = {"small": 0.42, "medium": 0.57, "large": 0.82}
 
-icon_box = widget_w - 2*chrome_x（chrome_x=7，规格表锁定）；
-label_h = widget_h - icon_box；font_px 随 icon_box 分档（9/10/14）。
+`medium` 的 None 表示"跟随 native"（换屏换缩放自动跟随）；无 native 信息时
+（旧调用点只传档位串）退回 FALLBACK。
 
-无界模式（§1.2）不用本公式：图标 widget = settings["icon_px"] 用户
-像素值直接生效；cell 仅供网格模式与快照回退。
+## 行列：列数改 cell，行数只裁剪
+
+    cols_auto = clamp(UW // cw0, 1, MAX_COLS)
+    rows_auto = clamp(UH // ch,  1, MAX_ROWS)     # 必须在 ch 定稿之后算
+
+改列数 -> `cw = UW // cols`（floor，保证不溢出）-> `ch = cw*aspect` -> 行上限
+随之变小；改行数**一个像素都不动 cell**，只是网格只用前 rows 行。
+
+## 兼容
+
+`cell_for_native(native_px, tier)` 保留签名但**忽略 tier**（deprecated，
+v7.1 删）；`icon_layout(cw, ch, "medium")` 等旧调用零改动（走 FALLBACK）。
+`cell_for_screen()` 降级为兜底（非 Windows / 读注册表失败时用）。
 """
 from __future__ import annotations
 
 from typing import NamedTuple, Optional, Tuple
 
+# ---------------------------------------------------------------- 兜底公式常数
 REF_SHORT = 1080.0
 CELL_REF = (78.0, 96.0)
 K_MIN, K_MAX = 0.7, 1.8
 
-# 图标三档（§2.2）：widget 整体（含标签）相对 cell 的比例
+# ---------------------------------------------------------------- 两条主线常数
+FIT_BASE = 0.74          # 中档 widget 占格（沿用 v6 TIERS["medium"]）
+FIT_MIN, FIT_MAX = 0.30, 0.90
+
+# v6 遗留：widget 整体占格（仅 cell_for_screen 兜底路径与旧文档引用）
 TIERS = {"small": 0.58, "medium": 0.74, "large": 1.0}
 DEFAULT_TIER = "medium"
+
+# v7：档位 = 图标在格子里的占比；medium 的 None = 跟随 native_px/cell_w
+TIER_FIT = {"small": 0.42, "medium": None, "large": 0.82}
+TIER_FIT_FALLBACK = {"small": 0.42, "medium": 0.57, "large": 0.82}
+
+# 行列上限：cell 只能变大不能变小，所以自动值就是上限
+MIN_COLS, MAX_COLS = 1, 24
+MIN_ROWS, MAX_ROWS = 1, 12
+
+# 默认边距（逻辑 px，调用方按 chrome_scale 缩放后传入）
+EDGE_X, EDGE_Y = 26, 22
 
 # 规格表（@cell 83x102）锁死的派生常数：
 CHROME_X = 7            # 图标方块左右留白 = widget_w - icon_box 的一半
@@ -69,14 +88,37 @@ class IconLayout(NamedTuple):
     font_px: int        # 标签字号（单行 elide）
 
 
+class Dims(NamedTuple):
+    """一次网格几何求解结果（逻辑像素）。
+
+    cols/rows/cw/ch/ox/oy 与 GridMetrics 同义；cols_auto/rows_auto 是
+    **只读**上限（供设置页显示"1 .. N"，也供 clamp 用）。
+    """
+
+    cols: int
+    rows: int
+    cw: int
+    ch: int
+    cols_auto: int
+    rows_auto: int
+    ox: int
+    oy: int
+
+
 def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
+
+
+def _clampi(v: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, int(v)))
 
 
 def cell_for_screen(W: int, H: int) -> Tuple[int, int]:
     """屏幕工作区尺寸 -> cell（cw, ch），短边归一化 + 密度跨设备一致。
 
-    W/H 传 availableGeometry 的逻辑像素（任务栏已扣除）。
+    **v7 起降级为兜底**（非 Windows / 读不到原生图标尺寸时用）：
+    默认路径走 `cell_from_native()`，因为"图标与原桌面一致"优先于
+    "跨设备每屏格数密度一致"（用户 2026-10-20 明确取舍）。
     """
     short = max(1, min(int(W), int(H)))
     k = _clamp(short / REF_SHORT, K_MIN, K_MAX)
@@ -99,48 +141,121 @@ def _font_for_box(icon_box: int) -> int:
     return 14
 
 
-def icon_layout(cw: int, ch: int, tier) -> IconLayout:
-    """cell 尺寸 + 档位 -> 图标 widget 尺寸方案（规格表 §2.2）。
+def label_height(icon_box: int) -> int:
+    """标签区高度（与 `AppIcon._paint_label` 的单行布局同源）。"""
+    return max(LABEL_H_MIN, int(round(_font_for_box(icon_box) * 1.5)) + 4)
 
-    widget = round(cell * TIERS[tier])；icon_box = widget_w - 2*CHROME_X
-    （下限 ICON_BOX_MIN）；label_h = widget_h - icon_box（下限
-    LABEL_H_MIN）；font_px 随 icon_box 分档。
+
+# ---------------------------------------------------------------- 层一：cell
+
+def cell_from_native(native_px: int) -> Tuple[int, int]:
+    """原生图标边长 -> cell（cw, ch）。**不含档位**（v7 §2.1 层一）。
+
+    反解而不是猜常数：icon_box = native_px 时 widget 有多大，再除以
+    FIT_BASE 得到"刚好让图标等于原生尺寸"的格子。换屏换缩放自动跟随。
     """
-    t = parse_tier(tier)
-    r = TIERS[t]
-    cw, ch = max(1, int(cw)), max(1, int(ch))
-    w = max(1, int(round(cw * r)))
-    h = max(1, int(round(ch * r)))
-    box = max(ICON_BOX_MIN, w - 2 * CHROME_X)
-    # chrome_x 保持居中语义：若 box 触下限则至少为 0
-    chrome_x = max(0, (w - box) // 2)
-    label_h = max(LABEL_H_MIN, h - box)
-    return IconLayout(w, h, box, chrome_x, label_h, _font_for_box(box))
-
-
-def cell_for_native(native_px: int, tier) -> Tuple[int, int]:
-    """按**原桌面图标边长**反推 cell（2026-10-19 用户反馈 4）。
-
-    诉求："最好能算出电脑原桌面的图标大小，接管后的默认图标大小刚好
-    跟原桌面一致"。做法是反解，而不是猜常数：
-
-        icon_box = native_px
-        widget_w = icon_box + 2*CHROME_X
-        label_h  = 字号行高 + 上下留白（与 _paint_label 的单行布局同源）
-        widget_h = icon_box + label_h
-        cell     = widget / TIERS[tier]        # 保证 icon_box 回到 native_px
-
-    这样无论当前是 小/中/大 档，图标本体都精确等于原生边长；档位只影响
-    cell 密度（小档格距更大、大档更紧凑），不会把图标画小。
-    """
-    tier_name = parse_tier(tier)
-    r = max(0.1, float(TIERS[tier_name]))
     box = max(ICON_BOX_MIN, int(native_px))
-    font = _font_for_box(box)
-    label_h = max(LABEL_H_MIN, int(round(font * 1.5)) + 4)
     w = box + 2 * CHROME_X
-    h = box + label_h
-    return max(1, int(round(w / r))), max(1, int(round(h / r)))
+    h = box + label_height(box)
+    return (max(1, int(round(w / FIT_BASE))),
+            max(1, int(round(h / FIT_BASE))))
+
+
+def cell_for_native(native_px: int, tier=None) -> Tuple[int, int]:
+    """**DEPRECATED（v7）**：tier 已不参与计算，仅为兼容旧调用点保留签名。
+
+    v6 语义是 `cell = widget / TIERS[tier]`，切档位会改格距（问题 3 病根）；
+    v7 起一律转发到 `cell_from_native()`，请新代码直接用后者。
+    """
+    return cell_from_native(native_px)
+
+
+# ---------------------------------------------------------------- 层二：fit
+
+def parse_fit(fit_or_tier) -> Optional[float]:
+    """float -> 自身夹到 [0.30, 0.90]；档位串 -> TIER_FIT 值（medium 为 None）。"""
+    if isinstance(fit_or_tier, bool):
+        return None                      # bool 是 int 子类，别当占比
+    if isinstance(fit_or_tier, (int, float)):
+        return _clamp(float(fit_or_tier), FIT_MIN, FIT_MAX)
+    t = parse_tier(fit_or_tier)
+    return TIER_FIT[t]
+
+
+def fit_for(native_px, cw: int, fit_or_tier) -> float:
+    """把 fit/档位归一成**实际占比**（medium 用 native_px/cw 解算）。"""
+    f = parse_fit(fit_or_tier)
+    if f is None:
+        npx = int(native_px) if native_px else 0
+        f = (npx / max(1, int(cw))) if npx else TIER_FIT_FALLBACK["medium"]
+    return _clamp(f, FIT_MIN, FIT_MAX)
+
+
+def icon_layout(cw: int, ch: int, fit_or_tier="medium") -> IconLayout:
+    """cell + 图标占比 -> 图标 widget 尺寸方案（v7 §3.1）。
+
+    第三参接受 float（占比）或档位串；档位串走 `TIER_FIT_FALLBACK`
+    （medium=0.57），所以既有 `icon_layout(84, 91, "medium")` 零改动。
+
+    widget = icon_box + 2*CHROME_X（横向 chrome 仍是常量，见 §3.1 说明）；
+    高度 = icon_box + 标签区。cell 只用来算 icon_box，不再乘档位。
+    """
+    f = parse_fit(fit_or_tier)
+    if f is None:
+        f = TIER_FIT_FALLBACK["medium"]
+    cw = max(1, int(cw))
+    box = max(ICON_BOX_MIN, int(round(cw * f)))
+    chrome_x = CHROME_X
+    w = max(1, box + 2 * chrome_x)
+    lh = label_height(box)
+    h = max(1, box + lh)
+    return IconLayout(w, h, box, chrome_x, lh, _font_for_box(box))
+
+
+# ---------------------------------------------------------------- 行列求解
+
+def solve_dims(avail_w, avail_h, native_px, cols=None, rows=None,
+               origin=None, edge_x=EDGE_X, edge_y=EDGE_Y) -> Dims:
+    """按可用区 + 原生图标尺寸求解网格几何（纯函数，零 Qt 依赖）。
+
+    cols：None = 自动（= cols_auto）；给值则夹到 [1, cols_auto]，
+          `cw = UW // cols` —— **列数是唯一改变 cell 尺寸的旋钮**。
+    rows：None = 自动；给值则夹到 [1, rows_auto]，**只裁剪行数不改 cell**。
+    origin：None = 四边等距居中；给 (x, y) 则夹到完整工作区（允许贴边）。
+
+    两个必须记住的坑：
+      1. `UW // cols` 用 floor 而不是 round，否则整行可能溢出 1~2px
+         导致最后一列被裁；
+      2. `rows_auto` 必须在 `cw/ch` 定稿**之后**算，否则改列数时行上限
+         还是旧值，会出现"18 列却排 12 行"的行溢出（验收 D9）。
+    """
+    cw0, ch0 = cell_from_native(native_px)
+    aspect = ch0 / cw0
+    AW, AH = max(1, int(avail_w)), max(1, int(avail_h))
+    UW = max(1, AW - 2 * int(edge_x))
+    UH = max(1, AH - 2 * int(edge_y))
+
+    # ① 列数：自动值即上限（格子只能变大不能变小）
+    cols_auto = _clampi(UW // cw0, MIN_COLS, MAX_COLS)
+    if cols is None or int(cols) >= cols_auto:
+        c, cw, ch = cols_auto, cw0, ch0     # 打到上限 = 与自动完全等价
+    else:
+        c = _clampi(int(cols), MIN_COLS, cols_auto)
+        cw = max(1, UW // c)                # floor：保证 c*cw 不溢出 UW
+        ch = max(1, int(round(cw * aspect)))  # aspect 守恒 -> 图标不变形
+
+    # ② 行数：只裁剪"网格用几行"，cell 一个像素都不动
+    rows_auto = _clampi(UH // max(1, ch), MIN_ROWS, MAX_ROWS)
+    r = rows_auto if rows is None else _clampi(int(rows), MIN_ROWS, rows_auto)
+
+    # ③ 原点：None = 居中；给定则夹到**完整工作区**（不是 UW/UH，否则贴不了边）
+    if origin is None:
+        ox = int(edge_x) + (UW - c * cw) // 2
+        oy = int(edge_y) + (UH - r * ch) // 2
+    else:
+        ox = _clampi(int(origin[0]), 0, max(0, AW - c * cw))
+        oy = _clampi(int(origin[1]), 0, max(0, AH - r * ch))
+    return Dims(c, r, cw, ch, cols_auto, rows_auto, max(0, ox), max(0, oy))
 
 
 def icon_px_default() -> int:

@@ -59,32 +59,40 @@ def main():
     check("clamp 范围 (0.7,1.8)", gs.K_MIN == 0.7 and gs.K_MAX == 1.8)
 
     # ---------- G3: icon_layout 三档锁死规格表（@cell 83x102） ----------
+    # v7 §3.1 起档位是「图标在格子里的占比」（0.42 / 0.57 / 0.82）：
+    # widget = icon_box + 2*CHROME_X，高度 = icon_box + 标签区。
     lo_l = gs.icon_layout(83, 102, "small")
-    check("small 48x59/34/7/25/9",
+    check("small 49x53/35/7/18/9",
           (lo_l.widget_w, lo_l.widget_h, lo_l.icon_box, lo_l.chrome_x,
-           lo_l.label_h, lo_l.font_px) == (48, 59, 34, 7, 25, 9),
+           lo_l.label_h, lo_l.font_px) == (49, 53, 35, 7, 18, 9),
           "got %s" % (lo_l,))
     mid = gs.icon_layout(83, 102, "medium")
-    check("medium 61x75/47/7/28/10",
+    check("medium 61x66/47/7/19/10",
           (mid.widget_w, mid.widget_h, mid.icon_box, mid.chrome_x,
-           mid.label_h, mid.font_px) == (61, 75, 47, 7, 28, 10),
+           mid.label_h, mid.font_px) == (61, 66, 47, 7, 19, 10),
           "got %s" % (mid,))
     big = gs.icon_layout(83, 102, "large")
-    check("large 83x102/69/7/33/14",
+    check("large 82x93/68/7/25/14",
           (big.widget_w, big.widget_h, big.icon_box, big.chrome_x,
-           big.label_h, big.font_px) == (83, 102, 69, 7, 33, 14),
+           big.label_h, big.font_px) == (82, 93, 68, 7, 25, 14),
           "got %s" % (big,))
 
-    # ---------- G4: 档位语义 ----------
-    check("三档比例常量", gs.TIERS == {"small": 0.58, "medium": 0.74,
-                                      "large": 1.0}, "got %s" % (gs.TIERS,))
+    # ---------- G4: 档位语义（v7：占比，不再是 widget/cell） ----------
+    check("三档占比常量", gs.TIER_FIT == {"small": 0.42, "medium": None,
+                                        "large": 0.82},
+          "got %s" % (gs.TIER_FIT,))
     check("默认档 medium", gs.DEFAULT_TIER == "medium")
     check("尺寸单调递增",
           lo_l.widget_w < mid.widget_w < big.widget_w
           and lo_l.widget_h < mid.widget_h < big.widget_h)
-    # large 即贴满 cell
-    check("large 贴满 cell",
-          (big.widget_w, big.widget_h) == (83, 102))
+    # v7：large 不再"贴满 cell"，而是图标占 82%（留边距与标签）
+    check("large 图标占格约 0.82",
+          abs(big.icon_box / 83 - 0.82) <= 0.02,
+          "got %.3f" % (big.icon_box / 83))
+    check("widget 都不越界 cell",
+          all(L.widget_w <= 83 and L.widget_h <= 102
+              for L in (lo_l, mid, big)),
+          "got %s" % ((lo_l.widget_w, mid.widget_w, big.widget_w),))
     # 非法/缺失档位回退 medium
     check("非法档位回退 medium",
           gs.icon_layout(83, 102, "huge") == mid

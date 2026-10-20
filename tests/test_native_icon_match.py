@@ -4,9 +4,9 @@
 诉求："最好能算出电脑原桌面的图标大小，接管后网格模式的默认图标大小
 刚好跟原桌面一致。"
 
-契约：
-  N1 native=48 / 三档 -> icon_layout().icon_box == 48（档位只改格距）
-  N2 cell 由 native 反推：cw = (48+2*CHROME_X)/tier
+契约（v7 §3.1 起档位语义反转，本文件已同步）：
+  N1 cell 与档位完全无关；档位只改图标本体（小 35 / 中 48 / 大 69 @cell 84）
+  N2 cell = (native + 2*CHROME_X) / FIT_BASE（不含档位）
   N3 icon_match_native=True 时 grid_metrics.compute 用 native 反推
   N4 关闭该项 -> 回到屏幕驱动公式（旧行为不变）
   N5 native_icon_size() 返回合法区间整数（真机读取 explorer 的 IconSize）
@@ -50,23 +50,36 @@ class _St:
 
 
 def main():
-    # ---------- N1 三档都等于原生边长 ----------
-    for tier in ("small", "medium", "large"):
-        cw, ch = grid_sizing.cell_for_native(48, tier)
-        lay = grid_sizing.icon_layout(cw, ch, tier)
-        check("N1 %s 档 icon_box == 48" % tier, lay.icon_box == 48,
-              "cell=%sx%s box=%d" % (cw, ch, lay.icon_box))
+    # ---------- N1 v7：cell 与档位完全无关 ----------
+    cells = {tier: grid_sizing.cell_for_native(48, tier)
+             for tier in ("small", "medium", "large")}
+    check("N1 三档 cell 完全一致（档位不再改格距）",
+          len(set(cells.values())) == 1,
+          "cells=%s" % (cells,))
+    check("N1 cell == (84,91)", cells["medium"] == (84, 91),
+          "got %s" % (cells["medium"],))
+    # 档位只改"图标在格子里的占比"
+    boxes = {tier: grid_sizing.icon_layout(*cells[tier], tier).icon_box
+             for tier in ("small", "medium", "large")}
+    check("N1 小档图标 35px", boxes["small"] == 35, "got %s" % (boxes["small"],))
+    check("N1 中档图标 48px（= 原生）", boxes["medium"] == 48,
+          "got %s" % (boxes["medium"],))
+    check("N1 大档图标 69px", boxes["large"] == 69, "got %s" % (boxes["large"],))
 
-    check("N1b 48 与 64 都精确命中",
-          all(grid_sizing.icon_layout(*grid_sizing.cell_for_native(n, "medium"),
-                                      "medium").icon_box == n for n in (32, 48, 64)),
-          "32/48/64")
+    # 中档 == 原生边长，对多个 native 值都成立（换屏自动跟随）
+    bad = []
+    for n in (32, 48, 64):
+        cw, ch = grid_sizing.cell_from_native(n)
+        fit = grid_sizing.fit_for(n, cw, "medium")
+        got = grid_sizing.icon_layout(cw, ch, fit).icon_box
+        if abs(got - n) > 1:
+            bad.append((n, got))
+    check("N1b 32/48/64 中档都精确命中原生", not bad, "bad=%s" % (bad,))
 
-    # ---------- N2 公式 ----------
-    cw, ch = grid_sizing.cell_for_native(48, "medium")
-    want_w = int(round((48 + 2 * grid_sizing.CHROME_X)
-                       / grid_sizing.TIERS["medium"]))
-    check("N2 cell 宽 = (native + 2*CHROME_X)/tier", cw == want_w,
+    # ---------- N2 公式（v7：除以 FIT_BASE，不含档位） ----------
+    cw, ch = grid_sizing.cell_from_native(48)
+    want_w = int(round((48 + 2 * grid_sizing.CHROME_X) / grid_sizing.FIT_BASE))
+    check("N2 cell 宽 = (native + 2*CHROME_X)/FIT_BASE", cw == want_w,
           "cw=%d want=%d" % (cw, want_w))
     check("N2 cell 高随标签行增加", ch > cw - 2, "ch=%d cw=%d" % (ch, cw))
 

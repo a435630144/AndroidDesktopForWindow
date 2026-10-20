@@ -2145,10 +2145,14 @@ class DesktopWindow(QWidget):
         if self._organize_mode():
             # 查看 ▸（图标大小 + 自动排列 + 网格调试）
             view = menu.addMenu("查看")
+            # v7 §3.3：三档加勾选（勾选状态由 icon_fit 反查，自定义比例时三档全不勾）
             size_menu = view.addMenu("图标大小")
+            cur_tier = self._current_icon_tier()
             for label, tier in (("大图标", "large"), ("中图标", "medium"),
                                 ("小图标", "small")):
                 act = size_menu.addAction(label)
+                act.setCheckable(True)
+                act.setChecked(cur_tier == tier)
                 act.triggered.connect(
                     lambda checked=False, t=tier: self._set_icon_tier(t))
             view.addSeparator()
@@ -2312,15 +2316,36 @@ class DesktopWindow(QWidget):
         self.storage.set_setting("icon_size", int(px))
         self.refresh_grid()
 
+    def _current_icon_tier(self):
+        """当前图标档位（v7 §3.3）：由 icon_fit 反查最近预设，自定义比例返回 None。
+
+        medium 的 fit 是 `native_px/cell_w`（跟随屏幕与缩放），所以不能只看
+        settings 里的 `icon_tier`——那只是最近一次预设的缓存。
+        """
+        from . import grid_sizing
+        from .storage import tier_for_fit
+        m = grid_flow.current_metrics()
+        fit = self.storage.icon_fit()
+        if fit is None:
+            try:
+                native = win32_layer.native_icon_size()
+            except Exception:
+                native = 48
+            cw = m.cw if m is not None else grid_sizing.cell_from_native(native)[0]
+            fit = grid_sizing.fit_for(native, cw, "medium")
+        return tier_for_fit(fit)
+
     def _set_icon_tier(self, tier: str):
-        """右键「图标大小」三档（v6 A2，指导文档 §2.2）：档位 × 当前 cell，
-        与 icon_size/icon_scale 解钩——网格模式下 widget 整体按比例渲染。
+        """右键「图标大小」三档（v7 §3.1）：档位 = 图标在格子里的占比。
+
+        **只改图标本体，不碰格距**——列数/行数不变（v6 的档位会改格距，
+        正是"切档位整个网格都变"的病根）。
 
         反馈 2：改完必须立刻重算几何（refresh_grid），只 rebuild 会沿用
         旧 cell 快照，看起来"改了没反应"。
         """
         from . import grid_sizing
-        self.storage.set_setting("icon_tier", grid_sizing.parse_tier(tier))
+        self.storage.apply_icon_fit(grid_sizing.parse_fit(tier))
         self.refresh_grid()
 
     def _toggle_auto_arrange(self, checked: bool):

@@ -187,11 +187,16 @@ def main(app):
     check("D7 auto 态 spin 禁用（只展示生效列数）",
           dlg2.spin_cols.isEnabled() is False)
     dlg2.chk_auto_cols.setChecked(False)
-    check("D7 取消 auto 写手动列数（int）",
-          isinstance(st.get_setting("columns"), int))
+    # v7 §10.3：列数的权威键是 grid_cols（int）+ grid_dims_mode="manual"
+    check("D7 取消 auto 写手动列数（grid_cols int / mode manual）",
+          isinstance(st.get_setting("grid_cols"), int)
+          and st.grid_dims_mode() == "manual",
+          "grid_cols=%s mode=%s" % (st.get_setting("grid_cols"),
+                                    st.grid_dims_mode()))
     check("D7 取消 auto 后 spin 可用", dlg2.spin_cols.isEnabled() is True)
     dlg2.chk_auto_cols.setChecked(True)
-    check("D7 勾选 auto 写回 \"auto\"", st.get_setting("columns") == "auto")
+    check("D7 勾选 auto 写回 auto 模式",
+          st.grid_dims_mode() == "auto", st.grid_dims_mode())
     check("D7 勾选 auto 后 spin 重新禁用",
           dlg2.spin_cols.isEnabled() is False)
 

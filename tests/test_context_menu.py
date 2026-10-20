@@ -194,6 +194,37 @@ def main(app):
             # 复原，避免影响后续断言
             w.storage.set_setting("auto_arrange", was)
 
+        # ---------- M11：「查看 ▸ 图标大小」三档有勾选标识（v7 §3.3）----------
+        # 注意（坑 #68）：QMenu 是 Python 所有，重建菜单后旧对象可能已被回收，
+        # 所以这里只在**同一次菜单构建**上取快照，后续校验走 _current_icon_tier。
+        size_menu = acts.get("图标大小")
+        check("M11 查看下有「图标大小」子菜单", size_menu is not None,
+              "%s" % list(acts))
+        if size_menu is not None:
+            tiers = {a.text(): a for a in size_menu.menu().actions()}
+            check("M11 三档都在",
+                  set(tiers) >= {"大图标", "中图标", "小图标"}, "%s" % list(tiers))
+            check("M11 三档均可勾选",
+                  all(a.isCheckable() for a in tiers.values()))
+            checked = [t for t, a in tiers.items() if a.isChecked()]
+            check("M11 恰好勾中一档（默认中图标）",
+                  checked == ["中图标"], "checked=%s" % (checked,))
+        check("M11 默认档位 = medium", w._current_icon_tier() == "medium",
+              "%s" % (w._current_icon_tier(),))
+        # 切到小档 -> storage 落 icon_fit 0.42，档位反查跟着走
+        w._set_icon_tier("small")
+        settle(app)
+        check("M11 切小档落 icon_fit=0.42", w.storage.icon_fit() == 0.42,
+              "%s" % (w.storage.icon_fit(),))
+        check("M11 勾选状态跟随 icon_fit",
+              w._current_icon_tier() == "small", "%s" % (w._current_icon_tier(),))
+        w._set_icon_tier("medium")
+        settle(app)
+        check("M11 回中档 -> 跟随原生",
+              w._current_icon_tier() == "medium"
+              and w.storage.icon_tier() == "medium",
+              "%s / %s" % (w._current_icon_tier(), w.storage.icon_tier()))
+
     w2.close()
     w.close()
     print("-" * 56)

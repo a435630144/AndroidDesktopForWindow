@@ -276,6 +276,11 @@ SETTINGS_QSS = (
     " padding: 4px 6px; font-size: 12px; font-family: %(fam)s; min-width: 64px;}"
     "QSpinBox::up-button, QSpinBox::down-button{width: 14px; border: none;"
     " background: transparent;}"
+    # 禁用态：自动模式下两个 spin 只是"展示区间"，必须看得出不可改
+    "QSpinBox:disabled{color: rgba(150,156,166,140);"
+    " background: rgba(255,255,255,6); border-color: rgba(255,255,255,14);}"
+    "QComboBox:disabled{color: rgba(150,156,166,140);"
+    " background: rgba(255,255,255,6); border-color: rgba(255,255,255,14);}"
     "QSlider::groove:horizontal{height: 4px; background: rgba(255,255,255,28);"
     " border-radius: 2px;}"
     "QSlider::sub-page:horizontal{background: rgb(46,120,246); border-radius: 2px;}"

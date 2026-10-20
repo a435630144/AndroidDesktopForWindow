@@ -18,6 +18,40 @@ from copy import deepcopy
 
 from .paths import data_file
 
+# 档位判定容差：fit 落在预设 ±0.02 内视为该档，否则是"自定义比例"
+FIT_TOLERANCE = 0.02
+
+
+def tier_for_fit(fit):
+    """图标占比 -> 最近的三档预设名；不在任何预设附近 -> None（自定义）。
+
+    v7 §3.1：菜单「图标大小」的勾选状态由 `icon_fit` 反查得到。
+    medium 的预设值是 0.57（= 本机 native 48 / cell 84），换屏后由
+    `grid_sizing.fit_for()` 用 `native_px/cw` 解算，这里只做菜单勾选判定。
+    """
+    if fit is None or isinstance(fit, bool):
+        return None
+    try:
+        f = float(fit)
+    except (TypeError, ValueError):
+        return None
+    for name, ref in (("medium", 0.57), ("small", 0.42), ("large", 0.82)):
+        if abs(f - ref) <= FIT_TOLERANCE:
+            return name
+    return None
+
+
+def _as_positive_int(raw):
+    """settings 里的正整数（"auto"/None/非法 -> None）。"""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 1 else None
+
+
 DEFAULT_SETTINGS = {
     "schema_version": 2,     # 状态结构版本：2 = 路线A（全量接管）。旧版(1)state
                             # 首次加载时一次性升级，见 Storage._migrate
@@ -27,6 +61,15 @@ DEFAULT_SETTINGS = {
     "icon_scale": 1.0,         # 用户自定义图标缩放（在 DPI 感知之上再乘，0.6~2.0）
     # ---- v6 批次 A（指导文档_网格与无界双模式_v6.md §8）----
     "icon_tier": "medium",     # 图标三档（网格模式）：small .58 / medium .74 / large 1.0
+    # ---- v7 批次 B1（指导文档_v7.md §3.1 / §3.2 / §3.4）----
+    "icon_fit": None,          # 图标在格子里的占比（0.30~0.90）；None = 按
+                               # icon_tier 映射（medium 跟随 native_px/cell_w）
+    "grid_dims_mode": "auto",  # "auto" = 按原生图标尺寸算行列（默认）
+                               # "manual" = 用 grid_cols / grid_rows
+    "grid_cols": None,         # manual 时的目标列数（上限 = cols_auto）
+    "grid_rows": None,         # manual 时的目标行数（只裁剪，不改 cell）
+    "grid_origin_mode": "auto",  # "auto" = 居中；"manual" = 用 grid_origin
+    "grid_origin": None,       # [x, y]，逻辑 px；manual 时生效
     "layout_mode": "grid",     # 布局模式：grid 网格（默认）| free 无界
     "icon_px": 96,             # 无界模式图标像素（网格模式置灰，由档位决定）
     "auto_arrange": False,     # 自动排列：False=自由移动（落 target 原位留空），
@@ -140,6 +183,16 @@ class Storage:
             self._data["settings"]["hide_native_icons"] = bool(
                 self._data["settings"]["takeover_desktop"])
         self._normalize_layout()
+        # v7 §10.3：旧键 columns（整数 = 手动列数）一次性迁移进 grid_cols。
+        # 判据用**文件里的原始 settings**（合并默认值后 grid_dims_mode 必然存在）。
+        if "grid_dims_mode" not in raw_settings:
+            legacy = raw_settings.get("columns")
+            n = None if isinstance(legacy, str) else _as_positive_int(legacy)
+            if n is not None:
+                self._data["settings"]["grid_cols"] = n
+                self._data["settings"]["grid_dims_mode"] = "manual"
+                self._data["settings"]["columns"] = "auto"
+                self.save()
 
     def _normalize_layout(self):
         """治愈历史脏数据：文件夹条目的 `app` 必须是 dict，不能是 None。
@@ -213,7 +266,22 @@ class Storage:
         return self._data["settings"].get(key, DEFAULT_SETTINGS.get(key))
 
     def set_setting(self, key, value):
+        """写设置。**旧键 `columns` 做兼容转发**（v7 §10.3 迁移）：
+
+        历史代码/测试仍会写 `columns = 6` 或 `"auto"`，v7 起列数的权威键是
+        `grid_dims_mode` + `grid_cols`，这里把旧写法翻译过去，避免"写了一个
+        键、读的是另一个"的语义漂移。
+        """
         self._data["settings"][key] = value
+        if key == "columns":
+            s = self._data["settings"]
+            if isinstance(value, str) and value.strip().lower() in ("", "auto"):
+                s["grid_dims_mode"] = "auto"
+            else:
+                n = _as_positive_int(value)
+                if n is not None:
+                    s["grid_cols"] = n
+                    s["grid_dims_mode"] = "manual"
         self.save()
 
     # ---------- 接管系统桌面（v6 §7.2 唯一模式开关） ----------
@@ -268,6 +336,57 @@ class Storage:
         """
         from . import grid_sizing  # 延迟导入：grid_sizing 零 Qt 依赖
         return grid_sizing.parse_tier(self.get_setting("icon_tier"))
+
+    # ---------- v7 B1：图标占比与网格行列 ----------
+    def icon_fit(self):
+        """图标在格子里的占比（v7 §3.1）；None 表示"跟随档位"。
+
+        优先级：`icon_fit`（显式占比）> `icon_tier` 映射（medium -> None，
+        由 `grid_sizing.fit_for()` 用 native_px/cell_w 解算）。
+        """
+        from . import grid_sizing
+        raw = self.get_setting("icon_fit")
+        if raw is not None:
+            return grid_sizing.parse_fit(raw)
+        return grid_sizing.parse_fit(self.icon_tier())
+
+    def apply_icon_fit(self, fit):
+        """**唯一写入点**：同时写 `icon_fit` 与 `icon_tier`。
+
+        `icon_tier` 供右键菜单勾选（`tier_for_fit` 反查最近预设），
+        自定义比例时写 None（菜单里三档都不勾）。
+        """
+        from . import grid_sizing
+        f = grid_sizing.parse_fit(fit)
+        s = self._data.setdefault("settings", {})
+        s["icon_fit"] = f
+        s["icon_tier"] = tier_for_fit(f) or grid_sizing.DEFAULT_TIER
+        self.save()
+
+    def grid_dims_mode(self) -> str:
+        """网格行列模式："auto"（默认）| "manual"。"""
+        raw = self.get_setting("grid_dims_mode")
+        return "manual" if str(raw).strip().lower() == "manual" else "auto"
+
+    def grid_cols(self):
+        """manual 模式的目标列数；None / 非法 -> None（回自动）。"""
+        return _as_positive_int(self.get_setting("grid_cols"))
+
+    def grid_rows(self):
+        """manual 模式的目标行数；None / 非法 -> None（回自动）。"""
+        return _as_positive_int(self.get_setting("grid_rows"))
+
+    def grid_origin(self):
+        """manual 原点的 (x, y)；未设置/非法 -> None（回居中）。"""
+        if str(self.get_setting("grid_origin_mode") or "auto").lower() != "manual":
+            return None
+        raw = self.get_setting("grid_origin")
+        if isinstance(raw, (list, tuple)) and len(raw) == 2:
+            try:
+                return int(raw[0]), int(raw[1])
+            except (TypeError, ValueError):
+                return None
+        return None
 
     # ---------- 布局辅助 ----------
     def find_entry(self, entry_id):

@@ -292,7 +292,8 @@ class SettingsDialog(QDialog):
     def _page_appearance(self, body, lay):
         card, c = self._card(body, "图标")
         self.cmb_tier = QComboBox()
-        for label, tier in (("小", "small"), ("中", "medium"), ("大", "large")):
+        for label, tier in (("小", "small"), ("中（= 原生）", "medium"),
+                            ("大", "large")):
             self.cmb_tier.addItem(label, tier)
         cur_tier = self.storage.icon_tier()
         self.cmb_tier.setCurrentIndex(max(0, self.cmb_tier.findData(cur_tier)))
@@ -306,7 +307,24 @@ class SettingsDialog(QDialog):
         tb.addWidget(self.lbl_icon_px)
         tb.addWidget(self.cmb_tier)
         self._row(c, card, "图标大小",
-                  tier_box, "档位只改变格距密度，图标本体保持与原生一致")
+                  tier_box, "只改变图标在格子里的占比，网格行列数不变")
+
+        # v7 §3.1：自定义占比（30%~90%），与三档联动
+        self.sld_icon_fit = QSlider(Qt.Horizontal)
+        self.sld_icon_fit.setRange(30, 90)
+        self.sld_icon_fit.setFixedWidth(190)
+        self.lbl_icon_fit = QLabel()
+        self.lbl_icon_fit.setObjectName("rowHint")
+        self.lbl_icon_fit.setFixedWidth(46)
+        self.sld_icon_fit.valueChanged.connect(self._apply_icon_fit)
+        fit_box = QWidget()
+        fb = QHBoxLayout(fit_box)
+        fb.setContentsMargins(0, 0, 0, 0)
+        fb.setSpacing(8)
+        fb.addWidget(self.sld_icon_fit)
+        fb.addWidget(self.lbl_icon_fit)
+        self._row(c, card, "自定义比例",
+                  fit_box, "拖动可微调；落在三档附近即视为该档")
 
         self.spin_icon_px = QSpinBox()
         self.spin_icon_px.setRange(60, 256)
@@ -314,13 +332,6 @@ class SettingsDialog(QDialog):
         self.spin_icon_px.valueChanged.connect(self._apply_icon_px)
         self._row(c, card, "无界模式图标像素",
                   self.spin_icon_px, "仅在「无界模式」下生效")
-
-        self.chk_match_native = Switch()
-        self.chk_match_native.setChecked(bool(self.storage.get_setting("icon_match_native")))
-        self.chk_match_native.toggled.connect(self._apply_match_native)
-        self._row(c, card, "与系统桌面图标同尺寸",
-                  self.chk_match_native,
-                  "读取资源管理器的桌面图标大小，接管后网格按它反推")
         self._refresh_icon_labels()
         lay.addWidget(card)
 
@@ -345,30 +356,49 @@ class SettingsDialog(QDialog):
 
     def _page_layout(self, body, lay):
         card, c = self._card(body, "网格")
+        # ① 读原生图标尺寸（决定 cell 基准）——v7 §3.1 起移入网格卡片
+        self.chk_match_native = Switch()
+        self.chk_match_native.setChecked(
+            bool(self.storage.get_setting("icon_match_native")))
+        self.chk_match_native.toggled.connect(self._apply_match_native)
+        self._row(c, card, "按系统桌面图标尺寸计算",
+                  self.chk_match_native,
+                  "读取资源管理器的桌面图标大小，格子按它反推；换屏换缩放自动跟随")
+
+        # ② 自动 / 手动行列（v7 §3.2：列数改格子，行数只裁剪）
         self.chk_auto_cols = Switch()
-        raw_cols = self.storage.get_setting("columns")
-        cols_auto = (raw_cols is None
-                     or (isinstance(raw_cols, str)
-                         and raw_cols.strip().lower() in ("", "auto")))
-        self.chk_auto_cols.setChecked(cols_auto)
+        self._grid_syncing = False
+        dims_auto = self.storage.grid_dims_mode() == "auto"
+        self.chk_auto_cols.setChecked(dims_auto)
         self.chk_auto_cols.toggled.connect(self._apply_auto_columns)
-        self._row(c, card, "每行图标数自动计算",
-                  self.chk_auto_cols, "按工作区四边等距铺满")
+        self._row(c, card, "自动计算行列数",
+                  self.chk_auto_cols,
+                  "关闭后可手动指定列数 / 行数（列数是唯一改变格子大小的旋钮）")
 
         self.spin_cols = QSpinBox()
-        self.spin_cols.setRange(2, 24)
-        m = grid_flow.current_metrics()
-        eff_cols = m.cols if m is not None else 10
-        try:
-            manual = int(raw_cols)
-        except (TypeError, ValueError):
-            manual = eff_cols
-        self.spin_cols.setValue(manual if not cols_auto else eff_cols)
-        self.spin_cols.setEnabled(not cols_auto)
+        self.spin_cols.setRange(1, 24)
+        self.spin_cols.setSuffix(" 列")
+        self.spin_cols.setFixedWidth(96)
+        self.spin_cols.setEnabled(not dims_auto)
         self.spin_cols.valueChanged.connect(self._apply_columns)
-        self._row(c, card, "每行图标数（手动）",
-                  self.spin_cols, "关闭上面的自动计算后生效")
+        self._row(c, card, "列数", self.spin_cols,
+                  "列数越少格子越大，图标同步变大（不会小于系统桌面图标）")
+
+        self.spin_rows = QSpinBox()
+        self.spin_rows.setRange(1, 12)
+        self.spin_rows.setSuffix(" 行")
+        self.spin_rows.setFixedWidth(96)
+        self.spin_rows.setEnabled(not dims_auto)
+        self.spin_rows.valueChanged.connect(self._apply_rows)
+        self._row(c, card, "行数", self.spin_rows,
+                  "只决定网格用几行，格子大小与图标尺寸都不变")
+
+        self.lbl_grid_dims = QLabel()
+        self.lbl_grid_dims.setObjectName("rowHint")
+        self._row(c, card, "当前网格", self.lbl_grid_dims,
+                  "列数越少格子越大；行数只裁剪，不改格子")
         lay.addWidget(card)
+        self._refresh_grid_spins()
 
         card, c = self._card(body, "翻页与排列")
         self.cmb_page_axis = QComboBox()
@@ -470,21 +500,64 @@ class SettingsDialog(QDialog):
         self.storage.set_setting("autostart", bool(checked))
 
     def _refresh_icon_labels(self):
-        """图标档位说明：显示当前档位 × cell 推导出的 widget / 图标像素。"""
+        """图标档位说明：显示当前占比与推导出的图标像素（v7 §3.1）。"""
         from . import grid_sizing
         m = grid_flow.current_metrics()
-        tier = self.storage.icon_tier()
-        if m is not None:
-            lay = grid_sizing.icon_layout(m.cw, m.ch, tier)
-            self.lbl_icon_px.setText("图标 %dpx" % lay.icon_box)
-        else:
+        if m is None:
             self.lbl_icon_px.setText("")
+            if getattr(self, "lbl_icon_fit", None) is not None:
+                self.lbl_icon_fit.setText("")
+            return
+        fit = self._effective_fit(m)
+        lay = grid_sizing.icon_layout(m.cw, m.ch, fit)
+        self.lbl_icon_px.setText("图标 %dpx" % lay.icon_box)
+        if getattr(self, "lbl_icon_fit", None) is not None:
+            self.lbl_icon_fit.setText("%d%%" % int(round(fit * 100)))
+        self._sync_fit_controls(fit)
+
+    def _effective_fit(self, m=None):
+        """当前**实际生效**的图标占比（medium 用 native_px/cell_w 解算）。"""
+        from . import grid_sizing, win32_layer
+        m = m if m is not None else grid_flow.current_metrics()
+        fit = self.storage.icon_fit()
+        if fit is not None:
+            return fit
+        try:
+            native = win32_layer.native_icon_size()
+        except Exception:
+            native = 48
+        cw = m.cw if m is not None else grid_sizing.cell_from_native(native)[0]
+        return grid_sizing.fit_for(native, cw, "medium")
+
+    def _sync_fit_controls(self, fit):
+        """把三档下拉与自定义滑条同步到 fit（阻断信号，避免回写死循环）。"""
+        from .storage import tier_for_fit
+        sld = getattr(self, "sld_icon_fit", None)
+        if sld is not None:
+            sld.blockSignals(True)
+            sld.setValue(int(round(fit * 100)))
+            sld.blockSignals(False)
+        cmb = getattr(self, "cmb_tier", None)
+        tier = tier_for_fit(fit)
+        if cmb is not None and tier:
+            idx = cmb.findData(tier)
+            if idx >= 0 and idx != cmb.currentIndex():
+                cmb.blockSignals(True)
+                cmb.setCurrentIndex(idx)
+                cmb.blockSignals(False)
 
     def _apply_icon_tier(self, _index):
         tier = self.cmb_tier.currentData()
         if not tier:
             return
-        self.storage.set_setting("icon_tier", tier)
+        from . import grid_sizing
+        self.storage.apply_icon_fit(grid_sizing.parse_fit(tier))
+        self._refresh_icon_labels()
+        self._refresh_grid()
+
+    def _apply_icon_fit(self, value):
+        """自定义占比滑条（30%~90%）：走 storage 唯一写入点。"""
+        self.storage.apply_icon_fit(int(value) / 100.0)
         self._refresh_icon_labels()
         self._refresh_grid()
 
@@ -496,28 +569,72 @@ class SettingsDialog(QDialog):
         self.storage.set_setting("icon_match_native", bool(checked))
         self._refresh_grid()
         self._refresh_icon_labels()
+        self._refresh_grid_spins()
+
+    # ---------- v7 §3.2：网格行列（列数改 cell，行数只裁剪）----------
+    def _refresh_grid_spins(self):
+        """按当前几何刷新两个 spin 的上限与显示值，以及摘要文字。"""
+        from . import grid_sizing
+        spin_r = getattr(self, "spin_rows", None)
+        lbl = getattr(self, "lbl_grid_dims", None)
+        if spin_r is None:
+            return
+        m = grid_flow.current_metrics()
+        self._grid_syncing = True
+        try:
+            if m is None:
+                return
+            cols_auto = m.cols_auto or m.cols
+            rows_auto = m.rows_auto or m.rows
+            self.spin_cols.setRange(1, max(1, cols_auto))
+            spin_r.setRange(1, max(1, rows_auto))
+            self.spin_cols.setValue(min(m.cols, cols_auto))
+            spin_r.setValue(min(m.rows, rows_auto))
+            if lbl is not None:
+                lay = grid_sizing.icon_layout(m.cw, m.ch, self._effective_fit(m))
+                lbl.setText("%d 列 × %d 行 · 格子 %d×%d · 图标 %dpx"
+                            "（上限 %d 列 / %d 行）"
+                            % (m.cols, m.rows, m.cw, m.ch, lay.icon_box,
+                               cols_auto, rows_auto))
+        finally:
+            self._grid_syncing = False
 
     def _apply_columns(self, value):
+        if getattr(self, "_grid_syncing", False):
+            return
         if self.chk_auto_cols.isChecked():
             return
-        self.storage.set_setting("columns", int(value))
+        self.storage.set_setting("grid_cols", int(value))
         self.storage.compact_layout()
-        self.storage.save()
         self._refresh_grid()
+        self._refresh_grid_spins()
+
+    def _apply_rows(self, value):
+        if getattr(self, "_grid_syncing", False):
+            return
+        if self.chk_auto_cols.isChecked():
+            return
+        self.storage.set_setting("grid_rows", int(value))
+        self._refresh_grid()
+        self._refresh_grid_spins()
 
     def _apply_auto_columns(self, checked):
-        self.spin_cols.setEnabled(not checked)
-        if checked:
-            self.storage.set_setting("columns", "auto")
-            self._refresh_grid()
-            m = grid_flow.current_metrics()
-            if m is not None:
-                self.spin_cols.setValue(m.cols)
+        auto = bool(checked)
+        self.spin_cols.setEnabled(not auto)
+        if getattr(self, "spin_rows", None) is not None:
+            self.spin_rows.setEnabled(not auto)
+        if auto:
+            self.storage.set_setting("grid_dims_mode", "auto")
         else:
-            self.storage.set_setting("columns", int(self.spin_cols.value()))
+            self.storage.set_setting("grid_dims_mode", "manual")
+            self.storage.set_setting("grid_cols", int(self.spin_cols.value()))
+            if getattr(self, "spin_rows", None) is not None:
+                self.storage.set_setting("grid_rows",
+                                         int(self.spin_rows.value()))
             self.storage.compact_layout()
-            self.storage.save()
-            self._refresh_grid()
+        self.storage.save()
+        self._refresh_grid()
+        self._refresh_grid_spins()
 
     def _apply_page_axis(self, _index):
         axis = self.cmb_page_axis.currentData() or "horizontal"

@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QLabel,
                                QPushButton, QScrollArea, QSlider, QSpinBox,
                                QStackedWidget, QWidget, QApplication)
 
-from src import theme
+from src import grid_flow, theme
 from src.settings_dialog import SettingsDialog
 from src.storage import Storage
 
@@ -223,6 +223,48 @@ def main(app):
           "%s" % st.get_setting("auto_arrange"))
     dlg.chk_auto_arrange.setChecked(before)
     app.processEvents()
+
+    # ---------- U13 网格卡片：双 spin + 联动（v7 §3.2） ----------
+    check("U13 网格卡片有列数/行数两个 spin",
+          dlg.spin_cols is not None and dlg.spin_rows is not None)
+    m = grid_flow.current_metrics()
+    if m is not None:
+        cols_auto = m.cols_auto or m.cols
+        rows_auto = m.rows_auto or m.rows
+        check("U13 列数上限 = cols_auto",
+              dlg.spin_cols.maximum() == cols_auto,
+              "%s vs %s" % (dlg.spin_cols.maximum(), cols_auto))
+        check("U13 行数上限 = rows_auto",
+              dlg.spin_rows.maximum() == rows_auto,
+              "%s vs %s" % (dlg.spin_rows.maximum(), rows_auto))
+        check("U13 摘要含行列与格子尺寸",
+              "列" in dlg.lbl_grid_dims.text()
+              and "格子" in dlg.lbl_grid_dims.text(),
+              dlg.lbl_grid_dims.text())
+    check("U13 自动模式下两个 spin 禁用",
+          dlg.chk_auto_cols.isChecked()
+          and not dlg.spin_cols.isEnabled()
+          and not dlg.spin_rows.isEnabled(),
+          "auto=%s cols_en=%s" % (dlg.chk_auto_cols.isChecked(),
+                                  dlg.spin_cols.isEnabled()))
+    # 关自动 -> manual 落盘；行数只裁剪不改格子
+    dlg.chk_auto_cols.setChecked(False)
+    app.processEvents()
+    check("U13 关自动写 grid_dims_mode=manual",
+          st.grid_dims_mode() == "manual", st.grid_dims_mode())
+    if m is not None and dlg.spin_rows.minimum() < dlg.spin_rows.maximum():
+        cell_before = (m.cw, m.ch)
+        dlg.spin_rows.setValue(dlg.spin_rows.maximum() - 1)
+        app.processEvents()
+        after = grid_flow.current_metrics()
+        if after is not None:
+            check("U13 改行数不改格子尺寸",
+                  (after.cw, after.ch) == cell_before,
+                  "%s vs %s" % ((after.cw, after.ch), cell_before))
+    dlg.chk_auto_cols.setChecked(True)
+    app.processEvents()
+    check("U13 勾回自动写 grid_dims_mode=auto",
+          st.grid_dims_mode() == "auto", st.grid_dims_mode())
 
     # ---------- U12 高度受控 ----------
     dlg.show()
