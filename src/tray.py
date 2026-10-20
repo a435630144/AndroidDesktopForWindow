@@ -48,6 +48,9 @@ class SystemTray:
         self.tray.setToolTip("桌面整理Demo — 右键图标查看菜单")
         self.menu = QMenu()
         self.menu.setStyleSheet(theme.MENU_QSS)
+        # 每次弹出前重建：勾选态 / 模式文案 / 仅小组件下的入口增减都随
+        # 当前设置走，杜绝"菜单还是上次构建时的旧状态"。
+        self.menu.aboutToShow.connect(self._build_menu)
         self._widget_actions = {}
         self._build_menu()
         self.tray.setContextMenu(self.menu)
@@ -59,17 +62,9 @@ class SystemTray:
     def _build_menu(self):
         m = self.menu
         m.clear()
-        self.act_toggle = QAction("显示原生桌面", m, checkable=True)
-        self.act_toggle.setChecked(self.window.isVisible())
-        self.act_toggle.triggered.connect(self._toggle_window)
-        m.addAction(self.act_toggle)
-
-        # 反馈 16：「接管系统桌面」开关删除（启动即接管，开关冗余）。
-        # 托盘保留纯显隐入口 + 独立的小组件模式开关。
-        self.act_widgets = QAction("小组件模式", m, checkable=True)
-        self.act_widgets.setChecked(bool(self.storage.get_setting("show_widgets")))
-        self.act_widgets.triggered.connect(self._toggle_widgets)
-        m.addAction(self.act_widgets)
+        # 2026-10-21 反馈 9：「显示原生桌面 / 小组件模式」两个条目移除——
+        # 模式控制统一收口到设置页（仅小组件模式 / 显示桌面小组件），
+        # 托盘只留纯动作。窗口显隐改由双击托盘图标完成（_on_activated）。
 
         act_add = QAction("添加应用…", m)
         act_add.triggered.connect(self._add_apps)
@@ -79,12 +74,15 @@ class SystemTray:
         act_rescan.triggered.connect(self._rescan)
         m.addAction(act_rescan)
 
-        from . import grid_flow
-        self.act_layout = QAction(
-            "切换到无界模式（自由摆布）" if not grid_flow.free_mode(self.storage)
-            else "切换到网格模式（对齐网格）", m)
-        self.act_layout.triggered.connect(self._toggle_layout_mode)
-        m.addAction(self.act_layout)
+        # 布局切换：仅小组件模式下组件必须无界，入口不出现（窗口侧还有
+        # set_layout_mode 护栏双保险）。
+        if not bool(self.storage.get_setting("widgets_only")):
+            from . import grid_flow
+            self.act_layout = QAction(
+                "切换到无界模式（自由摆布）" if not grid_flow.free_mode(self.storage)
+                else "切换到网格模式（对齐网格）", m)
+            self.act_layout.triggered.connect(self._toggle_layout_mode)
+            m.addAction(self.act_layout)
 
         self.widget_menu = m.addMenu("小组件")
         self.widget_menu.setStyleSheet(theme.MENU_QSS)
@@ -124,15 +122,6 @@ class SystemTray:
         self.window.toggle()
         self._sync_checks()
 
-    def _toggle_widgets(self, checked):
-        """小组件模式（反馈 16）：只开关小组件，不影响图标接管。"""
-        on = bool(checked)
-        self.storage.set_setting("show_widgets", on)
-        if self.layer is not None:
-            self.layer.set_visible(on)
-        self.notify("小组件模式" + ("已开启" if on else "已关闭"),
-                    "桌面小组件会显示在壁纸上" if on else "桌面只保留图标")
-
     def _add_apps(self):
         if self.openAddApps:
             self.openAddApps()
@@ -171,11 +160,7 @@ class SystemTray:
 
     # ---------- 状态同步 ----------
     def _sync_checks(self):
-        self.act_toggle.setChecked(self.window.isVisible())
-        self.act_toggle.setText("显示原生桌面" if self.window.isVisible()
-                                else "返回整理桌面")
         self.act_autostart.setChecked(autostart.is_enabled())
-        self.act_widgets.setChecked(bool(self.storage.get_setting("show_widgets")))
         for entry in self.storage.widgets:
             act = self._widget_actions.get(entry["id"])
             if act is not None:

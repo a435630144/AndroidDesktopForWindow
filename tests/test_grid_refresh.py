@@ -127,7 +127,7 @@ def main(app):
     before_cols = grid_flow.current_metrics().cols
     dlg.chk_auto_cols.setChecked(False)   # 手动模式
     dlg.spin_cols.setValue(5)
-    settle(app)
+    settle(app, 300)          # 等防抖落地（60ms 停顿 + 一次重建）
     after_cols = grid_flow.current_metrics().cols
     check("G4 改列数立即重算（无需重开接管）",
           after_cols == 5 and after_cols != before_cols,
@@ -148,6 +148,7 @@ def main(app):
     tier_orig = st2.icon_tier()
     box_before = grid_sizing.icon_layout(m2.cw, m2.ch, tier_orig).icon_box
     dlg.cmb_tier.setCurrentIndex(dlg.cmb_tier.findData("small"))
+    settle(app, 300)
     settle(app)
     m3 = grid_flow.current_metrics()
     lay_small = grid_sizing.icon_layout(m3.cw, m3.ch, "small")

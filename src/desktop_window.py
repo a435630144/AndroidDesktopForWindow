@@ -11,7 +11,6 @@ from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from . import appsource
-from . import drag_merge
 from . import grid_flow
 from . import theme
 from . import win32_layer
@@ -29,9 +28,22 @@ HTTRANSPARENT, HTCLIENT = -1, 1
 # 2026-10-20 用户反馈 F3："想合并却先被挤走"——旧值 260ms 比合并武装
 # （DWELL_MERGE_MS=450ms）**短**，拖影抖动一下掉回"擦边"目标就被推走，
 # 合并提示永远等不到。改成 dwell + 250ms：**提示先出现，推让后到**。
-# 另外压住目标图标本身（重叠 ≥ MERGE_ARM_RATIO）时干脆不推让，
-# 见 `_reflow_preview`。
+# 2026-10-21 反馈 7 起合并/挤走改由双区模型分流（iconwidget._hit_target
+# 按拖影中心判核心区），本窗口只在**让位区**的 dragMove 里被驱动——
+# 合并候选的拖动根本到不了这里（合成事件发给目标图标），"提示优先"
+# 由路由结构保证；进核心区时桌面收到的 dragLeave 也会撤销推让
+# （见 dragLeaveEvent），两者不会双触发。
 PUSH_DWELL_MS = DWELL_MERGE_MS + 250
+
+# 反馈 8（2026-10-21）：「图标位于屏幕边缘且左或右存在分页的时候，会在
+# hover 图标的情况下，把图标拽到下一个分页，就跟手机的逻辑一样。」
+# 拖动图标到翻页轴末端的边缘带内悬停这么久 -> 翻到邻页（手机 launcher
+# 语义）。两条约束：
+#   1. 必须短于 PUSH_DWELL_MS——同一边缘带上"先翻页、后推让"，否则两个
+#      手势抢同一位置（翻页后旧页的推让武装也会被 _on_edge_flip 撤掉）；
+#   2. 没有邻页（首页再往上 / 末页再往下）不武装，见 _edge_dir_at。
+EDGE_FLIP_BAND = 24            # 指针进边缘带（px）才算"在边缘"
+EDGE_FLIP_DWELL_MS = 600       # 悬停多久才翻页
 
 
 class DesktopWindow(QWidget):
@@ -67,7 +79,10 @@ class DesktopWindow(QWidget):
         self._picking_origin = False
         self._grid_flash = False    # 取点 / 重置后短时显示网格线（ms 级反馈）
         # v6 §5.2：拖动中目标 cell 红框高亮（判定结果可见、可预期）
+        # 2026-10-21 反馈 5：组件是多格占位，红框必须按 span 画整块
+        # （_hl_span），否则 2×1 组件只框住 1 格，用户以为只检测一半
         self._hl_cell = None
+        self._hl_span = (1, 1)
         self.icons = {}
         # v6 §4：图标当前构建所用的 IconLayout 签名（快照就绪前后 cell
         # 变化时检测到即重建——启动时 rebuild 早于 GridMetrics，旧 chrome
@@ -98,6 +113,17 @@ class DesktopWindow(QWidget):
         self._push_timer.timeout.connect(self._push_occupied)
         self._push_cell = None
         self._push_dragged = None
+        # 反馈 8：边缘悬停翻页（手机 launcher 语义）。拖动中指针进入
+        # 翻页轴末端的边缘带并停住 EDGE_FLIP_DWELL_MS -> 翻到邻页。
+        #   _edge_flip_dir   当前武装的方向（-1 上一页 / +1 下一页 / 0 未武装）
+        #   _edge_flip_pos   最后一次处在边缘带内的指针（窗口坐标），
+        #                    _on_edge_flip 靠它续武装（按住不放连续翻）
+        self._edge_flip_timer = QTimer(self)
+        self._edge_flip_timer.setSingleShot(True)
+        self._edge_flip_timer.setInterval(EDGE_FLIP_DWELL_MS)
+        self._edge_flip_timer.timeout.connect(self._on_edge_flip)
+        self._edge_flip_dir = 0
+        self._edge_flip_pos = None
         # WindowDoesNotAcceptFocus(WS_EX_NOACTIVATE)：永不被激活，
         # 保证桌面带窗口永远压在应用窗口之下，不会抢焦点 / 置顶。
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
@@ -121,6 +147,49 @@ class DesktopWindow(QWidget):
         关：仅悬浮，原生桌面照常可用。
         """
         return self.storage.takeover()
+
+    def _widgets_only(self) -> bool:
+        """仅小组件模式（2026-10-21 反馈 9）。
+
+        开：只显示小组件——图标全隐藏、页点/空态提示停画、组件切无界
+        （不占格）；接管不变（原生图标仍由我们藏着）。
+        """
+        return bool(self.storage.get_setting("widgets_only"))
+
+    def set_widgets_only(self, on: bool):
+        """开 / 关「仅小组件模式」（设置页唯一入口）。
+
+        开：记住当前布局模式 → 切无界（组件无界）→ 重建（图标不再建）。
+        关：恢复记住的模式 → 重建（图标回来）。
+        模式没变时（本就无界 / prev=free）也要重建——图标显隐就在
+        rebuild 里表达，这是单一落地处。
+        """
+        on = bool(on)
+        if on == self._widgets_only():
+            return
+        self.storage.set_setting("widgets_only", on)
+        if on:
+            if not bool(self.storage.get_setting("show_widgets")):
+                # 仅小组件 = 只显示组件：组件开关必须跟着开，否则桌面全空
+                # （用户先关「显示桌面小组件」再开本模式的顺序）。
+                self.storage.set_setting("show_widgets", True)
+                if self._widget_layer is not None:
+                    try:
+                        self._widget_layer.set_visible(True)
+                    except Exception:
+                        pass
+            self.storage.set_setting("widgets_only_prev_mode",
+                                     grid_flow.layout_mode(self.storage))
+            target = "free"
+        else:
+            target = str(self.storage.get_setting("widgets_only_prev_mode")
+                         or "grid")
+        switched = (target == "free") != grid_flow.free_mode(self.storage)
+        if switched:
+            self.set_layout_mode(target)     # 内部自带坐标换算 + rebuild
+        self.rebuild(stagger=True)
+        self.storage.save()
+        self.update()
 
     def _dev_mode(self) -> bool:
         """开发者模式（2026-10-18）：桌面渲染网格可视化边框，排查布局问题用。
@@ -257,12 +326,14 @@ class DesktopWindow(QWidget):
             # surface 可被系统命中；「是否吃事件」仍由 nativeEvent 策略决定
             # （原生模式空闲对非图标区返回 HTTRANSPARENT，穿透不受影响）。
             self._paint_hit_fill()
-            # 空态提示只在整理模式画：原生模式下桌面是系统原生的，不能盖任何东西
-            if not self.icons and self._organize_mode():
+            # 空态提示只在整理模式画：原生模式下桌面是系统原生的，不能盖任何东西；
+            # 仅小组件模式（反馈 9）也不画——没有图标就没有"空空如也"
+            if (not self.icons and self._organize_mode()
+                    and not self._widgets_only()):
                 self._paint_empty_hint(event)
             if self._band_rect is not None:
                 self._paint_band(event)
-            if self._organize_mode():
+            if self._organize_mode() and not self._widgets_only():
                 if self._dev_mode() or self._grid_flash:
                     self._paint_grid_debug()
                 self._paint_dots()
@@ -281,7 +352,7 @@ class DesktopWindow(QWidget):
         p.setPen(theme.TEXT)
         p.setFont(theme.ui_font(13))
         p.drawText(24, 30, "桌面整理 Demo · 悬浮模式（未能挂载桌面层，功能不受影响）")
-        if self._organize_mode():
+        if self._organize_mode() and not self._widgets_only():
             if self._dev_mode():
                 self._paint_grid_debug()
             self._paint_dots()
@@ -311,16 +382,24 @@ class DesktopWindow(QWidget):
         p.drawText(r, Qt.AlignCenter, text)
 
     def _paint_highlight(self, event):
-        """v6 §5.2：目标 cell 红框（2px 描边 + 8% 红填充，圆角与网格语言一致）。"""
+        """v6 §5.2：目标格红框（2px 描边 + 8% 红填充，圆角与网格语言一致）。
+
+        2026-10-21 反馈 5：按 `_hl_span` 画**整块**占位矩形（组件 2×1 就
+        框 2 格、3×4 就框 12 格）——单格红框会让用户以为只检测到一格，
+        左侧格子"不碰撞"的观感正是这么来的。
+        """
         col, row = self._hl_cell
+        cs, rs = self._hl_span
         x, y = grid_flow.cell_pos(self.storage, col, row)
         cw, ch = grid_flow.cell_size(self.storage)
+        w = cw * cs + max(0, cs - 1) * 0
+        h = ch * rs + max(0, rs - 1) * 0
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(QPen(theme.DANGER, 2))
         p.setBrush(QColor(theme.DANGER.red(), theme.DANGER.green(),
                           theme.DANGER.blue(), 20))
-        p.drawRoundedRect(QRect(x + 1, y + 1, cw - 2, ch - 2), 8, 8)
+        p.drawRoundedRect(QRect(x + 1, y + 1, w - 2, h - 2), 8, 8)
 
     def _paint_hit_fill(self):
         """全窗 alpha=2 命中填充（视觉不可见，使透明像素也可被系统命中测试选中）。"""
@@ -638,47 +717,16 @@ class DesktopWindow(QWidget):
         return grid_flow.cell_by_overlap(
             self.storage, (tl.x(), tl.y(), g.width(), g.height()))
 
-    def _drag_overlap_on_cell(self, dragged_id: str, cell,
-                              ghost_rect=None) -> float:
-        """拖影与**目标格上那个图标**的重叠比（0~1）。
+    def _set_highlight(self, cell, span=(1, 1)):
+        """v6 §5.2：目标格红框。只在跨格/换跨度时重绘——dragMove 是高频
+        事件，全屏窗口每次 update() 都贵，跨格才换目标。
 
-        2026-10-20 用户反馈 F3 的判定入口：拖影实质压住目标（≥
-        `drag_merge.MERGE_ARM_RATIO`）时要保住目标、等合并提示；只有擦边
-        才允许"悬停够久把他挤走"。
-
-        ghost_rect 可注入（QRect，全局坐标）：真实拖动取浮动拖影；
-        无拖影（合成 drop / 探针直调）返回 0.0 —— 退化为"照常推让"，
-        不改变既有测试与外部拖入的行为。
+        span：占位格数（反馈 5）。组件是多格占位，红框要画成整块；
+        图标永远是 1×1（默认值）。
         """
-        if ghost_rect is None:
-            icon = self.icons.get(dragged_id or "")
-            ghost = getattr(icon, "_drag_ghost_w", None) if icon else None
-            if ghost is None:
-                return 0.0
-            try:
-                ghost_rect = ghost.geometry()
-            except RuntimeError:
-                return 0.0
-        occ = self.storage.occupant(cell[0], cell[1], exclude_id=dragged_id)
-        if occ is None:
-            return 0.0
-        target = self.icons.get(occ.get("id"))
-        if target is None:
-            return 0.0
-        try:
-            r = QRect(target.mapToGlobal(QPoint(0, 0)), target.size())
-        except RuntimeError:
-            return 0.0
-        return drag_merge.overlap_ratio(
-            (ghost_rect.x(), ghost_rect.y(),
-             ghost_rect.width(), ghost_rect.height()),
-            (r.x(), r.y(), r.width(), r.height()))
-
-    def _set_highlight(self, cell):
-        """v6 §5.2：目标 cell 红框。只在跨格时重绘——dragMove 是高频
-        事件，全屏窗口每次 update() 都贵，跨格才换目标。"""
-        if cell != self._hl_cell:
+        if cell != self._hl_cell or tuple(span) != self._hl_span:
             self._hl_cell = cell
+            self._hl_span = tuple(span) if cell is not None else (1, 1)
             self.update()
 
     def _drag_pos(self, fallback: QPoint):
@@ -760,6 +808,11 @@ class DesktopWindow(QWidget):
         接管承载（原生图标不隐藏会出现两套图标），故自动开启接管。
         """
         mode = "free" if str(mode) == "free" else "grid"
+        # 仅小组件模式（反馈 9）：组件必须无界，网格请求直接忽略——
+        # 菜单里的布局入口在该模式下已隐藏，这里是护栏（设置页的布局
+        # 下拉同样可能发来 grid）。
+        if self._widgets_only() and mode != "free":
+            return
         if (mode == "free") == grid_flow.free_mode(self.storage):
             return
         if mode == "grid" and not self.storage.takeover():
@@ -816,13 +869,18 @@ class DesktopWindow(QWidget):
             self._widget_layer.sync_page(self._page)
         self.update()
 
-    def goto_page(self, page, animate=True):
+    def goto_page(self, page, animate=True, skip_id=None):
         """翻到指定页：运行时页同步 + 持久化 + 全体弹簧滑到新页位置。
 
         翻页动画 = M4 位移引擎复用：图标 animate_to 新位置（实例不变），
         组件经 WidgetLayer.sync_page 同向滑动——当前页内容滑出屏、
         邻页内容滑入屏（iOS launcher 语言）。animate=False 用于启动
         夹紧等无仪式场景（直接 move，不播动画）。
+
+        skip_id（反馈 8）：翻页动画跳过该条目。拖拽中的图标由拖影代表
+        （不可见），不该被翻页动画拉走——且它落盘时是 move() 到新格，
+        飞行中的 pos 动画会把图标继续拖向旧目标（animate_to 只停自己的
+        旧动画，停不了 goto_page 起的这条）。
 
         v6 §4 分页禁半截：桌面窗口 = 工作区大小，网格四边等距铺满，
         上下边距（约半格）放不下一整格图标——邻页图标静止态会从屏底/
@@ -839,6 +897,8 @@ class DesktopWindow(QWidget):
         self.storage.set_setting("current_page", page)
         hide_after = []
         for eid, icon in self.icons.items():
+            if eid == skip_id:
+                continue          # 反馈 8：拖拽中的条目不参与翻页动画
             entry = self.storage.find_entry(eid)
             if entry is None:
                 continue
@@ -1032,22 +1092,25 @@ class DesktopWindow(QWidget):
         self.icons.clear()
         self._selected = {eid for eid in self._selected
                           if self.storage.find_entry(eid) is not None}
-        size = self._icon_size()                 # v6 §1.3：双模式图标边长
-        chrome = self.storage.icon_chrome_scale()
-        for idx, entry in enumerate(self.storage.layout):
-            # v6 A2：三档 × 当前 cell；反馈 12 再乘该条目的 icon_scale
-            layout = self._icon_layout(entry)
-            icon = AppIcon(entry, size, parent=self, chrome_scale=chrome,
-                           layout=layout)
-            self._wire_icon(icon)
-            icon.set_selected(entry["id"] in self._selected)
-            icon.move(*self._entry_pos(entry))
-            if stagger:
-                # 错峰淡入（模式切换 / 首次显示的仪式感；业务 rebuild 不加，
-                # 拖动落位要即时反馈）
-                icon.appear_in(min(idx * 30, 600))
-            icon.show()
-            self.icons[entry["id"]] = icon
+        # 仅小组件模式（反馈 9）：只显示组件——图标一个都不建。
+        # 条目仍完整留在 storage 里，关掉该模式重建即回来。
+        if not self._widgets_only():
+            size = self._icon_size()             # v6 §1.3：双模式图标边长
+            chrome = self.storage.icon_chrome_scale()
+            for idx, entry in enumerate(self.storage.layout):
+                # v6 A2：三档 × 当前 cell；反馈 12 再乘该条目的 icon_scale
+                layout = self._icon_layout(entry)
+                icon = AppIcon(entry, size, parent=self, chrome_scale=chrome,
+                               layout=layout)
+                self._wire_icon(icon)
+                icon.set_selected(entry["id"] in self._selected)
+                icon.move(*self._entry_pos(entry))
+                if stagger:
+                    # 错峰淡入（模式切换 / 首次显示的仪式感；业务 rebuild 不加，
+                    # 拖动落位要即时反馈）
+                    icon.appear_in(min(idx * 30, 600))
+                icon.show()
+                self.icons[entry["id"]] = icon
         # 安全网：rebuild 销毁全部图标部件，飞行中的拖拽其源已不存在——
         # dragFinished 可能永远送不达（源被 deleteLater 后 emit 抛
         # RuntimeError，被 IconWidget._after_drag 吞掉）。与 dropEvent
@@ -1202,6 +1265,7 @@ class DesktopWindow(QWidget):
         self._drag_multi = False
         self._hl_cell = None            # v6 §5.2：红框随拖拽结束撤下
         self._cancel_push()             # 反馈 9：未触发的推让随松手作废
+        self._cancel_edge_flip()        # 反馈 8：未触发的翻页随松手作废
         if self._preview_moves is not None:
             # 没有落点（拖到窗外 / 拖到资源管理器 / 按 Esc 取消）-> 回退
             self._cancel_preview()
@@ -1223,17 +1287,141 @@ class DesktopWindow(QWidget):
         """拖动经过空白格：按落点算一次让位预览并驱动其他图标弹簧滑行。
 
         这是「安卓式滑动让位」的实时性来源——不等松手，被越过的图标
-        立即让出格子（design.md 2.3）。
+        立即让出格子（design.md 2.3）。反馈 8 的边缘悬停翻页检测也在
+        这条路上（_drag_move_at 首行），翻页后用拖影位置重算一次。
         """
         if not e.mimeData().hasFormat(MIME_TYPE):
             return
         e.acceptProposedAction()
-        dragged = e.mimeData().data(MIME_TYPE).data().decode()
+        self._drag_move_at(e.mimeData().data(MIME_TYPE).data().decode(),
+                           e.position().toPoint())
+
+    def _drag_move_at(self, dragged: str, pos):
+        """dragMove 主体：边缘翻页检测 + 落点红框 + 让位预览。
+
+        边缘翻页检测放在 free_mode 之前：无界模式下 `_edge_dir_at`
+        自己返回 0，顺带撤销可能残留的武装（模式不会在拖动中变，防御性）。
+        反馈 8 的翻页后重算也走本函数（_on_edge_flip），不复制逻辑。
+        """
+        self._maybe_edge_flip(pos)
         if grid_flow.free_mode(self.storage):
             return      # v6 §1.3：无界模式无让位预览、无目标格红框
-        cell = self._drag_cell(e.position().toPoint())
+        cell = self._drag_cell(pos)
+        if dragged.startswith("M:"):
+            # 反馈 6：文件夹成员拖出——落点按 _on_extract 的真实规则算
+            # （目标被占时会落到第一个空格），红框必须画在那一格，
+            # 否则用户看着红框松手、图标却出现在别处
+            self._set_highlight(self._extract_landing_cell(cell))
+            return
         self._set_highlight(cell)       # v6 §5.2：红框跟随面积判定结果
         self._reflow_preview(dragged, cell)
+
+    # ---------- 边缘悬停翻页（反馈 8，手机 launcher 语义） ----------
+    def _edge_dir_at(self, pos) -> int:
+        """指针（窗口坐标）处的翻页方向。
+
+        返回 -1（上一页）/ +1（下一页）/ 0（不在带上或翻不过去）。
+        只在桌面图标拖动中（`_drag_active`，由 payload 提供者置上）
+        且网格模式有意义——无界模式没有页概念；文件夹成员提取的
+        M: payload 不置 `_drag_active`，天然排除。
+        """
+        if not self._drag_active or grid_flow.free_mode(self.storage):
+            return 0
+        if grid_flow.page_axis(self.storage) == grid_flow.PAGE_AXIS_VERTICAL:
+            if pos.y() <= EDGE_FLIP_BAND:
+                d = -1
+            elif pos.y() >= self.height() - EDGE_FLIP_BAND:
+                d = 1
+            else:
+                return 0
+        else:
+            if pos.x() <= EDGE_FLIP_BAND:
+                d = -1
+            elif pos.x() >= self.width() - EDGE_FLIP_BAND:
+                d = 1
+            else:
+                return 0
+        total = max(1, grid_flow.page_count(self.storage))
+        if not (0 <= grid_flow.current_page() + d < total):
+            return 0        # 第一页再往上 / 末页再往下：没有邻页，不武装
+        return d
+
+    def _maybe_edge_flip(self, pos):
+        """拖动中检测边缘悬停翻页（反馈 8）。
+
+        每次 dragMove 调一次：在带上 -> 起/续 dwell；离开带 -> 撤销。
+        翻页后**不要求离开再回来**：手机语义是"按住不放就一页页继续翻"，
+        续武装在 `_on_edge_flip` 里做（指针可能停住不动，等不到下一次
+        dragMove）；翻到底后 `_edge_dir_at` 返回 0，自然收口。
+        """
+        d = self._edge_dir_at(pos)
+        if d == 0:
+            self._edge_flip_timer.stop()
+            self._edge_flip_dir = 0
+            self._edge_flip_pos = None
+            return
+        self._edge_flip_pos = QPoint(pos)
+        if d != self._edge_flip_dir:
+            self._edge_flip_dir = d
+            self._edge_flip_timer.start()
+        elif not self._edge_flip_timer.isActive():
+            self._edge_flip_timer.start()
+
+    def _on_edge_flip(self):
+        """边缘悬停到点：翻一页（反馈 8）。
+
+        翻页只改视图：拖影不动、网格滑动，松手时 `_drag_cell` 按**新页**
+        页偏移反算落点（cell_by_overlap 经 grid_flow.current_page），
+        "拽到下一个分页"由此闭环。
+        """
+        d = self._edge_flip_dir
+        if d == 0:
+            return
+        # 旧页的推让武装作废：目标格已随页滑走，700ms 后推一个看不见的
+        # 图标没有意义，还会在新页留下幽灵位移
+        self._cancel_push()
+        # skip_id：拖拽中的图标由拖影代表，不被翻页动画拉走——它不可见，
+        # 且落盘时是 move() 到新格，残留的 pos 动画会把它继续拖向旧目标
+        self.goto_page(grid_flow.current_page() + d,
+                       skip_id=self._drag_entry_id)
+        # 续武装（按住不放连续翻）：以最后一次在带内的指针复核——翻到底后
+        # _edge_dir_at 返回 0，这里就不续，计时器自然收起
+        if self._edge_flip_pos is not None and \
+                self._edge_dir_at(self._edge_flip_pos) == d:
+            self._edge_flip_timer.start()
+        # 红框/预览还停在旧页的格子上（cell_pos 按新页换算后画到屏外）：
+        # 用拖影当前位置把 dragMove 主体重算一次——与"用户继续移动鼠标"
+        # 同一条路径，松手前的最后一帧也是新页落点
+        icon = self.icons.get(self._drag_entry_id or "")
+        ghost = getattr(icon, "_drag_ghost_w", None) if icon is not None else None
+        if ghost is None:
+            return
+        try:
+            dragged = icon._drag_mime.data(MIME_TYPE).data().decode()
+        except Exception:
+            dragged = ""
+        if dragged:
+            pos = self.mapFromGlobal(ghost.geometry().center())
+            self._drag_move_at(dragged, pos)
+
+    def _cancel_edge_flip(self):
+        """松手 / 拖出窗口 / 拖到图标上（dragLeave）：撤销边缘翻页。"""
+        self._edge_flip_timer.stop()
+        self._edge_flip_dir = 0
+        self._edge_flip_pos = None
+
+    def _extract_landing_cell(self, cell):
+        """成员拖出的**实际落点**（与 `_on_extract` 同一规则）。
+
+        目标格空 -> 就落目标格；被占 -> `storage.first_free_cell()`
+        （`add_app` 用的就是它，不另写一份扫描——两套规则必然漂移）。
+        """
+        col, row = int(cell[0]), int(cell[1])
+        if self.storage.occupant(col, row) is not None:
+            free = self.storage.first_free_cell()
+            if free is not None:
+                col, row = int(free[0]), int(free[1])
+        return (col, row)
 
     def _on_reflow_hover(self, dragged: str, gx: int, gy: int):
         """拖动悬停（2026-10-18 M2：参数是指针全局坐标，非图标格点）。
@@ -1378,6 +1566,11 @@ class DesktopWindow(QWidget):
         if grid_flow.free_mode(self.storage):
             return      # v6 §1.3：无界模式组件不占格，图标不被挤走
         cs, rs = grid_flow.widget_span(self.storage, entry)
+        # 反馈 5：gx/gy 是组件**自身左上角**的全局坐标（widget_base 松手前
+        # 报的就是 self.pos()，与 _snap_to_grid 的 pos_cell(self.x(), self.y())
+        # 同口径）——按它逐格，rect 才正好覆盖组件真实 footprint。旧实现收
+        # 的是指针坐标：2×1 组件抓中间拖时指针在第 2 格、左缘在第 1 格，
+        # 预览矩形少算左格 → "左侧 1×1 不碰撞"。
         col, row = self._cell_at(self.mapFromGlobal(QPoint(gx, gy)))
         # v6 §4：预览矩形按 span 夹紧（clamp_widget_cell）——旧实现只夹
         # 列不夹行，2×2 组件拖到页底最后一行时矩形含页外行，图标被挤到
@@ -1420,6 +1613,9 @@ class DesktopWindow(QWidget):
             e["col"], e["row"] = dst
             moves[e["id"]] = dst
         self._widget_preview_rect = rect
+        # 反馈 5：拖动中就把目标占位用红框画出来（整 span）——与图标拖动的
+        # "当前格红底"同一语言，组件用户也能看见"我要占这几格、会撞到什么"
+        self._set_highlight((col, row), (cs, rs))
         self._animate_icons_to_layout(moves, sync_all=True)
 
     def _on_widget_drop(self, widget_id: str, gx: int, gy: int):
@@ -1430,6 +1626,10 @@ class DesktopWindow(QWidget):
             self._restore_snap(self._widget_snap)
         self._widget_snap = None
         self._widget_preview_rect = None
+        # 反馈 5：红框是组件拖动期间画的，松手必须撤（否则留在桌面上）
+        self._hl_cell = None
+        self._hl_span = (1, 1)
+        self.update()
         self._sync_icons()
 
     def _reflow_preview(self, dragged_id: str, cell):
@@ -1463,18 +1663,17 @@ class DesktopWindow(QWidget):
         # 手机语义是"边缘重叠并悬浮一会儿 -> 实时把对方挤走"。折中：
         # 起一个推让计时器，停留够久再算位移（松手/移开即取消）。
         # 拖动中每次 dragMove 都会重置它，只有真正停住才触发。
+        #
+        # 2026-10-21 反馈 7 起这里是**纯粹的让位区入口**：合并候选的拖动
+        # 根本到不了本窗口（iconwidget._hit_target 按拖影中心判核心区，
+        # 压住对方正中的合成事件直接发给目标图标），所以"目标被占"=
+        # 用户要的就是挤走——不再需要 F3 那种按重叠比 defer 的门控
+        # （那层门控把 0.15~0.30 整段变成死区：不合并也不挤走，正是
+        # 反馈 7 报的"实时挤开效果没有了"）。提示优先改由路由结构 +
+        # dragLeaveEvent 撤销推让来保证（不双触发）。
         if not self._drag_multi:
             occ = self.storage.occupant(cell[0], cell[1], exclude_id=dragged_id)
             if occ is not None:
-                # 2026-10-20 F3：拖影**压住**了目标图标（重叠 ≥
-                # MERGE_ARM_RATIO）时不武装推让——用户要的是合并提示，
-                # 不是把人挤走。只擦边时才走"悬停够久挤走"的老语义。
-                if drag_merge.defers_push(
-                        self._drag_overlap_on_cell(dragged_id, cell)):
-                    self._push_timer.stop()
-                    self._push_cell = None
-                    self._push_dragged = None
-                    return
                 self._push_cell = cell
                 self._push_dragged = dragged_id
                 self._push_timer.start()
@@ -1858,6 +2057,30 @@ class DesktopWindow(QWidget):
         self.storage.save()
         self._sync_structure()          # M4：成员增量淡入 + 文件夹图标移除
 
+    def _dissolve_folder(self, folder):
+        """反馈 10：文件夹只剩 1 个成员时自动解除。
+
+        “一个成员的文件夹”没有存在意义——用户要的是直接看到那个图标。
+        最后一个成员弹回桌面：网格模式优先占文件夹原格（视觉连续：
+        文件夹在哪消失、图标就在哪出现），原格被占则退第一个空格；
+        无界模式交给 add_app 的自由落点。返回 True 表示已解除。
+        """
+        apps = folder.get("apps") or []
+        if len(apps) != 1:
+            return False
+        last = apps[0]
+        col = row = None
+        if not grid_flow.free_mode(self.storage):
+            try:
+                col, row = int(folder.get("col")), int(folder.get("row"))
+            except (TypeError, ValueError):
+                col = row = None
+        self.storage.remove_entry(folder.get("id"))
+        if col is not None and self.storage.occupant(col, row) is not None:
+            col = row = None        # 原格已被占：不挤走无关图标
+        self.storage.add_app(last, col, row)
+        return True
+
     def _on_merge(self, dragged_payload: str, target_id: str):
         # 2026-10-19 反馈 5：合并前**回退**拖动预览（不是清掉状态）。
         # 旧实现 _clear_preview() 丢弃了快照回退，被递进的图标就停在预览
@@ -1889,7 +2112,10 @@ class DesktopWindow(QWidget):
                 target["app"] = {}
                 target["apps"] = members
             src["apps"].pop(idx)
-            if not src["apps"]:
+            # 反馈 10：成员被并走后源文件夹只剩 1 个 → 自动解除
+            if len(src.get("apps") or []) == 1:
+                self._dissolve_folder(src)
+            elif not src["apps"]:
                 self.storage.remove_entry(fid)
             self.storage.compact_layout()
             self.storage.save()
@@ -1962,6 +2188,8 @@ class DesktopWindow(QWidget):
         # 2026-10-19 反馈：幕布铺满桌面带且层级最高，拖放必须由它转发到
         # 桌面窗口——否则"从文件夹里把图标拖出来"的 drop 会被幕布吞掉
         scrim.dropReceived.connect(self._drop_from_scrim)
+        # 反馈 6：拖动**过程中**的落点预览也走幕布转发（红框 / 让位）
+        scrim.dragMoved.connect(self._preview_from_scrim)
         self._scrim = scrim
         scrim.show()
         scrim.fade_in()
@@ -2016,6 +2244,11 @@ class DesktopWindow(QWidget):
         """弹窗自行关闭后的收尾（closed 信号）：清引用 + 源图标退出
         打开态 + 幕布淡出销毁。幂等：_close_popup 已清场时为空操作。"""
         self._popup = None
+        # 反馈 6：拖出预览的红框是幕布转发驱动的，弹窗一关必须撤掉，
+        # 否则桌面上留一个永不消失的红框（成员的 dragFinished 送不到
+        # DesktopWindow，_on_drag_finished 的清理路径不走这里）
+        self._hl_cell = None
+        self._hl_span = (1, 1)
         self._exit_folder_open_state()
         scrim = self._scrim
         self._scrim = None
@@ -2153,7 +2386,10 @@ class DesktopWindow(QWidget):
         if (entry is not None and entry.get("id") in known
                 and col is not None and row is not None):
             entry["col"], entry["row"] = int(col), int(row)
-        if not folder["apps"]:
+        # 反馈 10：拖出后只剩 1 个成员 → 自动解除文件夹（最后一个一起弹回桌面）
+        if len(folder.get("apps") or []) == 1:
+            self._dissolve_folder(folder)
+        elif not folder["apps"]:
             self.storage.remove_entry(fid)
         self.storage.compact_layout()
         self.storage.save()
@@ -2173,12 +2409,46 @@ class DesktopWindow(QWidget):
             return
         pos = self.mapFromGlobal(gpos) if gpos is not None else QPoint(0, 0)
         if md.hasFormat(MIME_TYPE):
+            self._hl_cell = None            # 反馈 6：松手即撤预览红框
+            self._hl_span = (1, 1)
+            self.update()
             self._drop_internal(md.data(MIME_TYPE).data().decode(), pos)
         elif md.hasUrls():
             self._drop_files(md.urls(), pos)
 
+    def _preview_from_scrim(self, md, gpos):
+        """幕布上**拖动中**的落点预览（2026-10-21 反馈 6）。
+
+        从文件夹里拖出成员且没松手时，用户要能看见"这会落到哪、会不会
+        撞到桌面上的东西"——与图标拖动同一套语言：目标格红底。红框位置
+        必须与 `_on_extract` 的落点规则**同口径**（目标空 -> 目标格；
+        被占 -> 第一个空格），否则用户看着红框松手、图标却落在别处。
+        空格规则直接调 `storage.first_free_cell()`（add_app 用的就是它），
+        不另写一份扫描——两套规则必然漂移。
+        """
+        if md is None or not md.hasFormat(MIME_TYPE):
+            return
+        payload = md.data(MIME_TYPE).data().decode()
+        if not payload.startswith("M:"):
+            # 非成员拖放（桌面图标 / 多选 / 外部文件）不在这里预览：
+            # 它们的 dragMove 由 DesktopWindow.dragMoveEvent 直接收到
+            # （没有幕布遮挡时），或由 _ole_active 路径处理
+            return
+        if grid_flow.free_mode(self.storage):
+            return
+        pos = self.mapFromGlobal(gpos) if gpos is not None else QPoint(0, 0)
+        col, row = self._cell_at(pos)
+        self._set_highlight(self._extract_landing_cell((col, row)))
+
     def _on_remove_member(self, payload: str):
-        """文件夹内右键移出成员。payload: "M:fid:idx" 或 "fid:idx"。"""
+        """文件夹内右键「移出文件夹」：成员弹回桌面（与拖出同一语义）。
+        payload: "M:fid:idx" 或 "fid:idx"。
+
+        2026-10-21 反馈 10：移出后文件夹只剩 1 个成员时自动解除文件夹
+        （`_dissolve_folder`），最后一个成员一起弹回桌面。
+        顺带修掉一个老 bug：旧实现只 pop 不 add_app，成员被无声丢弃
+        （拖出能回桌面、右键移出却消失，同一意图两个入口两种命运）。
+        """
         if payload.startswith("M:"):
             payload = payload[2:]
         fid, _, idx = payload.rpartition(":")
@@ -2186,10 +2456,16 @@ class DesktopWindow(QWidget):
         if not folder or folder.get("type") != "folder" or not idx.isdigit():
             return
         idx = int(idx)
-        if 0 <= idx < len(folder.get("apps", [])):
-            folder["apps"].pop(idx)
-            if not folder["apps"]:
-                self.storage.remove_entry(fid)
+        if not (0 <= idx < len(folder.get("apps", []))):
+            return
+        app = folder["apps"].pop(idx)
+        self.storage.add_app(app)          # 第一个空格弹回桌面
+        remaining = len(folder.get("apps") or [])
+        if remaining == 1:
+            self._dissolve_folder(folder)  # 反馈 10：只剩一个 → 解除
+        elif remaining == 0:
+            self.storage.remove_entry(fid)
+        self.storage.compact_layout()
         self.storage.save()
         self._sync_structure()          # M4：空文件夹移除走增量
         # M5：同上——解散自动关，否则刷到空态
@@ -2207,6 +2483,14 @@ class DesktopWindow(QWidget):
 
     def dragLeaveEvent(self, e):
         self._ole_active = False
+        # 反馈 7：拖影从桌面（让位区）滑到目标图标核心区的瞬间，合成
+        # dragLeave 先落到本窗口——此刻必须撤销已武装的推让，否则
+        # 700ms 后目标会在「松手合并」提示亮着的时候被挤走（F3 病根
+        # 的另一个入口：提示与推让双触发）。
+        self._cancel_push()
+        # 反馈 8：同理撤销边缘翻页——拖影压到边缘带的图标上时，用户
+        # 要的是合并/让位，不是翻页（两手势不双触发）。
+        self._cancel_edge_flip()
         e.accept()
 
     def dropEvent(self, e):
@@ -2379,15 +2663,18 @@ class DesktopWindow(QWidget):
             menu.addSeparator()
 
             # 本软件的布局能力
-            free_now = grid_flow.free_mode(self.storage)
-            menu.addAction("切换到无界模式（自由摆布）" if not free_now
-                           else "切换到网格模式（对齐网格）",
-                           self._toggle_layout_mode)
-            # 分页（反馈 17）：**两种模式都有**——旧实现把「添加空白页」
-            # 写在 `if free_now:` 里，网格模式下用户根本找不到分页入口。
-            menu.addAction("添加空白页", self._add_blank_page)
-            if self._page in grid_flow.extra_pages(self.storage):
-                menu.addAction("删除当前空白页", self._remove_blank_page)
+            # 仅小组件模式（反馈 9）下整段不出现：没有图标，布局切换与
+            # 空白页都无从谈起（组件在无界态不翻页）。
+            if not self._widgets_only():
+                free_now = grid_flow.free_mode(self.storage)
+                menu.addAction("切换到无界模式（自由摆布）" if not free_now
+                               else "切换到网格模式（对齐网格）",
+                               self._toggle_layout_mode)
+                # 分页（反馈 17）：**两种模式都有**——旧实现把「添加空白页」
+                # 写在 `if free_now:` 里，网格模式下用户根本找不到分页入口。
+                menu.addAction("添加空白页", self._add_blank_page)
+                if self._page in grid_flow.extra_pages(self.storage):
+                    menu.addAction("删除当前空白页", self._remove_blank_page)
             # 网格原点定位是**开发者功能**（v7 §3.4），入口只在设置页
             # 「高级 → 调试」里，且要开发者开关打开才可配置。
             # 2026-10-20 用户反馈 5：桌面右键不该出现这两项。
@@ -2395,26 +2682,11 @@ class DesktopWindow(QWidget):
 
         if self._selected:
             menu.addAction("删除选中（%d）" % len(self._selected), self._remove_selected)
-        # 小组件模式（反馈 16）：取代旧的「隐藏 / 显示桌面整理」。
-        # 桌面接管是常开的（程序打开就接管），右键只需要一个能单独
-        # 开关小组件的入口。
-        wid_act = menu.addAction("小组件模式")
-        wid_act.setCheckable(True)
-        wid_act.setChecked(bool(self.storage.get_setting("show_widgets")))
-        wid_act.triggered.connect(self._toggle_widgets_mode)
+        # 2026-10-21 反馈 9：右键的「小组件模式」开关移除——与设置页
+        # 「显示桌面小组件」是同一个值的两个旋钮，必然互相打架；
+        # 新增的「仅小组件模式」开关同样只在设置页，入口唯一。
         menu.addAction("设置…", self.openSettingsRequested.emit)
         return menu
-
-    def _toggle_widgets_mode(self, checked: bool):
-        """小组件模式开关（反馈 16）：只影响小组件显隐，不动图标接管。"""
-        on = bool(checked)
-        self.storage.set_setting("show_widgets", on)
-        layer = self._widget_layer
-        if layer is not None:
-            try:
-                layer.set_visible(on)
-            except Exception:
-                pass
 
     def _fill_new_menu(self, new_menu):
         """「新建」子菜单：文件夹 + 系统注册的全部 ShellNew 模板（反馈 6）。"""

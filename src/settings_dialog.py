@@ -14,15 +14,17 @@
 
 分组：通用 / 外观与图标 / 布局与网格 / 模式 / 高级。
 """
-from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, Qt
+from PySide6.QtCore import (Property, QElapsedTimer, QEasingCurve,
+                            QPropertyAnimation, Qt, QTimer)
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame,
                                QHBoxLayout, QLabel, QMessageBox, QPushButton,
-                               QScrollArea, QSizePolicy, QSlider, QSpinBox,
+                               QScrollArea, QSizePolicy, QSlider,
                                QStackedWidget, QVBoxLayout, QWidget)
 
 from . import autostart
 from . import grid_flow
+from .stepper import Stepper
 from .ui_choice import ComboBox
 from . import theme
 
@@ -290,6 +292,16 @@ class SettingsDialog(QDialog):
         self.chk_widgets.toggled.connect(self._apply_widgets)
         self._row(c, card, "显示桌面小组件",
                   self.chk_widgets, "时钟 / 便签 / 桌面面板")
+
+        # v7 反馈 9：仅小组件模式——只留小组件（组件切无界、图标全隐藏）。
+        # 入口唯一：托盘 / 桌面右键里的模式开关已移除。
+        self.chk_widgets_only = Switch()
+        self.chk_widgets_only.setChecked(
+            bool(self.storage.get_setting("widgets_only")))
+        self.chk_widgets_only.toggled.connect(self._apply_widgets_only)
+        self._row(c, card, "仅小组件模式",
+                  self.chk_widgets_only,
+                  "只显示小组件：全部组件无界摆放、隐藏桌面图标")
         lay.addWidget(card)
 
     def _page_appearance(self, body, lay):
@@ -387,7 +399,7 @@ class SettingsDialog(QDialog):
                   self.chk_auto_cols,
                   "关闭后可手动指定列数 / 行数（列数是唯一改变格子大小的旋钮）")
 
-        self.spin_cols = QSpinBox()
+        self.spin_cols = Stepper()
         self.spin_cols.setRange(1, 24)
         self.spin_cols.setSuffix(" 列")
         self.spin_cols.setFixedWidth(96)
@@ -396,7 +408,7 @@ class SettingsDialog(QDialog):
         self._row(c, card, "列数", self.spin_cols,
                   "列数越少格子越大，图标同步变大（不会小于系统桌面图标）")
 
-        self.spin_rows = QSpinBox()
+        self.spin_rows = Stepper()
         self.spin_rows.setRange(1, 12)
         self.spin_rows.setSuffix(" 行")
         self.spin_rows.setFixedWidth(96)
@@ -424,13 +436,13 @@ class SettingsDialog(QDialog):
         fh = QHBoxLayout(fbox)
         fh.setContentsMargins(0, 0, 0, 0)
         fh.setSpacing(8)
-        self.sp_folder_cols = QSpinBox()
+        self.sp_folder_cols = Stepper()
         self.sp_folder_cols.setRange(2, 6)
         self.sp_folder_cols.setSuffix(" 列")
         self.sp_folder_cols.setFixedWidth(82)
         self.sp_folder_cols.setValue(int(fdef[0]))
         self.sp_folder_cols.valueChanged.connect(self._apply_folder_frame_default)
-        self.sp_folder_rows = QSpinBox()
+        self.sp_folder_rows = Stepper()
         self.sp_folder_rows.setRange(2, 6)
         self.sp_folder_rows.setSuffix(" 行")
         self.sp_folder_rows.setFixedWidth(82)
@@ -479,8 +491,13 @@ class SettingsDialog(QDialog):
         self.cmb_layout_mode.setCurrentIndex(
             max(0, self.cmb_layout_mode.findData(grid_flow.layout_mode(self.storage))))
         self.cmb_layout_mode.currentIndexChanged.connect(self._apply_layout_mode)
+        # 仅小组件模式（反馈 9）：组件必须无界，布局下拉置灰并说明原因
+        # （窗口侧 set_layout_mode 还有护栏，双保险）。
+        widgets_only = bool(self.storage.get_setting("widgets_only"))
+        self.cmb_layout_mode.setEnabled(not widgets_only)
         self._row(c, card, "布局", self.cmb_layout_mode,
-                  "无界模式可自由重叠摆放，并支持添加空白页")
+                  "无界模式可自由重叠摆放，并支持添加空白页" if not widgets_only
+                  else "仅小组件模式下组件始终无界，退出该模式后可切换")
         lay.addWidget(card)
 
         card, c = self._card(body, "桌面文件")
@@ -529,7 +546,7 @@ class SettingsDialog(QDialog):
                   self.chk_origin,
                   "关闭 = 四边等距居中；开启后用下面两个数值精确调位置")
 
-        self.sp_ox = QSpinBox()
+        self.sp_ox = Stepper()
         self.sp_ox.setRange(0, 9999)
         self.sp_ox.setSingleStep(2)
         self.sp_ox.setSuffix(" px")
@@ -539,7 +556,7 @@ class SettingsDialog(QDialog):
         self._row(c, card, "原点 X", self.sp_ox,
                   "网格左上角的横坐标；超出屏幕会被夹回屏内")
 
-        self.sp_oy = QSpinBox()
+        self.sp_oy = Stepper()
         self.sp_oy.setRange(0, 9999)
         self.sp_oy.setSingleStep(2)
         self.sp_oy.setSuffix(" px")
@@ -595,6 +612,51 @@ class SettingsDialog(QDialog):
         if getattr(self.window, "rebuild", None) is not None:
             return self._call_window("rebuild")
         return self._call_window("update")
+
+    # 连续输入控件（滑条 / 步进器长按连步）的统一落地节流。
+    # 两个口径都要满足（2026-10-21 反馈 1）：
+    #   停顿 60ms 就落地 -> 拖一下停一下也有实时反馈；
+    #   连续拖动能忍的上限 220ms -> 不会"拖了半天桌面没反应"。
+    # 实测 refresh_grid() 单次 16~22ms（60 图标）：每像素一次 = GUI 线程
+    # 100% 占满，鼠标事件排队 -> "拖不动 / 断触"。
+    GRID_REFRESH_DEBOUNCE = 60       # ms
+    GRID_REFRESH_MAX_WAIT = 220      # ms
+
+    def _schedule_grid_refresh(self):
+        """几何类控件的统一落地入口（2026-10-21 反馈 1：滑条**断触**）。
+
+        `refresh_grid()` 会**销毁重建全部桌面图标**并重新挂载桌面带；
+        滑条 `valueChanged` 每像素触发一次，GUI 线程被重建占满，Qt 的
+        鼠标抓取被反复打断，用户看到的就是"拖一下就停、不流畅"。
+        同类问题也命中行列/原点步进器的长按连步（每 80ms 一次重建）。
+
+        修法：**写入立即做**（storage 很便宜，滑条旁边的百分比立刻变），
+        **重建走节流**——纯防抖（停顿即落地）+ 上限等待（连续拖动也保证
+        每 220ms 内给一次反馈）。一次性操作（勾选 / 切换档位）仍走
+        `_refresh_grid` 直连，不需要节流。
+        """
+        t = getattr(self, "_grid_timer", None)
+        if t is None:
+            t = QTimer(self)
+            t.setSingleShot(True)
+            t.timeout.connect(self._on_grid_debounced)
+            self._grid_timer = t
+            self._grid_wait = QElapsedTimer()
+            self._grid_wait.start()
+        if t.isActive():
+            if self._grid_wait.elapsed() >= self.GRID_REFRESH_MAX_WAIT:
+                t.stop()                            # 忍够了：立刻给一次反馈
+                self._grid_wait.restart()
+                self._refresh_grid()
+                return
+            t.start(self.GRID_REFRESH_DEBOUNCE)     # 重启 = 纯防抖语义
+            return
+        self._grid_wait.restart()
+        t.start(self.GRID_REFRESH_DEBOUNCE)
+
+    def _on_grid_debounced(self):
+        self._grid_wait.restart()
+        self._refresh_grid()
 
     def _apply_autostart(self, checked):
         autostart.set_enabled(bool(checked))
@@ -683,10 +745,14 @@ class SettingsDialog(QDialog):
         self._refresh_grid()
 
     def _apply_icon_fit(self, value):
-        """自定义占比滑条（30%~90%）：走 storage 唯一写入点，档位=自定义。"""
+        """自定义占比滑条（30%~90%）：走 storage 唯一写入点，档位=自定义。
+
+        反馈 1（2026-10-21）：滑条**断触**的根因见 `_schedule_grid_refresh`
+        ——每像素一次全桌面重建。这里只写值 + 刷标签，重建交给防抖定时器。
+        """
         self.storage.apply_icon_fit(int(value) / 100.0, tier="custom")
         self._refresh_icon_labels()
-        self._refresh_grid()
+        self._schedule_grid_refresh()
 
     def _apply_match_native(self, checked):
         self.storage.set_setting("icon_match_native", bool(checked))
@@ -729,7 +795,7 @@ class SettingsDialog(QDialog):
             return
         self.storage.set_setting("grid_cols", int(value))
         self.storage.compact_layout()
-        self._refresh_grid()
+        self._schedule_grid_refresh()
         self._refresh_grid_spins()
 
     def _apply_rows(self, value):
@@ -738,7 +804,7 @@ class SettingsDialog(QDialog):
         if self.chk_auto_cols.isChecked():
             return
         self.storage.set_setting("grid_rows", int(value))
-        self._refresh_grid()
+        self._schedule_grid_refresh()
         self._refresh_grid_spins()
 
     def _apply_auto_columns(self, checked):
@@ -822,7 +888,7 @@ class SettingsDialog(QDialog):
         self.storage.set_grid_origin("manual",
                                      int(self.sp_ox.value()),
                                      int(self.sp_oy.value()))
-        self._refresh_grid()
+        self._schedule_grid_refresh()
         self._sync_origin_controls()
 
     def _reset_grid_origin(self):
@@ -929,9 +995,31 @@ class SettingsDialog(QDialog):
             self.window.setWindowOpacity(value / 100.0)
 
     def _apply_widgets(self, checked):
-        self.storage.set_setting("show_widgets", bool(checked))
+        on = bool(checked)
+        self.storage.set_setting("show_widgets", on)
         if self.layer is not None:
-            self.layer.set_visible(bool(checked))
+            self.layer.set_visible(on)
+        if not on and bool(self.storage.get_setting("widgets_only")):
+            # 仅小组件模式下再关小组件 = 桌面什么都不剩：自动退出该模式，
+            # 让图标回来（避免"空桌面"死局）。
+            self.chk_widgets_only.setChecked(False)
+
+    def _apply_widgets_only(self, checked):
+        """仅小组件模式（v7 反馈 9）：写设置 + 通知窗口切模式/重建。
+
+        窗口是单一写者（set_widgets_only 内部自己落设置），这里只转发；
+        窗口不可用时（探针 / 单测窗口替身）才自己写，保证设置不丢。
+        """
+        on = bool(checked)
+        if on and not bool(self.storage.get_setting("show_widgets")):
+            # 仅小组件 = 只显示组件：组件开关必须跟着开（否则桌面全空），
+            # 设置窗里的开关态也同步回落，避免"显示与实际不符"。
+            self.chk_widgets.setChecked(True)
+        hook = getattr(self.window, "set_widgets_only", None)
+        if hook is not None:
+            hook(on)
+        else:
+            self.storage.set_setting("widgets_only", on)
 
     def _apply_takeover(self, checked):
         self.storage.set_takeover(bool(checked))

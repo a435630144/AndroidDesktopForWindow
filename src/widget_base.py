@@ -698,9 +698,14 @@ class FloatingWidget(QWidget):
         elif self._drag_off is not None:
             self.move(e.globalPosition().toPoint() - self._drag_off)
             if self.anchored:
-                # 实时预览：报指针全局坐标（DesktopWindow 反算新占位矩形，
-                # 把矩形内图标挤走——组件跟着手指走，图标同步让位）
-                g = e.globalPosition().toPoint()
+                # 实时预览：报组件**自身左上角**（不是指针位置）。
+                # DesktopWindow 反算新占位矩形时按这个点逐格，与
+                # `_snap_to_grid()` 的落点依据（pos_cell(self.x(), self.y())）
+                # 保持同一口径。旧实现报指针：2×1 组件抓中间拖，指针落在
+                # 第 2 格而组件左缘还在第 1 格，预览矩形少算左格——用户
+                # 看到"左侧 1×1 不做碰撞检测"（2026-10-21 反馈 5），且松手
+                # 吸附点与预览 footprint 不是同一块。
+                g = self.pos()
                 self.anchorHover.emit(self.entry.get("id", ""), g.x(), g.y())
         elif not self.anchored and (self._close_rect().contains(e.pos())
                                     or self._grip_rect().contains(e.pos())):

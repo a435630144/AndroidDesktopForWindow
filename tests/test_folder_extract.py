@@ -71,7 +71,8 @@ def make_state():
         {"id": "f", "type": "folder",
          "app": {"id": "f", "name": "F", "kind": "folder"},
          "apps": [{"id": "m1", "name": "M1", "target": "m1", "kind": "app"},
-                  {"id": "m2", "name": "M2", "target": "m2", "kind": "app"}],
+                  {"id": "m2", "name": "M2", "target": "m2", "kind": "app"},
+                  {"id": "m3", "name": "M3", "target": "m3", "kind": "app"}],
          "col": 4, "row": 2},
     ]
     st.save()
@@ -176,6 +177,13 @@ def main(app):
               for eid in ("a", "b")),
           "%s" % ([(eid, st.find_entry(eid)["col"], st.find_entry(eid)["row"])
                    for eid in ("a", "b")],))
+
+    # ---------- E6：反馈 10——提取到只剩 1 个成员 → 解散 + 弹窗关闭 ----------
+    check("E6 只剩 1 个成员时文件夹自动解除", st.find_entry("f") is None,
+          "f=%s" % (st.find_entry("f"),))
+    check("E6 弹窗随解散自动关闭", w._popup is None)
+    check("E6 最后一个成员弹回桌面", st.find_entry("m3") is not None,
+          "layout ids=%s" % [e.get("id") for e in st.layout])
 
     for icon in list(w.icons.values()):
         icon.close()

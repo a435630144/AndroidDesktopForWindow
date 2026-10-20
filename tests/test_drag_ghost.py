@@ -8,6 +8,10 @@
      （旧代码 set_drag_ghost(True) 先于 render，虚影态 paintEvent
      早退 -> 快照全透明空图，用户看不到自己拖的是什么）
 
+D4-D7c 落点判定（_hit_target / _widget_at_drag，2026-10-21 反馈 7）：
+  D6b 合并提示气泡（窗口类型 Qt.ToolTip）必须滤掉
+  D6c Qt.Tool / Qt.Popup 类型真落点不能被误滤（旧判据位与交集 regression）
+
 运行：python tests/test_drag_ghost.py   （offscreen）
 """
 import os
@@ -138,6 +142,31 @@ def main(app):
         _StubQA.result = other
         t6 = ic2._hit_target(QPoint(200, 200))
         check("D6 命中其它部件时原样返回", t6 is other)
+
+        # D6b：合并提示气泡（窗口类型 Qt.ToolTip）必须滤掉。旧实现把
+        # QToolTip 内部的 QLabel（qtooltip_label）当成拖放目标，合成
+        # dragMove 全发给气泡，桌面侧推让 / 让位预览整条断掉——2026-10-21
+        # 反馈 7 端到端实测抓到的真 bug（test_edge_push E4f/E4g 防线）。
+        tip = QWidget()
+        tip.setWindowFlags(Qt.ToolTip)
+        _StubQA.result = tip
+        t6b = ic2._hit_target(QPoint(200, 200))
+        check("D6b 合并提示气泡被滤掉 -> 落点回退宿主窗口", t6b is host,
+              "got=%r" % (type(t6b).__name__,))
+        tip.close()
+
+        # D6c：Qt.Tool / Qt.Popup 类型真落点不能被误滤。旧判据
+        # `windowFlags() & Qt.ToolTip` 与这些类型位有交集（0xB&0xD=0x9、
+        # 0x9&0xD=0x9；无父窗 0x800f001&0xD=0x1），D6 就是这样挂的。
+        for flag_name, flag in (("Qt.Tool", Qt.Tool),
+                                ("Qt.Popup", Qt.Popup)):
+            wd = QWidget()
+            wd.setWindowFlags(flag)
+            _StubQA.result = wd
+            t6c = ic2._hit_target(QPoint(200, 200))
+            check("D6c %s 类型真落点原样返回（位与判据误滤回归）" % flag_name,
+                  t6c is wd, "got=%r" % (type(t6c).__name__,))
+            wd.close()
 
         # D7：窗口外 -> None（外部区域不该被当成内部落点）
         _StubQA.result = None

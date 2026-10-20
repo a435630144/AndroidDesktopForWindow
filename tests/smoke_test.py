@@ -73,7 +73,8 @@ def main():
         check("显式整理布局后顺序铺满",
               (st.layout[0]["col"], st.layout[0]["row"]) == (0, 0))
 
-        # 4. 文件夹成员拖出（payload: "fid:idx"）：拖出一个仍保留，拖空才溶解
+        # 4. 文件夹成员拖出（payload: "fid:idx"）：只剩 1 个成员即解散
+        #    （2026-10-21 反馈 10，旧语义"拖出一个仍保留"已作废）
         st.add_app({"name": "画图", "target": "mspaint"})
         st.add_app({"name": "Edge 浏览器", "target": "microsoft-edge:"})
         e0, e1 = st.layout[0], st.layout[1]
@@ -81,8 +82,9 @@ def main():
         check("再次合并为文件夹", st.layout[0]["type"] == "folder" and len(st.layout[0]["apps"]) == 2)
         fid = st.layout[0]["id"]
         w._on_extract("%s:0" % fid)
-        folder = st.find_entry(fid)
-        check("拖出一个成员后文件夹保留", len(st.layout) == 3 and folder and len(folder["apps"]) == 1)
+        check("拖出后只剩 1 个成员 → 文件夹自动解散",
+              st.find_entry(fid) is None and len(st.layout) == 3
+              and all(e["type"] == "app" for e in st.layout))
         w._on_extract("%s:0" % fid)
         check("成员拖空后文件夹溶解", len(st.layout) == 3
               and all(e["type"] == "app" for e in st.layout) and st.find_entry(fid) is None)

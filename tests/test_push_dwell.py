@@ -1,18 +1,23 @@
 # -*- coding: utf-8 -*-
-"""悬停推让：停够 260ms 才把占位者挤走（2026-10-19 反馈 9）。
+"""悬停推让：停够 PUSH_DWELL_MS 才把占位者挤走（2026-10-19 反馈 9）。
 
 用户原话："手机逻辑是图标在边缘重叠并悬浮一段时间，会实时把对方挤走
 （目前的效果是只有松手的时候才会挤走）。"
 
 设计折中：立刻挤走会让人来不及看清「松手合并」提示（反馈 4 的病），
-完全不挤又违背手机直觉。所以给一个 260ms 的 dwell：
+完全不挤又违背手机直觉。所以给一个 dwell：
 
   P1 拖到被占格 -> 立刻不动（只武装计时器），布局原样
-  P2 停够 260ms -> 占位者被挤走，拖动者占住目标格
+  P2 停够 dwell -> 占位者被挤走，拖动者占住目标格
   P3 快速划过（下一次 dragMove 落到空格）-> 计时器撤销，不挤人
   P4 松手前 _cancel_push() -> 计时器撤销，等再久也不动
   P5 挤走之后两图标格不同（绝不堆叠）
   P6 目标格本来就空 -> 立即预览让位，不用等 dwell
+  P7 双区模型常量契约（2026-10-21 反馈 7：核心区 / 滞回 / 门槛）
+
+2026-10-21 反馈 7 起，"什么时候该挤走"由 iconwidget 双区模型路由
+（拖影中心在目标核心区外才到得了本窗口的 dragMove），本文件只锁
+推让时序与常量契约；状态机验收在 tests/test_edge_push.py。
 
 运行：python tests/test_push_dwell.py   （offscreen）
 """
@@ -27,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication
 
+from src import drag_merge
 from src import grid_flow
 from src.desktop_window import PUSH_DWELL_MS, DesktopWindow
 from src.iconwidget import DWELL_MERGE_MS
@@ -95,6 +101,18 @@ def main(app):
     check("P0 推让延时晚于合并提示且不超过 1.2s（提示先出现）",
           DWELL_MERGE_MS < PUSH_DWELL_MS <= 1200,
           "push=%d dwell=%d" % (PUSH_DWELL_MS, DWELL_MERGE_MS))
+    # 2026-10-21 反馈 7：双区模型常量（指导文档 v7 §5.2）
+    check("P7a 核心区占比落在 (0.4, 0.8)",
+          0.4 < drag_merge.MERGE_CORE_RATIO < 0.8,
+          "core=%s" % drag_merge.MERGE_CORE_RATIO)
+    check("P7b 滞回带够小且不把核心区吃光",
+          0 < drag_merge.MERGE_CORE_HYSTERESIS < 0.1
+          and drag_merge.MERGE_CORE_RATIO - drag_merge.MERGE_CORE_HYSTERESIS > 0.4,
+          "hyst=%s" % drag_merge.MERGE_CORE_HYSTERESIS)
+    check("P7c 门槛低于核心区半径（擦边即可进让位区）",
+          0 < drag_merge.MERGE_ARM_RATIO < drag_merge.MERGE_CORE_RATIO,
+          "arm=%s core=%s" % (drag_merge.MERGE_ARM_RATIO,
+                              drag_merge.MERGE_CORE_RATIO))
 
     # ---------- P1：拖到被占格 -> 立刻不动 ----------
     w._reflow_preview("c", (0, 0))

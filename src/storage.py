@@ -96,6 +96,12 @@ DEFAULT_SETTINGS = {
                                # （设置高级选项，rows 始终自动）
     "opacity": 0.95,           # 整理窗口不透明度 0.5 ~ 1.0
     "show_widgets": True,      # 是否显示桌面小组件
+    # v7 反馈 9「仅小组件模式」：开 → 记住当前布局模式并切无界（组件
+    # 不占格 = 组件无界）、隐藏全部图标、停画页点/空态提示；关 → 恢复
+    # 记住的模式与图标。托盘/右键里的小组件模式开关同步下线，入口唯一
+    # （设置 ▸ 通用 ▸ 仅小组件模式）。
+    "widgets_only": False,
+    "widgets_only_prev_mode": None,  # 进仅小组件前的布局模式（grid/free）
     "minimize_to_tray": True,  # 关闭窗口时隐藏到托盘（否则退出程序）
     # 2026-10-18 产品方向调整（用户拍板"路线A：隐藏原图标全部映射"）：
     # 默认即进入桌面整理模式——隐藏原生图标、桌面文件全部映射进网格、
@@ -196,6 +202,15 @@ class Storage:
             self._data["settings"]["takeover_desktop"] = True
             self._data["settings"]["hide_native_icons"] = True
             self._data["settings"]["takeover_v7_forced"] = True
+        # v7 反馈 9：仅小组件 + 不显示小组件 = 空桌面死局。设置页有两条
+        # 防线（开模式时组件开关跟着开、关组件时自动退出模式），这里兜底
+        # 手改 / 历史 state，并把被无界化掉的布局模式一并恢复。
+        _s = self._data["settings"]
+        if _s.get("widgets_only") and not _s.get("show_widgets", True):
+            _s["widgets_only"] = False
+            if (_s.get("widgets_only_prev_mode") == "grid"
+                    and _s.get("layout_mode") == "free"):
+                _s["layout_mode"] = "grid"
         self._normalize_layout()
         # v7 §10.3：旧键 columns（整数 = 手动列数）一次性迁移进 grid_cols。
         # 判据用**文件里的原始 settings**（合并默认值后 grid_dims_mode 必然存在）。

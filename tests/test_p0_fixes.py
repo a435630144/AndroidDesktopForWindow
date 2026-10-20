@@ -274,9 +274,13 @@ def test_extract_member(mode):
               % (icon.isHidden(), got.get("row") if got else None,
                  __import__("src.grid_flow", fromlist=["x"]).rows_per_page()))
     f1 = st.find_entry("f1")
-    check(tag + "F6e 文件夹只剩 1 个成员",
-          f1 is not None and len(f1.get("apps", [])) == 1,
-          "%s" % (len(f1.get("apps", [])) if f1 else None))
+    # 2026-10-21 反馈 10：拖出后只剩 1 个成员 → 文件夹自动解除。
+    # 旧断言「文件夹还在、还剩 1 个」正是本轮要改掉的行为。
+    check(tag + "F6e 只剩 1 个成员 → 文件夹自动解除", f1 is None,
+          "f1=%s" % (f1,))
+    check(tag + "F6f 最后一个成员也弹回桌面",
+          st.find_entry("app-2") is not None,
+          "layout ids=%s" % [e.get("id") for e in st.layout])
     w.close()
     QApplication.processEvents()
 

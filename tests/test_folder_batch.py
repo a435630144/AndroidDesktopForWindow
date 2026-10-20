@@ -99,13 +99,37 @@ def test_model():
     check("G1 空文件夹 2×2", folder_layout.grid_shape(0) == (2, 2))
     check("G1 9 个成员铺满 3×3",
           folder_layout.grid_shape(9) == (3, 3))
-    check("G1 超过上限只加行（不丢成员）",
-          folder_layout.grid_shape(10) == (3, 4)
-          and folder_layout.grid_shape(20) == (3, 7),
-          "%s %s" % (folder_layout.grid_shape(10), folder_layout.grid_shape(20)))
-    check("G1 上限改 2×2 后压到 2 列",
-          folder_layout.grid_shape(9, (2, 2)) == (2, 5),
+    # 反馈 3：**满页即封顶**——超过容量不再加行（旧契约 grid_shape(10)==(3,4)
+    # 会让弹窗一路长高顶出屏幕），多出来的成员由 page_count/page_items 分页
+    check("G1 反馈3 10 个成员封顶 3×3（不再加行）",
+          folder_layout.grid_shape(10) == (3, 3),
+          "%s" % (folder_layout.grid_shape(10),))
+    check("G1 反馈3 20 个成员仍封顶 3×3",
+          folder_layout.grid_shape(20) == (3, 3))
+    check("G1 反馈3 上限改 2×2 后压到 2 列且封顶",
+          folder_layout.grid_shape(9, (2, 2)) == (2, 2),
           "%s" % (folder_layout.grid_shape(9, (2, 2)),))
+    check("G1 反馈3 容量 capacity(3,3)=9 / (2,2)=4",
+          folder_layout.capacity((3, 3)) == 9
+          and folder_layout.capacity((2, 2)) == 4)
+    check("G1 反馈3 页数 ceil(n/容量)，空夹也算 1 页",
+          folder_layout.page_count(0) == 1
+          and folder_layout.page_count(9) == 1
+          and folder_layout.page_count(10) == 2
+          and folder_layout.page_count(20, (2, 2)) == 5,
+          "%s %s" % (folder_layout.page_count(10),
+                     folder_layout.page_count(20, (2, 2))))
+    check("G1 反馈3 页号夹紧（越界回末页/首页）",
+          folder_layout.clamp_page(9, 10) == 1
+          and folder_layout.clamp_page(-3, 10) == 0
+          and folder_layout.clamp_page(0, 3) == 0)
+    check("G1 反馈3 page_items 带全局 offset（payload 用它取成员）",
+          folder_layout.page_items(list(range(20)), 1)[1] == 9
+          and folder_layout.page_items(list(range(20)), 1)[0] == list(range(9, 18))
+          and folder_layout.page_items(list(range(20)), 2)[0] == [18, 19],
+          "%s" % (folder_layout.page_items(list(range(20)), 1),))
+    check("G1 反馈3 空列表任何页都是空切片",
+          folder_layout.page_items([], 3) == ([], 0))
     check("G1 上限改 4×4 后 3 个成员仍优先排满一行",
           folder_layout.grid_shape(3, (4, 4))[0] == 3,
           "%s" % (folder_layout.grid_shape(3, (4, 4)),))

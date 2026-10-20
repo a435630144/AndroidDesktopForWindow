@@ -114,9 +114,14 @@ class ScrimWindow(QWidget):
     层级高于整理窗口——从弹窗里把成员往外拖，光标一离开弹窗就落在幕布
     上；旧实现没有 dragEnter/dropEvent，合成 drop 被静默吞掉，
     `_on_extract` 永不执行（用户："拖拽出来后不显示"）。
+    **2026-10-21 反馈 6 补 dragMove 转发**：只转发 drop 不够——拖动
+    过程中桌面侧完全没有预览（红框 / 让位），用户看不到"这会落到哪、
+    会不会撞到东西"。幕布是全屏最顶窗口，合成 dragMove 也只会送到它
+    这里，所以必须一并转出去。
     """
     clicked = Signal()
     dropReceived = Signal(object, QPoint)   # (QMimeData, 全局落点)
+    dragMoved = Signal(object, QPoint)      # (QMimeData, 全局落点) 反馈 6
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -141,6 +146,9 @@ class ScrimWindow(QWidget):
     def dragMoveEvent(self, e):
         if self._accepts(e.mimeData()):
             e.acceptProposedAction()
+            # 反馈 6：把"正在拖过"也转给桌面窗口（落点预览的唯一来源）
+            self.dragMoved.emit(e.mimeData(),
+                                self.mapToGlobal(e.position().toPoint()))
 
     def dropEvent(self, e):
         if not self._accepts(e.mimeData()):
@@ -347,6 +355,9 @@ class FolderPopup(QWidget):
         self._tint_form = None
         self._add_form = None
         self._editor = None          # 行内输入框（重命名）
+        self._page = 0               # 当前页（反馈 3：超过容量左右分页）
+        self._swipe_x = None         # 横向拖拽起点（翻页手势用）
+        self._swipe_y = None
         self._close_hover = False
         self._title_hover = False
         self._bar_hover = {}         # pill key -> bool
@@ -372,11 +383,45 @@ class FolderPopup(QWidget):
         return icon_size, m, pad, title_h, bar_h
 
     def _members_rect(self):
-        """成员网格区域（标题 / 色板条之下）。"""
+        """成员网格区域（标题之下、页点之上，左右等边距）。"""
         _s, m, pad, title_h, _bar = self._metrics()
         top = title_h
-        return QRect(pad // 2, top, max(1, self.width() - pad),
-                     max(1, self.height() - top - pad // 2))
+        return QRect(pad, top, max(1, self.width() - pad * 2),
+                     max(1, self.height() - top - self._pager_h() - pad))
+
+    def _pager_h(self):
+        """页点占位高度（只有一页时为 0，不占地方也不画）。"""
+        if self._page_total() <= 1:
+            return 0
+        m = self.storage.icon_chrome_scale()
+        return max(12, int(round(18 * m)))
+
+    def _page_total(self) -> int:
+        """总页数（反馈 3：超出容量左右分页，与桌面 page_count 同语义）。"""
+        n = len(self.entry.get("apps") or [])
+        return folder_layout.page_count(n, self.storage.folder_frame(self.entry))
+
+    def _pager_rect(self):
+        """页点热区（整宽一条，命中即翻页；只有一页时返回空矩形）。"""
+        if self._page_total() <= 1:
+            return QRect()
+        _s, m, pad, title_h, _bar = self._metrics()
+        top = self.height() - self._pager_h() - pad // 2
+        return QRect(0, top, self.width(), self._pager_h())
+
+    def _pager_dots(self):
+        """页点矩形列表 [(rect, page), ...]（绘制与点击共用，避免两处算法分叉）。"""
+        total = self._page_total()
+        if total <= 1:
+            return []
+        m = self.storage.icon_chrome_scale()
+        d = max(5, int(round(6 * m)))
+        gap = max(6, int(round(9 * m)))
+        band = self._pager_rect()
+        total_w = total * d + (total - 1) * gap
+        x0 = band.center().x() - total_w // 2
+        y0 = band.center().y() - d // 2
+        return [(QRect(x0 + i * (d + gap), y0, d, d), i) for i in range(total)]
 
     def _member_icon_size(self):
         """文件夹内部图标边长（比桌面图标小一档；手机文件夹的密度）。"""
@@ -449,11 +494,15 @@ class FolderPopup(QWidget):
         """底部工具条已取消（反馈 8）；保留空实现供旧调用探测。"""
         return []
 
-    def _build(self, anchor_rect, keep_backdrop=False, keep_pos=False):
+    def _build(self, anchor_rect, keep_backdrop=False, keep_pos=False,
+               page=None, slide=0):
         """重排弹窗（成员格 / 尺寸 / 定位）。
 
         keep_pos=True：色板开合这类"只改高度"的重排——位置保持不动，
         否则会按 anchor=None 回退到屏幕居中，弹窗会从图标旁边跳走。
+
+        page：显式翻页（反馈 3）。只切成员不挪窗（尺寸已封顶在上限，
+        翻页不改变弹窗大小），slide=±1 时新页成员从对应侧滑入。
         """
         for child in self.findChildren(AppIcon):
             child.deleteLater()
@@ -461,13 +510,21 @@ class FolderPopup(QWidget):
         # 否则 _dragging 卡死会让 focusOutEvent 再也无法自动收起弹窗
         # （拖源被删 -> dragFinished 送不达 -> _on_drag_finish 不执行）。
         self._dragging = False
+        self._swipe_x = None
         icon_size, m, pad, title_h, bar_h = self._metrics()
-        members = self.entry.get("apps", [])
+        members = self.entry.get("apps", []) or []
+        n = len(members)
         self._empty = not members
         self._empty_hint = ("空文件夹\n点右上角 ＋ 从桌面添加"
                             if self._empty else "")
+        # 反馈 3：超过容量不再加行，改左右分页（参考桌面分页语义）
+        frame = self.storage.folder_frame(self.entry)
+        if page is None:
+            self._page = folder_layout.clamp_page(self._page, n, frame)
+        else:
+            self._page = folder_layout.clamp_page(page, n, frame)
+        page_members, offset = folder_layout.page_items(members, self._page, frame)
         # 反馈 14：尺寸 = 上限 × 成员数（2 个 -> 2×2，3 个 -> 3×2，默认 3×3）
-        n = len(members)
         cols, rows = self._grid_shape(n)
         bw, bh = self._member_box()
         px, py = self._member_pitch()
@@ -475,7 +532,7 @@ class FolderPopup(QWidget):
         content_w = cols * bw + (cols - 1) * gap_x
         content_h = rows * bh + (rows - 1) * gap_y
         w = pad + content_w
-        h = title_h + content_h + pad
+        h = title_h + content_h + self._pager_h() + pad
         # 高度不超过可用屏幕的 82%：桌面文件全拖进来的极端情况不顶出屏幕
         # 2026-10-20（用户反馈 F4，覆盖 v6 §6.2 的居中决策）：**贴着源图标
         # 展开**——下方优先、下方放不下翻上方、都放不下夹紧进屏幕。旧实现
@@ -516,8 +573,15 @@ class FolderPopup(QWidget):
             self._backdrop = effects.glass_backdrop(
                 QRect(self.x(), self.y(), self.width(), self.height()))
         top = title_h
-        for i, app in enumerate(members):
-            member_payload = "M:%s:%d" % (self.entry.get("id"), i)
+        # 反馈 4：**居中平均排布**。两层居中——① 内容块在窗口里水平居中
+        # （窗口有 240px 下限，窄内容（2 个成员）时旧实现从 x=pad/2 起排，
+        #  右侧空一大块，用户看到"布局偏左"）；② 每一行单独居中，末行
+        # 不足一排时不再齐左，而是排在当行中间。
+        origin_x = max(0, (self.width() - content_w) // 2)
+        for i, app in enumerate(page_members):
+            # payload 用**全局下标**（offset + i）：三处消费（拖出 / 并入 /
+            # 右键移出）都直接 `folder["apps"][idx]`，用页内下标会取错成员
+            member_payload = "M:%s:%d" % (self.entry.get("id"), offset + i)
             entry = {"id": member_payload, "type": "app", "app": app}
             icon = AppIcon(entry, self._member_icon_size(), in_folder=True,
                            parent=self, chrome_scale=m, compact=True,
@@ -527,10 +591,38 @@ class FolderPopup(QWidget):
             icon.dragFinished.connect(self._on_drag_finish)
             icon.activated.connect(self.launchApp.emit)
             icon.removeFromFolder.connect(self.removeMember.emit)
-            icon.move(pad // 2 + (i % cols) * px, top + (i // cols) * py)
-            # 弹窗内图标错峰淡入（玻璃涌出后依次浮现）
-            icon.appear_in(120 + i * 45)
-            icon.show()
+            r, c = divmod(i, cols)
+            row_n = min(cols, len(page_members) - r * cols)
+            row_w = row_n * bw + (row_n - 1) * gap_x
+            mx = origin_x + (content_w - row_w) // 2 + c * (bw + gap_x)
+            my = top + r * (bh + gap_y)
+            icon.move(mx, my)
+            if slide:
+                # 翻页手势：新页成员从对应侧滑入（ slide=+1 下一页从右进）
+                icon.move(mx + slide * self.width(), my)
+                icon.animate_to(mx, my, duration=300, damping=1.0)
+                icon.show()
+            else:
+                # 弹窗内图标错峰淡入（玻璃涌出后依次浮现）
+                icon.appear_in(120 + i * 45)
+        # 2026-10-19 用户反馈"文件夹样式有时候出问题"：稳态必须铺满整个
+        # 窗口。开合动画中断 / 被 refresh 打断时 `_zoom` 可能停在中间值，
+        # 而 paintEvent 只按 zoom 缩放后的 rect 画玻璃——结果是"图标和工具
+        # 栏都在、面板却只有中间一小块"。这里在没有动画在跑时强制归位，
+        # 并把整窗刷一次（几何变了，旧脏区不足以覆盖新尺寸）。
+        anim = getattr(self, "_open_anim", None)
+        try:
+            running = anim is not None and anim.state() == QAbstractAnimation.Running
+        except RuntimeError:
+            running = False
+        if not running:
+            self._zoom = 1.0
+        # 表单贴着弹窗：弹窗因成员增减改了大小，表单位置要跟着走
+        for attr in ("_tint_form", "_add_form"):
+            form = getattr(self, attr, None)
+            if form is not None and form.isVisible():
+                form.show_beside(self)
+        self.update()
         # 2026-10-19 用户反馈"文件夹样式有时候出问题"：稳态必须铺满整个
         # 窗口。开合动画中断 / 被 refresh 打断时 `_zoom` 可能停在中间值，
         # 而 paintEvent 只按 zoom 缩放后的 rect 画玻璃——结果是"图标和工具
@@ -549,6 +641,35 @@ class FolderPopup(QWidget):
             if form is not None and form.isVisible():
                 form.show_beside(self)
         self.update()
+
+    # ---------- 翻页（反馈 3：超容量左右分页） ----------
+    def _set_page(self, page: int):
+        """翻到指定页（夹紧 + 同页短路）；尺寸不变，只切成员 + 滑入动画。"""
+        total = self._page_total()
+        target = max(0, min(int(page), total - 1))
+        if target == self._page:
+            return
+        slide = 1 if target > self._page else -1
+        self._build(None, keep_backdrop=True, keep_pos=True,
+                    page=target, slide=slide)
+
+    def _page_step(self, delta: int):
+        """相对翻页（滚轮 / 滑适用）。"""
+        self._set_page(self._page + delta)
+
+    def wheelEvent(self, e):
+        """滚轮翻页（与桌面整理模式同一阈值 15，见 desktop_window.wheelEvent）。"""
+        if self._page_total() <= 1:
+            e.ignore()
+            return
+        dy = e.angleDelta().y()
+        dx = e.angleDelta().x()
+        delta = dy if abs(dy) >= abs(dx) else dx
+        if abs(delta) >= 15:
+            self._page_step(-1 if delta < 0 else 1)
+            e.accept()
+            return
+        e.ignore()
 
     # ---------- 开合动效 ----------
     def _open_animate(self):
@@ -835,6 +956,10 @@ class FolderPopup(QWidget):
             return False
         self.entry.setdefault("apps", []).append(app)
         self.storage.save()
+        # 反馈 3：新成员追加在末尾（大概率落在新起的最后一页）——翻过去，
+        # 否则用户点完 ＋ 看不见刚加的东西（页点显示有第 2 页却停在首页）
+        cap = folder_layout.capacity(self.storage.folder_frame(self.entry))
+        self._page = max(0, (len(self.entry["apps"]) - 1)) // max(1, cap)
         self.memberAdded.emit(entry_id)   # DesktopWindow：移出布局 + 动画
         self.refresh()
         return True
@@ -898,6 +1023,39 @@ class FolderPopup(QWidget):
         if self._title_rect().contains(pos):
             self._open_rename()
             return
+        # 反馈 3：点页点直接跳到该页
+        for rect, page in self._pager_dots():
+            if rect.contains(pos):
+                self._set_page(page)
+                return
+        # 其余空白区 = 翻页手势起点（成员图标是子控件，有自己的拖拽，
+        # 摸不到这里；标题/留白/页点带才是滑动手腕区）
+        self._swipe_x = pos.x()
+        self._swipe_y = pos.y()
+
+    def mouseMoveEvent(self, e):
+        pos = e.pos()
+        self._close_hover = self._close_rect().contains(pos)
+        self._title_hover = self._title_rect().contains(pos)
+        for key, rect in self._header_rects().items():
+            self._bar_hover[key] = rect.contains(pos)
+        any_hover = (self._close_hover or self._title_hover
+                     or any(self._bar_hover.values()))
+        # 反馈 3：横向滑动翻页（手机语言）。阈值取成员格宽的 1/3，
+        # 避免误触；触发后立刻清起点，一次按压只翻一页。
+        if self._swipe_x is not None:
+            dx = pos.x() - self._swipe_x
+            dy = pos.y() - (self._swipe_y or pos.y())
+            if abs(dx) >= 28 and abs(dx) > abs(dy):
+                self._page_step(-1 if dx > 0 else 1)
+                self._swipe_x = None
+                any_hover = True
+        self.setCursor(Qt.PointingHandCursor if any_hover else Qt.ArrowCursor)
+        self.update()
+
+    def mouseReleaseEvent(self, e):
+        self._swipe_x = None
+        super().mouseReleaseEvent(e)
 
     def paintEvent(self, e):
         p = QPainter(self)
@@ -985,6 +1143,18 @@ class FolderPopup(QWidget):
                 p.setBrush(QColor(tint.red(), tint.green(), tint.blue(), 235))
                 d = r.width() * 0.30
                 p.drawEllipse(QRectF(cx - d, cy - d, d * 2, d * 2))
+        # 反馈 3：页点（iOS launcher 语言）。当前页实心大白点，邻页半透明，
+        # 过渡页用当前文件夹色——一眼看出"还有下一页"。
+        for rect, page in self._pager_dots():
+            cur = (page == self._page)
+            p.setPen(Qt.NoPen)
+            if cur:
+                p.setBrush(QColor(255, 255, 255, 235))
+            elif page == self._page - 1 or page == self._page + 1:
+                p.setBrush(QColor(255, 255, 255, 90))
+            else:
+                p.setBrush(QColor(255, 255, 255, 45))
+            p.drawEllipse(rect)
         # 空态提示（成员网格区居中两行）
         if self._empty:
             p.setPen(theme.TEXT)
@@ -1006,17 +1176,6 @@ class FolderPopup(QWidget):
             return form is not None and form.isVisible()
         except RuntimeError:
             return False
-
-    def mouseMoveEvent(self, e):
-        pos = e.pos()
-        self._close_hover = self._close_rect().contains(pos)
-        self._title_hover = self._title_rect().contains(pos)
-        for key, rect in self._header_rects().items():
-            self._bar_hover[key] = rect.contains(pos)
-        any_hover = (self._close_hover or self._title_hover
-                     or any(self._bar_hover.values()))
-        self.setCursor(Qt.PointingHandCursor if any_hover else Qt.ArrowCursor)
-        self.update()
 
     _close_hover = False
     _title_hover = False

@@ -30,13 +30,14 @@ from PySide6.QtGui import (QBrush, QColor, QDragEnterEvent, QDragLeaveEvent,
                            QDragMoveEvent, QDropEvent, QFontMetrics,
                            QLinearGradient, QPen, QPixmap, QPainter)
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMenu,
-                               QSlider, QSpinBox, QToolTip, QVBoxLayout,
+                               QSlider, QToolTip, QVBoxLayout,
                                QWidget, QWidgetAction)
 
 from . import appsource
 from . import drag_merge
 from . import effects
 from .folder_tint import folder_tint
+from .stepper import Stepper
 from . import theme
 from .storage import entry_app
 
@@ -47,16 +48,42 @@ MIME_TYPE = "application/x-desktoporg-item"
 # 悬停足够久图标高亮后松手 -> 合并文件夹。两套手势由此分流。
 DWELL_MERGE_MS = 450
 
-# 判定「压到目标中心」的重叠比例（占较小矩形面积）。
-# >= 该值 = 想合并（武装 dwell）；否则视为擦边 = 想放这里并挤走对方。
-# 2026-10-20 用户反馈 F3：0.45 太高——把图标叠到目标上往往还不到 45%，
-# 于是被判成"擦边"走挤走逻辑，合并提示永远出不来。降到 0.30（压上去
-# 就算合并候选）。阈值单点定义在 drag_merge，这里只做 re-export。
-MERGE_OVERLAP_RATIO = drag_merge.MERGE_OVERLAP_RATIO
+# 拖放命中分流（2026-10-21 反馈 7 = v7 指导文档 §5.2 双区模型）：
+#   拖影中心在目标核心区（中心 55% 内缩矩形）-> 合并候选（武装 dwell）
+#   拖影中心在核心区外（让位区）            -> 桌面窗口（悬停够久挤走）
+# 重叠比只当"是否压在图标上"的门槛（MERGE_ARM_RATIO=0.15）：低于它视为
+# 没碰上，两套手势都不触发。旧模型按重叠比 0.30 一刀切（F3），两个病根
+# 正对反馈 7 原话："判定范围太大"（0.30 刚擦上就弹合并）+ "实时挤开效果
+# 没有了"（0.15~0.30 被 defer 成死区）。阈值单点定义在 drag_merge，
+# 这里只做 re-export。
+MERGE_ARM_RATIO = drag_merge.MERGE_ARM_RATIO
 
 # v6 §5.1（反馈 6）：拖动浮影 = 当前图标的 render 快照，半透明 0.8——
 # 替换旧 QDrag 的白块占位，拖动中保留原始样式（图标 + 标签 + 状态）。
 GHOST_OPACITY = 0.8
+
+
+def _is_tooltip_window(w) -> bool:
+    """判断窗口是不是 QToolTip 提示气泡（合并提示 / 控件 tooltip）。
+
+    判据必须是**窗口类型相等**：`windowType() == Qt.ToolTip`
+    （实测真气泡 label flags=0x2800f00d、windowType=13）。
+
+    不要用 `windowFlags() & Qt.ToolTip` 这种位与：Qt.ToolTip=0xD 与
+    Qt.Window(0x1) / Qt.Tool(0xB) / Qt.Popup(0x9) 的位都有交集
+    （0x1&0xD=0x1、0xB&0xD=0x9），普通无父窗（flags=0x800f001）和
+    Qt.Tool/Popup 真落点窗都会被误滤。2026-10-21 全量回归实测：
+    test_drag_ghost D6「命中其它部件时原样返回」正是被误滤挂掉的。
+    """
+    if w is None:
+        return False
+    try:
+        win = w.window()
+        if win is None:
+            return False
+        return win.windowType() == Qt.ToolTip
+    except RuntimeError:
+        return False
 
 
 class _DragGhost(QWidget):
@@ -167,6 +194,11 @@ class AppIcon(QWidget):
         self._drag_mime = None
         self._hover = False
         self._merge_target = False
+        # 双区模型状态（2026-10-21 反馈 7）：拖影中心相对"当前最佳
+        # 重叠图标"是否在核心区内。_core_in 是滞回的历史输入
+        # （drag_merge.in_merge_core 的 was_in），换目标即清零。
+        self._core_target_id = None
+        self._core_in = False
         # 文件夹「打开中」态（M5）：弹窗打开期间源图标高亮
         self._folder_open = False
         # 拖动虚影：拖动期间本图标不绘制（格子在视觉上被让出），但不 hide()——
@@ -341,6 +373,10 @@ class AppIcon(QWidget):
     def _disarm_merge(self):
         self._dwell.stop()
         self._merge_armed = False
+        # 提示必须跟着收起：拖动中鼠标被 grabMouse 抓住、拖影是另一个
+        # 窗口，Qt 认为鼠标没离开控件，QToolTip 只会等系统超时自然消失
+        # （v7 §5.3 反馈 15 病根）。状态机"离开核心区"就地清掉。
+        QToolTip.hideText()
         if self._merge_target:
             self._merge_target = False
             self.update()
@@ -718,6 +754,9 @@ class AppIcon(QWidget):
         self._drag_ghost_w = _DragGhost(pm)
         self._drag_ghost_w.show()
         self._drag_target = None
+        # 双区模型状态每次拖动从零开始（上次的核心区判定不作数）
+        self._core_target_id = None
+        self._core_in = False
         self._drag_loop = True
         # 键盘焦点给拖拽源：Esc 取消（keyPressEvent）走焦点投递，
         # grabMouse 只管鼠标。真实鼠标与注入按键共用同一路径。
@@ -748,17 +787,23 @@ class AppIcon(QWidget):
                 self._drag_mime, Qt.LeftButton, Qt.NoModifier))
 
     def _hit_target(self, gpos):
-        """拖放命中：**按拖影与目标的实际重叠分流**（2026-10-19 反馈 9）。
+        """拖放命中：**双区模型**分流（2026-10-21 反馈 7 = v7 §5.2）。
 
-        用户要的手机语义是两套手势：
-          - 压到目标中间 -> 停下来提示「松手合并为文件夹」；
-          - 只在边缘擦碰 -> 悬浮一会儿把对方挤走。
-        旧实现只看**指针**落在谁身上：抓图标角落时指针与图标本体重叠
-        滞后，经常"明明已经叠上了却不出合并提示"，或者反过来刚擦边就
-        弹合并提示。现在以拖影（= 被拖图标本体）与目标的相交比例判定：
+        用户要的手机语义是两套手势，按**拖影中心**落在目标图标哪个区判：
 
-          ratio >= MERGE_OVERLAP_RATIO -> 合并目标（发 dragEnter 武装 dwell）
-          否则（含擦边 / 空白）        -> 桌面窗口（网格落点，悬停够久挤走）
+          - 中心在目标核心区（中心 55% 内缩矩形，带 0.06 滞回）
+            → 合并候选：返回目标图标（发 dragEnter 武装 dwell 提示）
+          - 中心在核心区外（让位区）
+            → 返回桌面窗口（dragMove 驱动 _reflow_preview 武装推让，
+              悬停 PUSH_DWELL_MS 后目标实时滑走）
+
+        重叠比只当"是否压在图标上"的门槛（`MERGE_ARM_RATIO`）：低于它
+        视为没碰上，不走双区（纯擦过不误判，也不驱动挤走）。
+
+        旧实现按重叠比 0.30 一刀切（2026-10-20 F3），两个病根正对反馈 7
+        原话："加入文件夹的判定范围太大了，且没有了边缘判定为碰撞时候的
+        实时挤开效果"——0.30 时刚擦上去就弹合并提示；0.15~0.30 区间又被
+        defers_push 整体 defer，挤走路径整个死掉。
 
         文件夹内部（in_folder）保持原逻辑：成员只在弹窗里拖动/拖出，
         不参与桌面合并。
@@ -766,21 +811,34 @@ class AppIcon(QWidget):
         ghost = self._drag_ghost_w
         if not self.in_folder:
             best, ratio = self._best_overlap_icon()
-            if best is not None and ratio >= MERGE_OVERLAP_RATIO:
-                return best
-        target = QApplication.widgetAt(gpos)
-        if target is ghost or target is self:
-            if ghost is not None:
-                gc = ghost.mapToGlobal(QPoint(ghost.width() // 2,
-                                             ghost.height() // 2))
-                t2 = QApplication.widgetAt(gc)
-                if t2 is not ghost and t2 is not self:
-                    target = t2
-                else:
-                    target = None
+            if best is not None and ratio >= drag_merge.MERGE_ARM_RATIO:
+                g = self._ghost_rect()
+                t = self._icon_global_rect(best)
+                if g is not None and t is not None:
+                    same = (self._core_target_id == best.drag_payload)
+                    was_in = self._core_in if same else None
+                    if drag_merge.in_merge_core(
+                            (g.x(), g.y(), g.width(), g.height()),
+                            t, was_in):
+                        # 中心压住对方正中 -> 合并候选
+                        self._core_target_id = best.drag_payload
+                        self._core_in = True
+                        return best
+                    # 让位区：记住"在这个目标外"，滞回据此收缩/外扩
+                    self._core_target_id = best.drag_payload
+                    self._core_in = False
             else:
-                target = None
+                self._core_target_id = None
+                self._core_in = False
+        target = self._widget_at_drag(gpos)
         if self.in_folder:
+            if target is None:
+                # widgetAt 在拖影（Qt.ToolTip 窗）下面恒为 None，而拖动中
+                # 光标几乎一直落在拖影上——旧实现直接返回 None，合成
+                # dragMove / drop 一个都发不出去：拖出成员既无落点预览，
+                # 松手也不提取（2026-10-21 反馈 6，慢速拖 100% 复现）。
+                # 自算承载面补上。
+                target = self._drag_surface_at(gpos)
             return target
         if isinstance(target, AppIcon) and target is not self:
             # 只擦到边缘：目标保持不动，落点交给桌面窗口（实时挤走语义）
@@ -789,12 +847,103 @@ class AppIcon(QWidget):
             return self._host_desktop(gpos)
         return target
 
+    def _widget_at_drag(self, gpos):
+        """拖动中的 `widgetAt`：穿拖影 + **滤掉合并提示气泡**。
+
+        旧实现在这两步上各栽过一次：
+
+        1. 光标被拖影（Qt.ToolTip 窗）盖住时 `widgetAt` 恒返回拖影本身
+           —— 改探**拖影中心**穿透它（下面的 is-ghost 分支）；
+        2. 「松手合并」提示弹出后，`widgetAt` 在光标处捡到的是 QToolTip
+           内部的 QLabel（objectName=qtooltip_label），旧代码把它当成
+           拖放目标：合成 dragMove 全发给气泡，桌面侧推让 / 让位预览
+           整条断掉——现象是"拖到核心区出了提示，再拖出来挤开效果不
+           恢复"（2026-10-21 反馈 7 端到端实测抓到）。气泡窗的类型是
+           `Qt.ToolTip`（见 `_is_tooltip_window`）；滤掉后按"光标下没有
+           合法落点"处理，由 `_host_desktop` 兜底。
+
+        拖影自己不过滤（外层靠 `is ghost` 判定穿透），FolderPopup /
+        ScrimWindow 等真落点是 Qt.Tool/Popup 类型，与 ToolTip 类型不
+        相等，不受影响。
+        """
+        def at(p):
+            w = QApplication.widgetAt(p)
+            if w is None or w is self._drag_ghost_w:
+                return w
+            if _is_tooltip_window(w):
+                return None
+            return w
+
+        ghost = self._drag_ghost_w
+        target = at(gpos)
+        if target is ghost or target is self:
+            if ghost is not None:
+                gc = ghost.mapToGlobal(QPoint(ghost.width() // 2,
+                                             ghost.height() // 2))
+                t2 = at(gc)
+                if t2 is not ghost and t2 is not self:
+                    target = t2
+                else:
+                    target = None
+            else:
+                target = None
+        return target
+
+    def _drag_surface_at(self, gpos):
+        """拖影（`Qt.ToolTip` 窗）下面的真实承载面。
+
+        `QApplication.widgetAt()` 在 tooltip 窗下返回 None；
+        `topLevelAt()` 也只会返回拖影自己——两者都看不穿它。于是拖动中
+        光标被拖影盖住时命中恒为 None：桌面图标有 `_host_desktop` 兜底
+        没事，**文件夹成员**却在 `if self.in_folder: return target` 直接
+        返回 None，合成 dragMove / drop 全都发不出去。
+
+        自算：遍历可见顶层窗（拖影与自身除外），取**包含该点中面积最小**
+        的一个——面积最小是 z-order 的可靠代理（弹窗 < 幕布 < 全屏桌面），
+        不需要引用 DesktopWindow / ScrimWindow，也不引入循环依赖。
+        提示气泡（窗口类型 Qt.ToolTip，判据见 `_is_tooltip_window`）同样
+        排除：它不是承载面，成员拖出时若被它捡到，合成 dragMove 会发给
+        气泡而丢失（同 `_widget_at_drag` 的病根，2026-10-21 反馈 7）。
+        """
+        best = None
+        best_area = None
+        for tl in QApplication.topLevelWidgets():
+            if tl is None or tl is self._drag_ghost_w:
+                continue
+            try:
+                if not tl.isVisible():
+                    continue
+                if _is_tooltip_window(tl):
+                    continue
+                r = tl.frameGeometry()
+            except RuntimeError:
+                continue
+            if not r.contains(gpos):
+                continue
+            area = max(1, r.width()) * max(1, r.height())
+            if best_area is None or area < best_area:
+                best, best_area = tl, area
+        return best
+
     def _ghost_rect(self):
         ghost = self._drag_ghost_w
         if ghost is None:
             return None
         try:
             return QRect(ghost.mapToGlobal(QPoint(0, 0)), ghost.size())
+        except RuntimeError:
+            return None
+
+    @staticmethod
+    def _icon_global_rect(widget):
+        """同级图标的全局矩形（(x, y, w, h) 元组；已销毁返回 None）。
+
+        双区模型的目标矩形来源：与拖影矩形同一坐标系（全局），
+        `drag_merge.in_merge_core` 直接消费。
+        """
+        try:
+            tl = widget.mapToGlobal(QPoint(0, 0))
+            return (tl.x(), tl.y(), widget.width(), widget.height())
         except RuntimeError:
             return None
 
@@ -1057,7 +1206,7 @@ class AppIcon(QWidget):
         sld.setRange(50, 200)
         sld.setValue(max(50, min(200, cur)))
         sld.setFixedWidth(160)
-        spin = QSpinBox(row)
+        spin = Stepper(row)
         spin.setRange(10, 400)
         spin.setSuffix("%")
         spin.setValue(cur)

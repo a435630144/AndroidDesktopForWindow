@@ -330,19 +330,22 @@ def main(app):
             # ---------- F11：成员网格（v7 反馈 7 / 14 的**新契约**） ----------
             # 反馈 14 推翻了"按数量分 2/3/4 列"的旧规则：尺寸是「上限 ×
             # 成员数」——默认上限 3×3，最小 2×2，按数量收缩、优先排满一行。
-            # 1~2 个 -> 2 列（2×2）；3 个 -> 3 列（3×2）；
-            # 超过 9 个只加行，不再改列（保持视觉节奏）。
+            # 1~2 个 -> 2 列（2×2）；3 个 -> 3 列（3×2）。
+            # **反馈 3 再推翻"超过 9 个只加行"**：满页封顶，超出走左右分页。
             check("F11 1~2 个成员 -> 2 列（2×2）",
                   [pop._member_cols(n) for n in (0, 1, 2)] == [2, 2, 2],
                   "%s" % [pop._member_cols(n) for n in (0, 1, 2)])
             check("F11b 3~9 个成员 -> 3 列（优先排满一行）",
                   [pop._member_cols(n) for n in (3, 4, 5, 6, 9)] == [3, 3, 3, 3, 3],
                   "%s" % [pop._member_cols(n) for n in (3, 4, 5, 9)])
-            check("F11c 超过 9 个仍锁 3 列（只加行，不丢成员）",
+            check("F11c 超过 9 个仍锁 3 列（满页封顶，反馈 3）",
                   [pop._member_cols(n) for n in (10, 13, 20)] == [3, 3, 3],
                   "%s" % [pop._member_cols(n) for n in (10, 13, 20)])
-            check("F11c2 10 个成员 -> 3×4（容量够，成员全在）",
-                  pop._grid_shape(10) == (3, 4), "%s" % (pop._grid_shape(10),))
+            check("F11c2 反馈3 10 个成员仍封顶 3×3（分页承载，不加行）",
+                  pop._grid_shape(10) == (3, 3), "%s" % (pop._grid_shape(10),))
+            check("F11c3 反馈3 页点区只在多页时占位",
+                  pop._page_total() == 1 and pop._pager_h() == 0,
+                  "total=%d h=%d" % (pop._page_total(), pop._pager_h()))
             base_icon = int(st3.icon_metric())
             check("F11d 成员图标比桌面图标小一档",
                   pop._member_icon_size() < base_icon,

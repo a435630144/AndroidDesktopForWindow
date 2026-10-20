@@ -7,7 +7,9 @@ v7 反馈 16 起**界面不再提供开关**——启动即接管。
   - v7（反馈 16）：开关下线。旧 state 里被关掉过的，加载时**一次性**
     强制回 True（否则三处入口同时消失，用户无从打开）；标记位
     `takeover_v7_forced` 保证只做一次。
-  - 唯一"回原生桌面"的途径：退出程序；托盘保留"显示原生桌面"纯显隐。
+  - v7（反馈 9）：托盘 / 右键里的「小组件模式」「显示原生桌面」也下线——
+    模式控制收口到设置页（仅小组件模式 / 显示桌面小组件），窗口显隐
+    改由双击托盘图标完成。唯一"回原生桌面"的途径仍是退出程序。
 
   K1 新 state 默认接管开启 + 键已落盘
   K2 set_takeover 双写：takeover_desktop 与 hide_native_icons 同步
@@ -15,7 +17,7 @@ v7 反馈 16 起**界面不再提供开关**——启动即接管。
   K4 两键矛盾时 takeover_desktop 优先
   K5 窗口 _organize_mode() 跟随 takeover()（不再直读 hide_native_icons）
   K6 设置页**不再有**接管开关；托盘**不再有**接管项
-  K7 托盘有独立的「小组件模式」开关，显隐入口仍在
+  K7 托盘模式条目全删（反馈 9），布局入口仅平时有，双击仍可显隐
   K8 关闭接管（内部 API）→ 恢复原生图标可见
 
 运行：python tests/test_takeover.py   （offscreen）
@@ -29,7 +31,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtWidgets import QApplication, QCheckBox
+from PySide6.QtWidgets import QApplication, QCheckBox, QSystemTrayIcon
 
 from src import win32_layer
 from src.storage import Storage
@@ -212,7 +214,7 @@ def main(app):
           getattr(dlg, "cmb_layout_mode", None) is not None)
     dlg.deleteLater()
 
-    # ---------- K7 托盘（反馈 16：接管项删除，小组件模式补位） ----------
+    # ---------- K7 托盘（反馈 9：模式条目全线下线，入口收口到设置页） ----------
     from src.tray import SystemTray
     st7 = fresh("tray")
     st7.set_takeover(True)
@@ -220,20 +222,35 @@ def main(app):
     t = SystemTray(fw7, st7, layer=FakeLayer())
     check("K7 托盘不再有「接管系统桌面」项",
           not hasattr(t, "act_organize"), "act_organize 仍存在")
-    check("K7 托盘有「小组件模式」开关",
-          "小组件模式" in t.act_widgets.text(), "text=%s" % t.act_widgets.text())
-    check("K7 小组件模式勾选态来自 show_widgets",
-          t.act_widgets.isChecked() is bool(st7.get_setting("show_widgets")))
-    t._toggle_widgets(False)
-    app.processEvents()
-    check("K7 关掉小组件模式 → show_widgets=False",
-          st7.get_setting("show_widgets") is False)
-    check("K7 关小组件不影响接管", st7.takeover() is True)
-    check("K7 显隐入口保留", "桌面" in t.act_toggle.text(),
-          "text=%s" % t.act_toggle.text())
-    t._sync_checks()
-    check("K7b 显隐项勾选态跟随窗口可见性（与模式解耦）",
-          t.act_toggle.isChecked() is fw7.isVisible())
+    check("K7 托盘不再有「小组件模式」开关（反馈 9）",
+          not hasattr(t, "act_widgets"))
+    check("K7 托盘不再有「显示原生桌面」显隐项（反馈 9）",
+          not hasattr(t, "act_toggle"))
+    texts7 = [a.text() for a in t.menu.actions()]
+    check("K7 菜单里没有这两个条目",
+          "小组件模式" not in texts7 and "显示原生桌面" not in texts7,
+          "%s" % texts7)
+    check("K7 布局切换入口保留（平时）",
+          hasattr(t, "act_layout") and "切换到" in t.act_layout.text(),
+          "%s" % texts7)
+    st7.set_setting("widgets_only", True)
+    t._build_menu()
+    texts7b = [a.text() for a in t.menu.actions()]
+    check("K7b 仅小组件下托盘无布局切换",
+          not any("切换到" in x for x in texts7b), "%s" % texts7b)
+    st7.set_setting("widgets_only", False)
+    t._build_menu()
+    # 显隐改由双击托盘完成（_on_activated），菜单里不再有勾选条目
+    fw7.visible = True
+    t._on_activated(QSystemTrayIcon.DoubleClick)
+    check("K7c 双击托盘仍可切换窗口显隐", fw7.visible is False)
+    # 组件子菜单的勾选态仍由 _sync_checks 负责（该删的只是两个模式条目）
+    if st7.widgets:
+        st7.widgets[0]["hidden"] = True
+        t._sync_checks()
+        first_act = t._widget_actions.get(st7.widgets[0]["id"])
+        check("K7d 组件勾选态随 hidden 同步",
+              first_act is not None and first_act.isChecked() is False)
     t.tray.hide()
     t.menu.deleteLater()
 
