@@ -519,6 +519,10 @@ class FloatingWidget(QWidget):
         QTextEdit 排版，Qt 会自己画。自绘组件把 model 画在 `self.rect()` 内。
         """
 
+    def on_settings_changed(self):
+        """组件设置应用后的回调（v8 C8）。默认只重绘，组件自行决定要不要重拉数据。"""
+        self.update()
+
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -848,9 +852,36 @@ class FloatingWidget(QWidget):
             self._add_span_menu(menu)
         else:
             menu.addAction("锚定到桌面（融入壁纸）", self._toggle_anchored)
+        self._add_settings_action(menu)
         menu.addAction("隐藏", self._hide_self)
         menu.addAction("关闭", self._close_self)
         return menu
+
+    # ---------- 组件设置（v8 C8） ----------
+    def _widget_spec(self):
+        from . import widget_registry
+        return widget_registry.get(self.entry.get("type"))
+
+    def _has_settings(self) -> bool:
+        """有没有可配置项 —— 由注册表声明决定，没声明就不出菜单项。
+
+        不出灰项：灰项等于"点不动"，用户会以为功能坏了（v6 版本号灰项同理）。
+        """
+        spec = self._widget_spec()
+        return bool(spec is not None and spec.settings)
+
+    def _add_settings_action(self, menu) -> None:
+        if self._has_settings():
+            menu.addAction("组件设置…", self._open_settings)
+
+    def _open_settings(self):
+        spec = self._widget_spec()
+        if spec is None or not spec.settings:
+            return
+        from . import widget_settings
+        dlg = widget_settings.WidgetSettingsDialog(spec, self.entry, self.storage)
+        if dlg.exec():
+            self.on_settings_changed()
 
     def _add_span_menu(self, menu):
         """「组件尺寸」子菜单（M3）：catalog 登记了多个跨度才出现。
