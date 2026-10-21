@@ -1,19 +1,26 @@
 # -*- coding: utf-8 -*-
-"""小组件管理层：统一创建 / 显隐 / 关闭桌面小组件。"""
+"""小组件管理层：统一创建 / 显隐 / 关闭桌面小组件。
+
+v8 C1 起组件的"静态事实"全部来自 `widget_registry`——本模块只做
+生命周期与落位，不再持有 类型→类 / 类型→中文名 的第二份真相。
+新增组件请改 `src/widget_registry.py` 的 `REGISTRY`，这里一行都不用动。
+"""
+import uuid
+
 from PySide6.QtCore import QObject, QPoint, Signal
 from PySide6.QtWidgets import QApplication
 
 from . import grid_flow
+from . import widget_registry
 from . import win32_layer
 from .band_guard import BandGuard
 from .widget_base import FloatingWidget
-from .widgets_clock import ClockWidget
-from .widgets_notes import NotesWidget
-from .widgets_panel import DesktopPanel
 
-WIDGET_TYPES = {"clock": ClockWidget, "notes": NotesWidget, "panel": DesktopPanel}
+# 兼容导出：托盘/设置页/测试长期 import 这两个名字。
+# 由注册表派生（不是手写第二份），未登记的类型自然不在这里。
+WIDGET_TYPES = {t: s.factory for t, s in widget_registry.REGISTRY.items()}
 
-WIDGET_NAMES = {"clock": "时钟", "notes": "便签", "panel": "桌面面板"}
+WIDGET_NAMES = widget_registry.names()
 
 
 class WidgetLayer(QObject):
@@ -24,6 +31,9 @@ class WidgetLayer(QObject):
     # anchorHover/anchorDrop（widget id + 指针全局坐标）。
     anchorHover = Signal(str, int, int)
     anchorDrop = Signal(str, int, int)
+    # 组件增删（v8 C1）：组件库卡片状态、托盘勾选项、底部计数都靠它刷新。
+    # 显隐（toggle_entry）不发这个信号——那是"可见性"，不是"有/没有"。
+    widgetsChanged = Signal()
 
     def __init__(self, storage):
         super().__init__()
@@ -238,11 +248,74 @@ class WidgetLayer(QObject):
             self._band_guard.untrack(w)
             w.close()
 
-    def add_note(self):
-        import uuid
-        entry = {"id": uuid.uuid4().hex[:8], "type": "notes",
-                 "w": 300, "h": 300, "hidden": False, "text": ""}
+    # ---------- 增删（v8 C1：唯一入口） ----------
+    def entries_of(self, wtype: str) -> list:
+        """该类型在存储里的全部条目（按存储顺序）。"""
+        return [e for e in self.storage.widgets if e.get("type") == wtype]
+
+    def add(self, wtype: str, force_new: bool = False):
+        """添加一个组件实例，返回它的 entry（失败返回 None）。
+
+        语义（组件库「添加到桌面」的唯一实现，别在 UI 层再写一份）：
+          - 未登记类型 → None，不落任何数据；
+          - 单实例组件已存在 → **复用**那条（顺手把隐藏的显示出来），不新建；
+          - 多实例 / force_new → 新建一条，按注册表登记默认锚定与默认跨度。
+
+        新建后 `storage.save()` + `widgetsChanged` 一起发；
+        复用路径也算"状态变了"（可能刚从隐藏变显示），同样发信号。
+        """
+        spec = widget_registry.get(wtype)
+        if spec is None:
+            return None
+        existing = self.entries_of(wtype)
+        if existing and not (spec.multi_instance or force_new):
+            entry = existing[0]
+            if entry.get("hidden"):
+                self.toggle_entry(entry.get("id"), True)
+            self.widgetsChanged.emit()
+            return entry
+
+        entry = {"id": uuid.uuid4().hex[:8], "type": wtype,
+                 "hidden": False, "anchored": bool(spec.default_anchored)}
+        # 尺寸：锚定组件由 catalog 的 span × cell 推导（widget_base 会覆盖），
+        # 这里给的像素值只对悬浮组件生效，也给锚定态一个合理初值。
+        from . import widget_catalog
+        px = widget_catalog.pixel_size(self.storage, wtype)
+        entry["w"], entry["h"] = px if px else (300, 220)
+        if wtype == "notes":
+            entry["text"] = ""          # 便签的正文键（保持历史行为）
         self.storage.widgets.append(entry)
         self._place_default(entry)
         self.storage.save()
         self._spawn(entry)
+        self.widgetsChanged.emit()
+        return entry
+
+    def remove(self, entry_id: str) -> bool:
+        """彻底删除一个组件（关窗口 + 从存储移除 + 通知桌面重排）。
+
+        与 `toggle_entry(id, False)` 的区别：后者只是隐藏，条目还在
+        （组件库会显示为「已添加·已隐藏」）；这里是"从桌面移除"。
+        删除后必须发 `gridChanged`——锚定组件占的格子要还回去，
+        否则图标会继续绕开一块空白。
+        """
+        w = self.widgets.pop(entry_id, None)
+        if w is not None:
+            self._band_guard.untrack(w)
+            w.close()
+        removed = False
+        for i, e in enumerate(self.storage.widgets):
+            if e.get("id") == entry_id:
+                del self.storage.widgets[i]
+                removed = True
+                break
+        if not removed:
+            return False
+        self.storage.save()
+        self.widgetsChanged.emit()
+        self.gridChanged.emit()
+        return True
+
+    def add_note(self):
+        """兼容入口（托盘「新建便签」）：转调 add("notes")。"""
+        return self.add("notes")

@@ -206,7 +206,7 @@ def run(app):
     ck._add_span_menu(menu)
     check("S5 单尺寸（catalog 只有 2×2）不显示尺寸子菜单",
           len(menu.actions()) == 0)
-    widget_catalog.WIDGET_CATALOG["clock"] = [(2, 2), (2, 4), (4, 2)]
+    widget_registry.set_spans("clock", [(2, 2), (2, 4), (4, 2)])
     try:
         menu2 = QMenu(ck)
         _keep.append(menu2)
@@ -220,7 +220,7 @@ def run(app):
                   [a.isChecked() for a in acts] == [False, False, True],
                   "%s" % [a.text() for a in acts])
     finally:
-        widget_catalog.WIDGET_CATALOG["clock"] = [(2, 2)]
+        widget_registry.set_spans("clock", [(2, 2)])
 
     # ---------- S6：字号随高度缩放（2×2 -> 2×4） ----------
     ck._set_span(2, 4)
