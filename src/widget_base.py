@@ -493,6 +493,32 @@ class FloatingWidget(QWidget):
         self._write_occupancy(col, row, cs, rs)
 
     # ---------- 绘制 ----------
+    # ---------- 绘制钩子（v8 C2） ----------
+    def _paint_surface(self, p):
+        """卡片底色。默认：锚定 = 34% tint（融入桌面）/ 悬浮 = SURFACE + 描边。
+
+        玻璃组件（`widget_glass.GlassWidget`）覆盖这一个方法换质感，
+        编辑框、关闭按钮、缩放手柄等 chrome 仍由基类统一绘制。
+        """
+        if self.anchored:
+            tint = QColor(theme.SURFACE)
+            tint.setAlphaF(0.34)
+            p.setBrush(tint)
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(self.rect(), theme.RADIUS_PANEL, theme.RADIUS_PANEL)
+        else:
+            p.setBrush(theme.SURFACE)
+            p.setPen(theme.BORDER)
+            p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1),
+                              theme.RADIUS_PANEL, theme.RADIUS_PANEL)
+
+    def paint_content(self, p):
+        """内容绘制钩子（自绘组件专用）。
+
+        子控件型组件（clock / notes / panel）不覆盖——它们用 QLabel /
+        QTextEdit 排版，Qt 会自己画。自绘组件把 model 画在 `self.rect()` 内。
+        """
+
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -509,11 +535,10 @@ class FloatingWidget(QWidget):
             # 锚定（非悬浮）：只铺一层低透明度 tint，无描边、无 chrome。
             # 卡片之外的像素保持全透明 -> 分层窗口的逐像素命中测试天然
             # 把点击穿透给真实桌面（design.md 3.2「融入桌面」）。
-            tint = QColor(theme.SURFACE)
-            tint.setAlphaF(0.34)
-            p.setBrush(tint)
-            p.setPen(Qt.NoPen)
-            p.drawRoundedRect(self.rect(), theme.RADIUS_PANEL, theme.RADIUS_PANEL)
+            # v8 C2：底色抽成 `_paint_surface()` 钩子——玻璃组件覆盖它换质感，
+            # 编辑框 / 关闭按钮 / 缩放手柄这些"chrome"仍由基类统一画（一份代码，
+            # 所有组件共享同一套交互外观）。
+            self._paint_surface(p)
             if self._edit_mode:
                 # 编辑框：虚线圈 + 八点（安卓小组件编辑语言的桌面版）。
                 # 线色用 ACCENT，点用实心白 + 主色描边，保证深/浅壁纸都可辨。
@@ -535,10 +560,13 @@ class FloatingWidget(QWidget):
                 for key in ("nw", "n", "ne", "w", "e", "sw", "s", "se"):
                     cx, cy = self._handle_center(key)
                     p.drawEllipse(QPointF(cx, cy), s / 2 - 0.5, s / 2 - 0.5)
+                return
+            # 内容：自绘组件的唯一入口（v8 C2）。不覆盖它 = 无内容（老组件用
+            # 子控件排版：clock 的 QLabel、notes 的 QTextEdit，走各自 paintEvent）。
+            self.paint_content(p)
             return
-        p.setBrush(theme.SURFACE)
-        p.setPen(theme.BORDER)
-        p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), theme.RADIUS_PANEL, theme.RADIUS_PANEL)
+        self._paint_surface(p)
+        self.paint_content(p)
         # 关闭按钮：自绘十字（"×"字符字形偏高偏小，自绘双斜线更居中精致）
         r = self._close_rect()
         hovered = self._mouse_pos is not None and r.contains(self._mouse_pos)
