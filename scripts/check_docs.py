@@ -258,19 +258,33 @@ def check_version() -> None:
     vp = os.path.join(ROOT, "src", "version.py")
     if not os.path.exists(vp):
         return
-    m = re.search(r'VERSION\s*=\s*"([^"]+)"', open(vp, encoding="utf-8").read())
+    src = open(vp, encoding="utf-8").read()
+    m = re.search(r'VERSION\s*=\s*"([^"]+)"', src)
     if not m:
         warn("src/version.py 未解析到 VERSION")
         return
     ver = m.group(1)
+    ms = re.search(r'SEMVER\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"', src)
     iss = os.path.join(ROOT, "scripts", "installer.iss")
+    iss_ver = None
     if os.path.exists(iss):
         t = open(iss, encoding="utf-8-sig", errors="replace").read()
-        m2 = re.search(r'MyAppVersion\s*=\s*"?([0-9.]+)"?', t)
-        if m2:
-            print(f"[7] 源码 VERSION={ver} / 安装包 {m2.group(1)}（发版时两者须同批 bump）")
-            return
-    print(f"[7] 源码 VERSION={ver}")
+        # Inno 的 preprocessor 语法是 `#define MyAppVersion "2.1.3"`（无 `=`）。
+        # 旧正则要求 `=`，于是 [7] 从未真正比对过——这是本检查的存量缺陷，2026-10-21 修。
+        m2 = re.search(r'MyAppVersion[^0-9"]{0,8}"?([0-9]+\.[0-9]+\.[0-9]+)', t)
+        iss_ver = m2.group(1) if m2 else None
+
+    # 2026-10-21 用户版本规则：对外语义版本（小修 patch / 大批 minor / 新功能 major）
+    # 必须与安装包号一致。历史上这里只 print 不校验，于是 v7c 的 README 还挂着 2.1.1。
+    if not ms:
+        warn("src/version.py 缺少 SEMVER（对外语义版本），无法校验安装包号")
+    else:
+        semver = ms.group(1)
+        if iss_ver and iss_ver != semver:
+            err(f"[7] 版本漂移：src/version.py SEMVER={semver}，installer.iss MyAppVersion={iss_ver}")
+        elif not iss_ver:
+            warn("[7] src/version.py 有 SEMVER，但 installer.iss 未解析到 MyAppVersion")
+    print(f"[7] 源码 VERSION={ver} / SEMVER={ms.group(1) if ms else '?'} / 安装包 {iss_ver or '?'}")
 
 
 def selftest() -> int:
