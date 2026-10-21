@@ -73,6 +73,7 @@ def _build_registry() -> Dict[str, WidgetSpec]:
     from .widgets_notes import NotesWidget
     from .widgets_panel import DesktopPanel
     from .widget_monitor import MonitorWidget, draw_preview as _preview_monitor
+    from .widgets_todo import TodoWidget, draw_preview as _preview_todo
 
     specs = [
         WidgetSpec(
@@ -113,6 +114,18 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             category="系统",
             default_anchored=True,
             preview=_preview_monitor,
+        ),
+        WidgetSpec(
+            type="todo",
+            name="待办清单",
+            summary="勾选式待办，回车即加，自动保存",
+            factory=TodoWidget,
+            spans=((2, 2), (2, 4)),
+            category="效率",
+            default_anchored=False,   # 含输入框，锚定态拿不到键盘焦点
+            interactive=True,
+            multi_instance=True,
+            preview=_preview_todo,
         ),
     ]
     return {s.type: s for s in specs}
