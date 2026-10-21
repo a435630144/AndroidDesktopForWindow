@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
-"""组件库窗口（v8 C3，指导文档_v8.md §3）。
+"""组件库页面（v8 C3 的窗口形态 → v9 V2 融合进设置面板）。
+
+v8 时它是独立 `QDialog`：从设置页打开会**继承应用级模态**（点不动），
+而且作为被拥有窗口被父窗口压住（BUG1）。v9 起不再是窗口，而是设置
+面板里的一个分页（`settings_dialog.NAV` 的 "widgets"），模态与层级
+问题从结构上消失。
 
 职责：让用户**看见有哪些组件**（预览 + 一句话说明），并且一次点击就能
-放到桌面。它不是设置页的一角——预览需要宽度，管理需要列表，独立窗口
-才放得下（规格 §3.1 已拍板）。
+放到桌面。
 
 与组件的关系：
     卡片预览调 `spec.preview(painter, rect)`；组件没提供 preview 时用
@@ -36,9 +40,6 @@ CARD_W = 320
 CARD_H = 212
 PREVIEW_H = 118
 COLS = 2
-
-center = None      # 单例（模块级）
-
 
 def _btn_qss() -> str:
     return theme.BUTTON_QSS + (
@@ -168,25 +169,20 @@ class WidgetCard(QFrame):
         self.owner.refresh()
 
 
-class WidgetCenter(QDialog):
-    """组件库主窗口（非模态，可与桌面同时操作）。"""
+class WidgetCenterPage(QWidget):
+    """组件库分页（嵌在设置面板里；不再有独立窗口）。"""
 
     settingsRequested = Signal()
 
     def __init__(self, layer, parent=None):
         super().__init__(parent)
-        global center
-        center = self
         self.layer = layer
         self.cards: List[WidgetCard] = []
         self._visible_types: List[str] = []
-
-        self.setWindowTitle("组件库")
-        self.setModal(False)
-        self.resize(900, 620)
-        self.setStyleSheet(
-            "QDialog{background: %s;} QLabel{background: transparent;}"
-            % theme.rgba(theme.SURFACE_POPUP))
+        # 背景由设置面板提供：这里透明，避免两层底色叠出灰块
+        self.setStyleSheet("QWidget{background: transparent;}"
+                           " QLabel{background: transparent;}")
+        self.setObjectName("widgetCenterPage")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 16, 18, 14)
@@ -239,17 +235,13 @@ class WidgetCenter(QDialog):
         body.addWidget(self.scroll, 1)
         root.addLayout(body, 1)
 
-        # 底部：计数 + 设置入口
+        # 底部：计数（导入/新建入口在 V3 批次加在这里）
         foot = QHBoxLayout()
         self.count_label = QLabel("")
         self.count_label.setStyleSheet("color: %s; font-size: 12px;"
                                        % theme.rgba(theme.TEXT_FAINT))
         foot.addWidget(self.count_label)
         foot.addStretch(1)
-        btn = QPushButton("打开设置…")
-        btn.setStyleSheet(_btn_qss())
-        btn.clicked.connect(self.settingsRequested.emit)
-        foot.addWidget(btn)
         root.addLayout(foot)
 
         self._build_cards()
@@ -342,20 +334,14 @@ class WidgetCenter(QDialog):
         super().closeEvent(e)
 
 
-def open_center(layer, parent=None) -> WidgetCenter:
-    """打开组件库（单例：重复点击只是把已有窗口提到前面）。"""
-    global center
-    try:
-        if center is not None:
-            if hasattr(center, "refresh"):
-                center.refresh()
-            center.show()
-            center.raise_()
-            center.activateWindow()
-            return center
-    except RuntimeError:      # C++ 对象已被销毁（关闭并回收）
-        center = None
-    center = WidgetCenter(layer, parent)
-    center.show()
-    center.raise_()
-    return center
+def open_center(layer, parent=None, window=None):
+    """兼容入口：打开设置面板并定位到「组件库」分页。
+
+    v9 起组件库没有独立窗口了，但托盘 / 桌面右键 / 老代码仍调用这个名字。
+    延迟 import `settings_dialog`：它在模块级 import 本模块（页面要嵌进去），
+    顶层互相 import 会成环。
+    """
+    from . import settings_dialog
+    win = window if window is not None else parent
+    storage = getattr(layer, "storage", None)
+    return settings_dialog.open_settings(win, storage, layer, page="widgets")

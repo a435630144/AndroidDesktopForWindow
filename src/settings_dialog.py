@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame,
 
 from . import autostart
 from . import grid_flow
+from . import page_rules
 from .stepper import Stepper
 from .ui_choice import ComboBox
 from . import theme
@@ -88,11 +89,38 @@ class Switch(QCheckBox):
         p.drawEllipse(int(x), 3, self.KNOB, self.KNOB)
 
 
+_dialog = None       # 单例（模块级）：多处入口共用同一个设置窗口
+
+
+def open_settings(window, storage, layer, page="general"):
+    """打开设置面板（单例）并定位到指定分页；已开则提到前面。
+
+    托盘 / 桌面右键 / 组件库入口都走这里——以前各自 `SettingsDialog(...)
+    .exec()`，点两次就有两个窗口，且模态会挡住桌面。
+    """
+    global _dialog
+    try:
+        if _dialog is not None:
+            _dialog.select_page(page)
+            _dialog.show()
+            _dialog.raise_()
+            _dialog.activateWindow()
+            return _dialog
+    except RuntimeError:      # C++ 对象已被销毁（用户关窗后回收）
+        _dialog = None
+    dlg = SettingsDialog(window, storage, layer, page=page)
+    _dialog = dlg
+    dlg.show()
+    dlg.raise_()
+    return dlg
+
+
 class SettingsDialog(QDialog):
-    NAV = (("general", "通用"), ("appearance", "外观与图标"),
+    # v9 V2：新增「组件库」分页（原独立窗口融合进来，BUG1 从结构上消失）
+    NAV = (("general", "通用"), ("widgets", "组件库"), ("appearance", "外观与图标"),
            ("layout", "布局与网格"), ("mode", "模式"), ("advanced", "高级"))
 
-    def __init__(self, window, storage, layer, parent=None):
+    def __init__(self, window, storage, layer, parent=None, page=None):
         super().__init__(parent)
         self.window = window
         self.storage = storage
@@ -103,6 +131,8 @@ class SettingsDialog(QDialog):
         self._nav_buttons = []
         self._pages = {}
         self._build()
+        if page:
+            self.select_page(page)
 
     # ---------- 骨架 ----------
     def _build(self):
@@ -192,6 +222,7 @@ class SettingsDialog(QDialog):
     def _select_nav(self, index):
         labels = {
             "general": ("通用", "启动方式、托盘行为与全局开关"),
+            "widgets": ("组件库", "浏览、预览、添加与移除桌面组件"),
             "appearance": ("外观与图标", "图标大小、标签与原生桌面对齐"),
             "layout": ("布局与网格", "图标密度、网格计算与翻页方向"),
             "mode": ("模式", "接管桌面的方式与文件同步"),
@@ -252,6 +283,9 @@ class SettingsDialog(QDialog):
         return row
 
     def _page(self, key):
+        if key == "widgets":
+            # 组件库自带左栏 + 滚动区，再套一层 QScrollArea 会出现双滚动条
+            return self._page_widgets()
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -268,6 +302,25 @@ class SettingsDialog(QDialog):
         lay.addStretch(1)
         scroll.setWidget(body)
         return scroll
+
+    def _page_widgets(self):
+        """组件库分页（v9 V2：原独立窗口）。"""
+        if self.layer is None:
+            from PySide6.QtWidgets import QLabel as _QL
+            tip = _QL("组件库需要桌面已就绪（当前没有可用的组件层）")
+            tip.setObjectName("rowHint")
+            return tip
+        from . import widget_center
+        self.center_page = widget_center.WidgetCenterPage(self.layer, self)
+        return self.center_page
+
+    def select_page(self, key):
+        """按 key 切到某一分页（托盘/桌面右键用它定位到「组件库」）。"""
+        for i, (k, _label) in enumerate(self.NAV):
+            if k == key:
+                self._select_nav(i)
+                return True
+        return False
 
     # ---------- 各页 ----------
     def _page_general(self, body, lay):
@@ -311,12 +364,12 @@ class SettingsDialog(QDialog):
         lay.addWidget(card)
 
     def _open_widget_center(self):
-        """打开组件库（非模态，可与设置窗口并存）。"""
-        try:
-            from . import widget_center
-            widget_center.open_center(getattr(self, "layer", None), self)
-        except Exception:      # noqa: BLE001  —— 组件库打不开不该拖垮设置页
-            pass
+        """跳到组件库分页（v9 V2：不再新开窗口）。
+
+        旧实现 `widget_center.open_center(..., parent=self)` 会新建一个
+        **被拥有的模态窗口**——点不动且被压在设置面板下面（BUG1）。
+        """
+        self.select_page("widgets")
 
     def _page_appearance(self, body, lay):
         card, c = self._card(body, "图标")
@@ -485,6 +538,24 @@ class SettingsDialog(QDialog):
         self._row(c, card, "自动排列图标",
                   self.chk_auto_arrange,
                   "开启后拖动始终按阅读序递进（不保留空格）；关闭则自由摆放")
+        lay.addWidget(card)
+
+        # ---------- v9 V2：每页排序规则 ----------
+        card, c = self._card(body, "分页自动排列")
+        self.chk_page_rules = Switch()
+        self.chk_page_rules.setChecked(page_rules.custom_enabled(self.storage))
+        self.chk_page_rules.toggled.connect(self._apply_page_rules_custom)
+        self._row(c, card, "每页单独设置",
+                  self.chk_page_rules,
+                  "关闭时所有分页都跟随上面的「自动排列图标」；"
+                  "开启后可逐页指定（默认仍是跟随全局）")
+        self._rules_holder = QWidget(card)
+        self._rules_lay = QVBoxLayout(self._rules_holder)
+        self._rules_lay.setContentsMargins(0, 6, 0, 2)
+        self._rules_lay.setSpacing(6)
+        c.addWidget(self._rules_holder)
+        self._rule_combos = {}
+        self._rebuild_page_rules()
         lay.addWidget(card)
 
     def _page_mode(self, body, lay):
@@ -987,12 +1058,74 @@ class SettingsDialog(QDialog):
             self.storage.set_setting("page_axis", axis)
 
     def _apply_auto_arrange(self, checked):
-        """自动排列（反馈 3）：开关就是"此后一直生效"，开启时立刻整理一次。"""
+        """自动排列（反馈 3）：开关就是"此后一直生效"，开启时立刻整理一次。
+
+        v9 V2：启用"每页单独设置"时只整理**自动排列的那些页**——否则
+        用户特意留作自由摆放的页会被这一次总开关顺手排掉。
+        """
         self.storage.set_setting("auto_arrange", bool(checked))
+        self._rebuild_page_rules()      # "跟随全局"的说明文字变了解释
         if checked:
             tidy = getattr(self.window, "_tidy", None)
             if tidy is not None:
-                tidy()
+                tidy(self._auto_pages())
+
+    def _auto_pages(self):
+        """当前应当自动排列的页集合（None = 全部，交给窗口按全局整理）。"""
+        if not page_rules.custom_enabled(self.storage):
+            return None
+        return page_rules.auto_pages(self.storage,
+                                     grid_flow.page_count(self.storage))
+
+    # ---------- v9 V2：分页排序规则 ----------
+    def _apply_page_rules_custom(self, checked):
+        page_rules.set_custom(self.storage, bool(checked))
+        self._rebuild_page_rules()
+        self._refresh_grid()
+
+    def _rebuild_page_rules(self):
+        """按当前页数重建"第 N 页"下拉（页数随屏幕/条目变化，不能写死）。"""
+        if not hasattr(self, "_rules_lay"):
+            return
+        while self._rules_lay.count():
+            item = self._rules_lay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        self._rule_combos = {}
+        total = max(1, grid_flow.page_count(self.storage))
+        custom = page_rules.custom_enabled(self.storage)
+        for page in range(total):
+            row = QWidget(self._rules_holder)
+            h = QHBoxLayout(row)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(10)
+            lab = QLabel("第 %d 页" % (page + 1), row)
+            lab.setFixedWidth(64)
+            h.addWidget(lab)
+            cmb = ComboBox()
+            for value, text in page_rules.MODE_LABELS:
+                cmb.addItem(text, value)
+            cur = page_rules.rule_of(self.storage, page)
+            idx = cmb.findData(cur)
+            cmb.setCurrentIndex(max(0, idx))
+            cmb.setEnabled(custom)
+            cmb.currentIndexChanged.connect(
+                lambda _i, p=page, c=cmb: self._apply_page_rule(p, c))
+            cmb.setAccessibleName("第 %d 页排序规则" % (page + 1))
+            h.addWidget(cmb, 1)
+            hint = QLabel(page_rules.describe(self.storage, page), row)
+            hint.setObjectName("rowHint")
+            h.addWidget(hint)
+            cmb.setProperty("hintLabel", True)
+            self._rules_lay.addWidget(row)
+            self._rule_combos[page] = cmb
+
+    def _apply_page_rule(self, page, combo):
+        value = combo.currentData() or page_rules.INHERIT
+        page_rules.set_mode(self.storage, page, value)
+        self._rebuild_page_rules()
+        self._refresh_grid()
 
     def _apply_dev_mode(self, checked):
         self.storage.set_setting("dev_mode", bool(checked))

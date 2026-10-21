@@ -1,43 +1,127 @@
 # -*- coding: utf-8 -*-
-"""便签小组件：深色卡片 + 自动保存。"""
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QLabel, QTextEdit, QVBoxLayout
+"""便签小组件：玻璃卡片 + 自动保存（v9 V1 重写）。
+
+v9 之前是"深色卡片 + 内嵌一块 QTextEdit"：玻璃化之后输入框的实心底
+与玻璃底色叠成两层（用户描述"玻璃里嵌了块黑板"）。现在：
+
+  - 标题与留白由 `paint_content()` 画（与时钟同一套 PAD / 字号语言）；
+  - `QTextEdit` 背景透明、无边框，只负责文字与光标；
+  - 文字颜色跟随组件设置（`text_color`），改色即时生效。
+
+输入区仍是真控件：`QTextEdit` 的 IME、选区、撤销都不需要自己实现。
+"""
+from typing import Optional
+
+from PySide6.QtCore import QRectF, Qt, QTimer
+from PySide6.QtGui import QColor, QPainter
+from PySide6.QtWidgets import QTextEdit, QVBoxLayout
 
 from . import theme
-from .widget_base import FloatingWidget
+from .widget_glass import GlassWidget
+from .widget_style import DEFAULT_STYLE, Style, of as style_of
+
+PAD = 18
+TITLE_H = 20
+MAX_LEN = 4000          # 单个便签的字数上限（超出后拒绝输入，防误粘贴整篇文档）
 
 
-class NotesWidget(FloatingWidget):
+def text_rect(rect: QRectF) -> QRectF:
+    """正文区（绘制与控件几何共用同一份算术）。"""
+    r = QRectF(rect)
+    return QRectF(r.left() + PAD, r.top() + PAD + TITLE_H,
+                  max(1.0, r.width() - PAD * 2),
+                  max(1.0, r.height() - PAD * 2 - TITLE_H))
+
+
+def draw(painter: QPainter, rect, text: str, style: Optional[Style] = None) -> None:
+    """画标题 + 正文预览（组件库缩略图与调试器用；桌面组件走真控件）。"""
+    style = style or DEFAULT_STYLE
+    r = QRectF(rect)
+    p = painter
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setPen(QColor(style.faint))
+    p.setFont(theme.ui_font(12))
+    p.drawText(QRectF(r.left() + PAD, r.top() + PAD - 4, r.width() - PAD * 2, TITLE_H),
+               Qt.AlignLeft | Qt.AlignVCenter, "便签")
+    p.setPen(QColor(style.text))
+    p.setFont(theme.ui_font(13))
+    body = text_rect(r)
+    lines = (text or "").splitlines()[:6] or ["写点什么，自动保存…"]
+    fm_h = 20
+    for i, line in enumerate(lines):
+        if body.top() + (i + 1) * fm_h > body.bottom() + fm_h:
+            break
+        p.drawText(QRectF(body.left(), body.top() + i * fm_h, body.width(), fm_h),
+                   Qt.AlignLeft | Qt.AlignVCenter, line)
+
+
+class NotesWidget(GlassWidget):
     TYPE = "notes"
 
     def __init__(self, storage, entry):
         # interactive=True：去掉 NOACTIVATE，QTextEdit 才能获得键盘焦点输入
         super().__init__(storage, entry, interactive=True)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(14, 34, 14, 14)
-        lay.setSpacing(8)
-        title = QLabel("便签")
-        title.setFont(theme.ui_font(12))
-        title.setStyleSheet("color: %s; background: transparent;" % theme.rgba(theme.TEXT_FAINT))
-        lay.addWidget(title)
+        lay.setContentsMargins(PAD, PAD + TITLE_H, PAD, PAD)
+        lay.setSpacing(0)
         self.edit = QTextEdit()
         self.edit.setPlaceholderText("写点什么，自动保存…")
         self.edit.setPlainText(entry.get("text", ""))
         # 右键交给组件本体：QTextEdit 的默认菜单会吃掉「编辑」入口
         # （NoContextMenu = 上下文菜单事件上送给父部件，Qt 文档语义）
         self.edit.setContextMenuPolicy(Qt.NoContextMenu)
-        self.edit.setStyleSheet(
-            ("QTextEdit{background: %s; color: rgb(242,243,245); border: 1px solid %s;"
-             " border-radius: 10px; padding: 8px; font-family: %s; font-size: 13px;}"
-             "QTextEdit:focus{border: 1px solid %s;}")
-            % (theme.rgba(theme.SURFACE_RAISED), theme.rgba(theme.BORDER),
-               ", ".join('"%s"' % f for f in theme.FONT_FAMILIES), theme.rgba(theme.ACCENT_BORDER)))
         lay.addWidget(self.edit)
+        self._apply_edit_style()
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(600)
         self._save_timer.timeout.connect(self._save_text)
-        self.edit.textChanged.connect(self._save_timer.start)
+        self.edit.textChanged.connect(self._on_text_changed)
+
+    # ---------- 样式 ----------
+    def _apply_edit_style(self):
+        st = self.style
+        self.edit.setStyleSheet(
+            ("QTextEdit{background: transparent; border: none; padding: 0;"
+             " color: %s; font-family: %s; font-size: 13px;"
+             " selection-background-color: %s;}"
+             "QTextEdit:focus{border: none;}")
+            % (st.text.name(), ", ".join('"%s"' % f for f in theme.FONT_FAMILIES),
+               theme.rgba(QColor(st.accent.red(), st.accent.green(),
+                                 st.accent.blue(), 120))))
+        self.edit.setPlaceholderText("写点什么，自动保存…")
+
+    def on_settings_changed(self):
+        super().on_settings_changed()
+        self._apply_edit_style()
+
+    def paint_content(self, p):
+        st = self.style
+        r = QRectF(self.rect())
+        p.setPen(QColor(st.faint))
+        p.setFont(theme.ui_font(12))
+        p.drawText(QRectF(r.left() + PAD, r.top() + PAD - 4,
+                          max(1.0, r.width() - PAD * 2), TITLE_H),
+                   Qt.AlignLeft | Qt.AlignVCenter, "便签")
+
+    def on_resized(self):
+        """尺寸变化后正文区几何由布局管，不需重算——但空便签提示要重绘。"""
+        if hasattr(self, "edit"):
+            self.update()
+
+    # ---------- 数据 ----------
+    def _on_text_changed(self):
+        # 超长截断（防误粘贴整篇文档把 state.json 撑大）：只留前面部分
+        text = self.edit.toPlainText()
+        if len(text) > MAX_LEN:
+            cursor = self.edit.textCursor()
+            pos = cursor.position()
+            self.edit.blockSignals(True)
+            self.edit.setPlainText(text[:MAX_LEN])
+            self.edit.blockSignals(False)
+            cursor.setPosition(min(pos, MAX_LEN))
+            self.edit.setTextCursor(cursor)
+        self._save_timer.start()
 
     def _save_text(self):
         self.entry["text"] = self.edit.toPlainText()
@@ -49,3 +133,11 @@ class NotesWidget(FloatingWidget):
         只影响鼠标（键盘焦点照旧），退出编辑态后排字行为完全恢复。
         """
         self.edit.setAttribute(Qt.WA_TransparentForMouseEvents, bool(on))
+
+
+def draw_preview(painter: QPainter, rect, dpr: float = 1.0) -> None:
+    """组件库缩略图：玻璃底 + 示例文字。"""
+    from .widget_glass import paint_glass, PREVIEW_RADIUS
+    r = QRectF(rect)
+    paint_glass(painter, r, PREVIEW_RADIUS)
+    draw(painter, r, "18:30 和小林吃饭\n\n· 带伞\n· 买牛奶")

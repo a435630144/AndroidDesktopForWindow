@@ -25,6 +25,7 @@ from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPen
 from PySide6.QtWidgets import QLineEdit
 
 from . import theme
+from .widget_style import DEFAULT_STYLE, Style
 from .widget_glass import GAP, PAD, GlassWidget
 
 MAX_ITEMS = 200
@@ -122,15 +123,17 @@ def text_left(row: QRectF) -> float:
     return check_rect(row).right() + 6
 
 
-def text_color(done: bool) -> QColor:
+def text_color(done: bool, style: Optional[Style] = None) -> QColor:
     """完成项弱化（README：完成不是消失，是退到背景里）。"""
-    return QColor(theme.TEXT_FAINT) if done else QColor(theme.TEXT)
+    st = style or DEFAULT_STYLE
+    return QColor(st.faint) if done else QColor(st.text)
 
 
 # ---------------------------------------------------------------- 纯绘制
 
 def draw(p: QPainter, rect, items, scroll: int = 0, hover: int = -1,
-         show_input: bool = True) -> None:
+         show_input: bool = True, style: Optional[Style] = None) -> None:
+    st = style or DEFAULT_STYLE
     rect = QRectF(rect)
     if rect.width() <= 4 or rect.height() <= 4:
         return
@@ -144,13 +147,13 @@ def draw(p: QPainter, rect, items, scroll: int = 0, hover: int = -1,
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(255, 255, 255, 14))
         p.drawRoundedRect(L["input"], 8, 8)
-        p.setPen(QColor(theme.TEXT_FAINT))
+        p.setPen(QColor(st.faint))
         p.setFont(theme.ui_font(11))
         p.drawText(L["input"].adjusted(10, 0, -10, 0),
                    Qt.AlignLeft | Qt.AlignVCenter, "添加待办，回车确认")
 
     if not items:
-        p.setPen(QColor(theme.TEXT_FAINT))
+        p.setPen(QColor(st.faint))
         fs = max(9, int(min(list_rect.height() * 0.16, 12)))
         p.setFont(theme.ui_font(fs))
         p.drawText(list_rect, Qt.AlignCenter, "没有待办，回车添加第一条")
@@ -172,7 +175,7 @@ def draw(p: QPainter, rect, items, scroll: int = 0, hover: int = -1,
         cd = min(14.0, cr.height() * 0.64)
         circle = QRectF(cr.center().x() - cd / 2, cr.center().y() - cd / 2, cd, cd)
         if it["done"]:
-            p.setBrush(QColor(theme.ACCENT))
+            p.setBrush(QColor(st.accent))
             p.setPen(Qt.NoPen)
             p.drawEllipse(circle)
             p.setPen(QPen(QColor(16, 18, 24), 1.6, Qt.SolidLine, Qt.RoundCap))
@@ -196,19 +199,19 @@ def draw(p: QPainter, rect, items, scroll: int = 0, hover: int = -1,
             while cut and fm.horizontalAdvance(cut + "…") > avail:
                 cut = cut[:-1]
             text = (cut + "…") if cut else ""
-        p.setPen(text_color(it["done"]))
+        p.setPen(text_color(it["done"], st))
         tr = QRectF(left, rr.top(), avail, rr.height())
         p.drawText(tr, Qt.AlignLeft | Qt.AlignVCenter, text)
         if it["done"]:
             w = min(avail, fm.horizontalAdvance(text))
             y = rr.center().y() + 0.5
-            p.setPen(QPen(text_color(True), 1.0))
+            p.setPen(QPen(text_color(True, st), 1.0))
             p.drawLine(QPointF(left, y), QPointF(left + w, y))
 
         # hover 行的删除 ×
         if hover == vi:
             dr = delete_rect(rr)
-            p.setPen(QPen(QColor(theme.TEXT_DIM), 1.4, Qt.SolidLine, Qt.RoundCap))
+            p.setPen(QPen(QColor(st.dim), 1.4, Qt.SolidLine, Qt.RoundCap))
             c = dr.center()
             d = dr.height() * 0.22
             p.drawLine(QPointF(c.x() - d, c.y() - d), QPointF(c.x() + d, c.y() + d))
@@ -348,7 +351,9 @@ class TodoWidget(GlassWidget):
     # ---------- 绘制 ----------
     def paint_content(self, p: QPainter):
         draw(p, QRectF(self.rect()), self.items(), self._scroll, self._hover,
-             show_input=False)
+             show_input=False, style=self.style)
 
     def on_settings_changed(self):
+        super().on_settings_changed()   # 清样式缓存 + 重绘
+        self._apply_edit_style() if hasattr(self, "_apply_edit_style") else None
         self.update()

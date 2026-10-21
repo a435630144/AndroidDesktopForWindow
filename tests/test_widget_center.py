@@ -14,7 +14,7 @@
   W10 没有 preview 的组件走兜底卡，也能画出东西
   W11 底部计数显示"已添加 N 个组件"
   W12 移除按钮：已添加卡片可移除，移除后回到「添加到桌面」
-  W13 多次打开复用同一实例（不叠出两个窗口）
+  W13 组件库是设置面板的一个分页（open_settings 定位到它，且是单例）
 
 运行：python tests/test_widget_center.py   （offscreen）
 """
@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
 from src import grid_flow
 from src.storage import Storage
@@ -79,8 +79,14 @@ def main(app):
     layer = WidgetLayer(st)
     QTest.qWait(120)
 
-    center = wc.WidgetCenter(layer)
-    center.show()
+    # v9 V2：组件库不再是窗口，而是嵌在宿主里的分页（设置面板就是这样用它）
+    host = QWidget()
+    host.resize(900, 620)
+    _lay = QVBoxLayout(host)
+    _lay.setContentsMargins(0, 0, 0, 0)
+    center = wc.WidgetCenterPage(layer)
+    _lay.addWidget(center)
+    host.show()
     QTest.qWait(80)
 
     # ---------- W1 ----------
@@ -159,8 +165,9 @@ def main(app):
     shot = card.grab().toImage()
     check("W9 卡片（天气）预览非空", alpha_nonempty(shot) > 300,
           str(alpha_nonempty(shot)))
-    clock_card = next(c for c in center.cards if c.spec.type == "clock")
-    shot2 = clock_card.grab().toImage()
+    # v9 V1 起时钟也有 preview 了；兜底卡改用仍没声明 preview 的「桌面面板」
+    plain_card = next(c for c in center.cards if c.spec.type == "panel")
+    shot2 = plain_card.grab().toImage()
     check("W10 无 preview 的组件走兜底卡也有内容", alpha_nonempty(shot2) > 300,
           str(alpha_nonempty(shot2)))
 
@@ -177,11 +184,28 @@ def main(app):
     check("W12c 移除后回到「添加到桌面」", mon_card.button.text() == "添加到桌面",
           mon_card.button.text())
 
-    # ---------- W13 ----------
-    check("W13 非模态", center.isModal() is False)
-    again = wc.open_center(layer)
-    check("W13b 再次打开复用同一实例", again is center, "%r" % (again is center,))
-    again.close()
+    # ---------- W13：融合进设置面板 ----------
+    from src import settings_dialog as sd
+    check("W13a 组件库有独立分页 key",
+          "widgets" in [k for k, _l in sd.SettingsDialog.NAV])
+    fw = type("FW", (), {"storage": st})()
+    dlg = sd.open_settings(fw, st, layer, page="widgets")
+    QTest.qWait(60)
+    check("W13b open_settings 直接定位到组件库页",
+          dlg.NAV[dlg.stack.currentIndex()][0] == "widgets",
+          str(dlg.NAV[dlg.stack.currentIndex()][0]))
+    check("W13c 设置窗口里带着组件库页面",
+          hasattr(dlg, "center_page") and len(dlg.center_page.cards) == len(reg.all_specs()),
+          str(len(getattr(getattr(dlg, "center_page", None), "cards", []))))
+    check("W13d 组件库不再是独立模态窗口",
+          not isinstance(center, __import__("PySide6.QtWidgets", fromlist=["QDialog"]).QDialog))
+    again = sd.open_settings(fw, st, layer, page="widgets")
+    check("W13e 再次打开复用同一设置窗口（单例）", again is dlg, repr(again is dlg))
+    dlg.close()
+    dlg.deleteLater()
+    host.close()
+    host.deleteLater()
+    QTest.qWait(40)
 
     for w in list(layer.widgets.values()):
         try:

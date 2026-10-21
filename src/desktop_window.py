@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from . import appsource
 from . import grid_flow
+from . import page_rules
 from . import theme
 from . import win32_layer
 from .band_guard import BandGuard
@@ -1821,8 +1822,8 @@ class DesktopWindow(QWidget):
                 return
         self._push_timer.stop()
         self._push_cell = None
-        if self._auto_arrange():
-            # 自动排列：整桌密排（反馈 4）——落位清单由 _arrange_moves 统一定义
+        if self._auto_arrange_at(cell[1]):
+            # 自动排列：该页密排（v9 V2 起按页）——清单由 _arrange_moves 统一定义
             moves = self._arrange_moves(dragged_id, cell)
         else:
             moves = self._free_moves(dragged_id, cell)
@@ -1831,8 +1832,17 @@ class DesktopWindow(QWidget):
         self._apply_preview_moves(dragged_id, moves)
 
     def _auto_arrange(self) -> bool:
-        """自动排序开关（v6 §3.2）：False=自由移动（默认）。"""
+        """全局自动排序开关（v6 §3.2）：False=自由移动（默认）。
+
+        v9 V2 起**不再直接决定落位**——只有"该页没有独立规则"时才是
+        它的值。判定请走 `_auto_arrange_at(row)` / `_arrange_moves()`，
+        它们会把每页规则（`page_rules`）算进去。
+        """
         return bool(self.storage.get_setting("auto_arrange"))
+
+    def _auto_arrange_at(self, row) -> bool:
+        """该行所属页是否自动排列（v9 V2：每页独立规则的唯一入口）。"""
+        return page_rules.mode_for(self.storage, grid_flow.page_of(int(row)))
 
     def _arrange_moves(self, dragged: str, cell, rows=None):
         """落位清单唯一入口：自动排列 = 密排，否则 = 局部让位（保留空格）。
@@ -1843,10 +1853,13 @@ class DesktopWindow(QWidget):
         别处的空格永远还在，勾了"自动排列图标"跟没勾一样。现在开关
         真正参与算法选择：开 -> `auto_arrange_moves` 从左上角连续密排。
         """
-        if self._auto_arrange():
+        if self._auto_arrange_at(cell[1]):
             return grid_flow.auto_arrange_moves(
                 self.storage.layout, self.storage.columns, dragged, cell,
-                extra_occupied=self._widget_cells())
+                extra_occupied=self._widget_cells(),
+                rpp=grid_flow.rows_per_page(),
+                auto_pages=page_rules.auto_pages(
+                    self.storage, grid_flow.page_count(self.storage)))
         return grid_flow.reflow_moves(
             self.storage.layout, self.storage.columns, dragged, cell,
             rows=rows, extra_occupied=self._widget_cells())
@@ -1868,7 +1881,7 @@ class DesktopWindow(QWidget):
         occ = self.storage.occupant(cell[0], cell[1], exclude_id=dragged)
         if occ is None:
             return  # 已经空出来了（上次推让生效）
-        if self._auto_arrange():
+        if self._auto_arrange_at(cell[1]):
             moves = self._arrange_moves(dragged, cell)
         else:
             moves = None
@@ -2067,7 +2080,7 @@ class DesktopWindow(QWidget):
         if self._preview_moves is not None and self._preview_drag == dragged_id:
             self._commit_preview()
             return
-        if self._auto_arrange():
+        if self._auto_arrange_at(cell[1]):
             moves = self._arrange_moves(dragged_id, cell)
         else:
             moves = self._free_moves(dragged_id, cell)
@@ -3049,8 +3062,12 @@ class DesktopWindow(QWidget):
         self.storage.save()
         self._sync_icons()              # M4：批量移除后 compact 补位走动画
 
-    def _tidy(self):
-        self.storage.tidy_layout()
+    def _tidy(self, pages=None):
+        """整理桌面。`pages` 给定时只整理这些页（v9 V2 每页规则）。
+
+        None = 旧行为（全局铺满，图标连续跨页）。
+        """
+        self.storage.tidy_layout(pages)
         self.storage.save()
         self.rebuild(stagger=True)
 

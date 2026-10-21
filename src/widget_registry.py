@@ -22,10 +22,11 @@ v8 起改为：**一份 `WidgetSpec` 声明一切静态事实**，其余模块�
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Tuple
 
 Span = Tuple[int, int]
+
 
 
 @dataclass(frozen=True)
@@ -33,7 +34,12 @@ class FieldSpec:
     """组件设置项声明（纯数据，不含 Qt）。
 
     `widget_settings.py` 按它生成表单控件；`Entry.settings` 按 `key` 存值。
-    kind ∈ {"text", "combo", "int", "bool"}。
+    kind ∈ {"text", "combo", "int", "bool", "color", "float"}（v9 加了后两个：
+    颜色选择器与 0~1 滑条，见 `widget_style`）。
+
+    `group`：表单里的分组标题（空 = 归入「组件设置」）。v9 起外观字段
+    统一归「外观」，组件库与设置页就都能预期"前几项是组件自己的，
+    后几项是所有组件都有的"。
     """
 
     key: str
@@ -43,6 +49,27 @@ class FieldSpec:
     choices: Tuple[Tuple[object, str], ...] = ()   # ((值, 显示文字), ...)
     placeholder: str = ""
     hint: str = ""
+    group: str = ""
+
+
+# 通用外观字段（v9 V1）：所有组件共享这 5 项，由 `_with_style` 追加。
+# 定义放在注册表里而不是 `widget_style` —— 否则 widget_style 需要
+# widget_registry.FieldSpec，而注册表构造时又要 STYLE_FIELDS，成环。
+# `widget_style` 反向从这里 import（单向）。
+STYLE_FIELDS = (
+    FieldSpec("bg_color", "背景颜色", "color", "",
+              hint="留空 = 跟随主题玻璃；选色后玻璃 tint 换成该色", group="外观"),
+    FieldSpec("bg_alpha", "背景不透明度", "float", 1.0,
+              hint="20%~100%，越低越透出壁纸", group="外观"),
+    FieldSpec("text_color", "文字颜色", "color", "",
+              hint="留空 = 主题主文字；次文字按同色降透明度自动派生", group="外观"),
+    FieldSpec("accent_color", "强调色", "color", "",
+              hint="留空 = 主题蓝（进度环 / 今天高亮 / 选中态）", group="外观"),
+    FieldSpec("radius", "圆角", "int", 0,
+              hint="0 = 跟随主题（20）；范围 0~40", group="外观"),
+)
+
+STYLE_KEYS = tuple(f.key for f in STYLE_FIELDS)
 
 
 @dataclass(frozen=True)
@@ -60,6 +87,8 @@ class WidgetSpec:
     multi_instance: bool = False     # 是否允许同时放多个
     settings: Tuple[FieldSpec, ...] = ()
     preview: Optional[Callable] = None   # (painter, rect, dpr) -> None，缺省走兜底卡
+    plugin: bool = False             # True = 外部导入（可卸载、来源是用户目录）
+    version: str = ""                # 插件自己的版本号（内置留空）
 
     @property
     def default_span(self) -> Span:
@@ -69,8 +98,8 @@ class WidgetSpec:
 def _build_registry() -> Dict[str, WidgetSpec]:
     # 延迟到函数内导入：组件模块会 import widget_base，而 widget_base 在
     # 方法内延迟引用 widget_catalog → 本模块。函数内导入让模块级依赖保持单向。
-    from .widgets_clock import ClockWidget
-    from .widgets_notes import NotesWidget
+    from .widgets_clock import ClockWidget, draw_preview as _preview_clock
+    from .widgets_notes import NotesWidget, draw_preview as _preview_notes
     from .widgets_panel import DesktopPanel
     from .widget_monitor import MonitorWidget, draw_preview as _preview_monitor
     from .widgets_calendar import CalendarWidget, draw_preview as _preview_calendar
@@ -86,6 +115,11 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             spans=((2, 2),),
             category="时间",
             default_anchored=True,
+            settings=(
+                FieldSpec("show_seconds", "显示秒", "bool", True),
+                FieldSpec("show_date", "显示日期", "bool", True),
+            ),
+            preview=_preview_clock,
         ),
         WidgetSpec(
             type="notes",
@@ -97,6 +131,7 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             default_anchored=False,   # 含输入框：锚定态 NOACTIVATE 拿不到焦点
             interactive=True,
             multi_instance=True,
+            preview=_preview_notes,
         ),
         WidgetSpec(
             type="panel",
@@ -164,28 +199,49 @@ def _build_registry() -> Dict[str, WidgetSpec]:
     return {s.type: s for s in specs}
 
 
-REGISTRY: Dict[str, WidgetSpec] = _build_registry()
+def _with_style(specs: List[WidgetSpec]) -> List[WidgetSpec]:
+    """给每个组件追加"通用外观字段"（v9 V1，本模块的 `STYLE_FIELDS`）。
+
+    放在这里而不是逐个组件写：外观是**所有组件**的能力，漏一个组件
+    就等于"这个组件不能改颜色"，用户只会觉得坏了。
+    组件自己的字段在前（先配业务），外观在后（分组标题隔开）。
+    """
+    out = []
+    for spec in specs:
+        out.append(replace(spec, settings=tuple(spec.settings) + STYLE_FIELDS))
+    return out
+
+
+REGISTRY: Dict[str, WidgetSpec] = {s.type: s for s in
+                                   _with_style(list(_build_registry().values()))}
+
+# 外部导入的组件（`widget_plugin` 加载后写这里）。单独一张表：内置组件
+# 不可卸载，插件可卸载，两者在 UI 上的动作不同，混在一张表里就必须
+# 靠 `plugin` 标记反查——一张表一件事更不容易错。
+PLUGINS: Dict[str, WidgetSpec] = {}
 
 
 # ---------------------------------------------------------------- 查询 API
 
 def get(wtype: str) -> Optional[WidgetSpec]:
-    """按类型取声明；未登记返回 None（调用方自行决定回退策略）。"""
-    return REGISTRY.get(wtype) if isinstance(wtype, str) else None
+    """按类型取声明（内置 + 外部插件）；未登记返回 None。"""
+    if not isinstance(wtype, str):
+        return None
+    return REGISTRY.get(wtype) or PLUGINS.get(wtype)
 
 
 def all_specs() -> List[WidgetSpec]:
-    """全部组件，按登记顺序（= 组件库默认展示顺序）。"""
-    return list(REGISTRY.values())
+    """全部组件，内置在前、插件在后（= 组件库默认展示顺序）。"""
+    return list(REGISTRY.values()) + list(PLUGINS.values())
 
 
 def names() -> Dict[str, str]:
     """类型 → 中文名（`widget_layer.WIDGET_NAMES` 由它派生）。"""
-    return {t: s.name for t, s in REGISTRY.items()}
+    return {t: s.name for t, s in list(REGISTRY.items()) + list(PLUGINS.items())}
 
 
 def types() -> List[str]:
-    return list(REGISTRY.keys())
+    return list(REGISTRY.keys()) + list(PLUGINS.keys())
 
 
 def spans(wtype: str) -> List[Span]:
@@ -202,7 +258,7 @@ def default_span(wtype: str) -> Optional[Span]:
 def categories() -> List[str]:
     """分类列表，按"首次登记顺序"去重（组件库左栏顺序）。"""
     out: List[str] = []
-    for s in REGISTRY.values():
+    for s in all_specs():
         if s.category not in out:
             out.append(s.category)
     return out
@@ -212,12 +268,35 @@ def specs_in(category: str) -> List[WidgetSpec]:
     """某分类下的组件；`category` 传 "全部" 或空串返回全部。"""
     if not category or category == "全部":
         return all_specs()
-    return [s for s in REGISTRY.values() if s.category == category]
+    return [s for s in all_specs() if s.category == category]
 
 
 def register(spec: WidgetSpec) -> None:
-    """登记/覆盖一个组件（测试与将来的外部插件用）。"""
+    """登记/覆盖一个**内置**组件声明（测试用；插件请走 `register_plugin`）。"""
     REGISTRY[spec.type] = spec
+
+
+def register_plugin(spec: WidgetSpec) -> None:
+    """登记一个外部组件（`widget_plugin` 加载后调用）。
+
+    独占命名空间规则：与内置类型撞名 -> 不允许（内置是产品的一部分，
+    不能被用户 zip 顶掉）；与已装插件撞名 -> 覆盖（重装/升级）。
+    """
+    if spec.type in REGISTRY:
+        raise ValueError("组件类型 %r 与内置组件冲突" % spec.type)
+    PLUGINS[spec.type] = replace(spec, plugin=True)
+
+
+def unregister(wtype: str) -> bool:
+    """移除一个**插件**声明；内置组件拒绝（返回 False）。"""
+    if wtype in PLUGINS:
+        del PLUGINS[wtype]
+        return True
+    return False
+
+
+def is_builtin(wtype: str) -> bool:
+    return wtype in REGISTRY
 
 
 def set_spans(wtype: str, spans_) -> None:

@@ -20,6 +20,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
 
 from . import theme
+from . import widget_style
 from .widget_base import FloatingWidget
 
 # 统一内边距（组件内容不要自己编数字，否则四个组件四种留白）
@@ -40,13 +41,38 @@ def glass_radius(anchored: bool) -> float:
     return float(theme.GLASS_RADIUS)
 
 
+def _mix(a: QColor, b: QColor, t: float) -> QColor:
+    """按比例混合两色（t=0 -> a，t=1 -> b）。玻璃三段渐变靠它派生。"""
+    t = max(0.0, min(1.0, float(t)))
+    return QColor(int(round(a.red() + (b.red() - a.red()) * t)),
+                  int(round(a.green() + (b.green() - a.green()) * t)),
+                  int(round(a.blue() + (b.blue() - a.blue()) * t)))
+
+
+def _tint_stops(tint_color, a: int):
+    """玻璃三段渐变的三个颜色。自定义背景色时按"上浅下深"派生。"""
+    if tint_color is None:
+        return (QColor(22, 24, 31, a), QColor(17, 18, 24, a + 18),
+                QColor(13, 14, 19, a + 38))
+    base = QColor(tint_color)
+    base.setAlpha(255)
+    top = _mix(base, QColor(255, 255, 255), 0.08)
+    bottom = _mix(base, QColor(0, 0, 0), 0.22)
+    top.setAlpha(max(0, min(255, a)))
+    mid = QColor(base)
+    mid.setAlpha(max(0, min(255, a + 18)))
+    bottom.setAlpha(max(0, min(255, a + 38)))
+    return top, mid, bottom
+
+
 def paint_glass(painter: QPainter, rect: QRectF, radius: float = None,
-                tint_alpha: int = None) -> None:
+                tint_alpha: int = None, tint_color=None) -> None:
     """画一块静态玻璃（竖向渐变 + 顶部 specular + 1px 边框）。
 
     - `rect` 可以是任意大小（1×1 也不许抛），组件库缩略图会喂极小矩形；
     - 圆角外的像素保持透明（`fill` 用 path 裁剪），锚定组件靠这一点把
-      卡片外的点击交给真实桌面。
+      卡片外的点击交给真实桌面；
+    - `tint_color`（v9）：用户自定义背景色。None = 主题深色玻璃。
     """
     rect = QRectF(rect)
     if rect.width() <= 1 or rect.height() <= 1:
@@ -55,6 +81,7 @@ def paint_glass(painter: QPainter, rect: QRectF, radius: float = None,
     # 半径不能超过短边一半，否则 QPainterPath 会画出畸形圆角
     r = max(1.0, min(r, rect.width() / 2.0, rect.height() / 2.0))
     a = int(tint_alpha if tint_alpha is not None else theme.GLASS_TINT_ALPHA)
+    c_top, c_mid, c_bottom = _tint_stops(tint_color, a)
 
     path = QPainterPath()
     path.addRoundedRect(rect, r, r)
@@ -64,9 +91,9 @@ def paint_glass(painter: QPainter, rect: QRectF, radius: float = None,
     painter.setPen(Qt.NoPen)
 
     grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
-    grad.setColorAt(0.0, QColor(22, 24, 31, a))
-    grad.setColorAt(0.55, QColor(17, 18, 24, a + 18))
-    grad.setColorAt(1.0, QColor(13, 14, 19, a + 38))
+    grad.setColorAt(0.0, c_top)
+    grad.setColorAt(0.55, c_mid)
+    grad.setColorAt(1.0, c_bottom)
     painter.setBrush(QBrush(grad))
     painter.drawRect(rect)
 
@@ -139,15 +166,32 @@ class GlassWidget(FloatingWidget):
     只改"底色"，交互与几何完全继承 `FloatingWidget`：
       - 拖动 / 吸附 / 八点编辑 / 关闭按钮 / 命中填充都不变；
       - 子类实现 `paint_content(painter)` 画自己的内容；
-      - 子类可覆盖 `on_settings_changed()` 响应组件设置变更（v8 C8）。
+      - 子类可覆盖 `on_settings_changed()` 响应组件设置变更（v8 C8）；
+      - `self.style`（v9）给出用户配好的配色，绘制内容时不要再直接写死
+        `theme.TEXT`，否则"文字颜色"设置对这些组件无效。
     """
 
+    def _style(self):
+        """取（并缓存）外观样式；设置变更时 `on_settings_changed` 清缓存。"""
+        st = getattr(self, "_style_cache", None)
+        if st is None:
+            st = widget_style.of(self.entry)
+            self._style_cache = st
+        return st
+
+    @property
+    def style(self):
+        return self._style()
+
     def _paint_surface(self, p):
-        paint_glass(p, QRectF(self.rect()), glass_radius(bool(self.anchored)))
+        st = self.style
+        paint_glass(p, QRectF(self.rect()), st.radius,
+                    tint_alpha=st.tint_alpha, tint_color=st.bg)
 
     def paint_content(self, p):
         """子类实现。默认什么都不画（防止漏实现时整块空白看不出来）。"""
 
     def on_settings_changed(self):
-        """组件设置应用后的回调（默认只重绘）。"""
+        """组件设置应用后的回调（默认清样式缓存 + 重绘）。"""
+        self._style_cache = None
         self.update()

@@ -95,24 +95,25 @@ def main(app):
     # ---------- U1 侧栏导航 ----------
     navs = [b for b in dlg.findChildren(QPushButton)
             if b.objectName() == "navItem"]
-    check("U1 左侧栏 5 个导航项", len(navs) == 5, "found=%d" % len(navs))
-    check("U1 导航文案依次为 通用/外观与图标/布局与网格/模式/高级",
+    # v9 V2：新增「组件库」分页（原独立窗口融合进来）
+    check("U1 左侧栏 6 个导航项", len(navs) == 6, "found=%d" % len(navs))
+    check("U1 导航文案依次为 通用/组件库/外观与图标/布局与网格/模式/高级",
           [b.text() for b in navs]
-          == ["通用", "外观与图标", "布局与网格", "模式", "高级"],
+          == ["通用", "组件库", "外观与图标", "布局与网格", "模式", "高级"],
           "%s" % [b.text() for b in navs])
     stack = dlg.findChildren(QStackedWidget)
-    check("U1 右栏是 5 页堆栈", len(stack) == 1 and stack[0].count() == 5,
+    check("U1 右栏是 6 页堆栈", len(stack) == 1 and stack[0].count() == 6,
           "stacks=%d" % len(stack))
 
     # ---------- U2 切页 ----------
-    navs[3].click()
+    navs[4].click()
     app.processEvents()
-    check("U2 点「模式」→ stack 第 3 页",
-          dlg.stack.currentIndex() == 3, "idx=%d" % dlg.stack.currentIndex())
+    check("U2 点「模式」→ stack 第 4 页",
+          dlg.stack.currentIndex() == 4, "idx=%d" % dlg.stack.currentIndex())
     check("U2 页标题跟着变", dlg.lbl_page_title.text() == "模式",
           "%s" % dlg.lbl_page_title.text())
     check("U2 只有当前导航高亮",
-          [b.isChecked() for b in navs] == [False, False, False, True, False],
+          [b.isChecked() for b in navs] == [False, False, False, False, True, False],
           "%s" % [b.isChecked() for b in navs])
     navs[0].click()
     app.processEvents()
@@ -166,7 +167,7 @@ def main(app):
     check("U5b 无界像素 spin 已退役", not hasattr(dlg, "spin_icon_px"))
 
     # ---------- U6 模式页归属 ----------
-    inside = page_widgets(dlg, 3)
+    inside = page_widgets(dlg, 4)   # v9：组件库分页插在通用之后，索引整体 +1
     # 反馈 16：接管开关下线（启动即接管），模式页只留布局与同步项
     check("U6 接管开关已下线", not hasattr(dlg, "chk_takeover"))
     check("U6 自动克隆在「模式」页", id(dlg.chk_autoclone) in inside)
@@ -339,6 +340,37 @@ def main(app):
               (dlg.sp_ox.value(), dlg.sp_oy.value()) == grid_flow.origin(),
               "%s vs %s" % ((dlg.sp_ox.value(), dlg.sp_oy.value()),
                             grid_flow.origin()))
+
+    # ---------- U15 分页排序规则（v9 V2） ----------
+    from src import page_rules as pr
+    dlg.select_page("layout")
+    app.processEvents()
+    check("U15a 布局页有「每页单独设置」开关", hasattr(dlg, "chk_page_rules"))
+    check("U15b 默认关闭（跟随全局）", dlg.chk_page_rules.isChecked() is False)
+    total = max(1, grid_flow.page_count(st))
+    check("U15c 每页一行下拉（页数与网格一致）",
+          len(dlg._rule_combos) == total, "%d vs %d" % (len(dlg._rule_combos), total))
+    check("U15d 未启用时下拉置灰",
+          all(not c.isEnabled() for c in dlg._rule_combos.values()))
+    dlg.chk_page_rules.setChecked(True)
+    app.processEvents()
+    check("U15e 打开后写入 storage",
+          st.get_setting("page_rules_custom") is True)
+    check("U15f 下拉变成可点",
+          all(c.isEnabled() for c in dlg._rule_combos.values()))
+    combo = dlg._rule_combos[0]
+    combo.setCurrentIndex(combo.findData(pr.FREE))
+    app.processEvents()
+    check("U15g 选「自由摆放」落到 page_rules",
+          pr.rule_of(st, 0) == pr.FREE, str(st.get_setting("page_rules")))
+    check("U15h mode_for 对该页返回 False", pr.mode_for(st, 0) is False)
+    combo = dlg._rule_combos[0]
+    combo.setCurrentIndex(combo.findData(pr.INHERIT))
+    app.processEvents()
+    check("U15i 回到跟随全局会删键",
+          "0" not in (st.get_setting("page_rules") or {}), str(st.get_setting("page_rules")))
+    dlg.chk_page_rules.setChecked(False)
+    app.processEvents()
 
     # ---------- U12 高度受控 ----------
     dlg.show()

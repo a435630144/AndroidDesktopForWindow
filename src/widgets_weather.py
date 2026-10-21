@@ -19,6 +19,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPen, QPolygonF
 
 from . import theme
+from .widget_style import DEFAULT_STYLE, Style
 from . import weather_api as wa
 from .widget_glass import PAD, GlassWidget
 
@@ -128,7 +129,8 @@ def draw_weather_icon(p: QPainter, kind: str, rect, color: QColor = None) -> Non
 
 # ---------------------------------------------------------------- 纯绘制
 
-def draw(p: QPainter, rect, model: Optional[wa.WeatherModel], state: str = "live") -> None:
+def draw(p: QPainter, rect, model: Optional[wa.WeatherModel], state: str = "live", style: Optional[Style] = None) -> None:
+    st = style or DEFAULT_STYLE
     rect = QRectF(rect)
     if rect.width() <= 6 or rect.height() <= 6:
         return
@@ -140,8 +142,8 @@ def draw(p: QPainter, rect, model: Optional[wa.WeatherModel], state: str = "live
         half = L["icon_d"] * 0.9
         draw_weather_icon(p, "cloud", QRectF(rect.center().x() - half / 2,
                                              rect.center().y() - half, half, half),
-                          QColor(theme.TEXT_FAINT))
-        p.setPen(QColor(theme.TEXT_DIM))
+                          QColor(st.faint))
+        p.setPen(QColor(st.dim))
         fs = max(9, int(min(rect.width() * 0.075, 12)))
         p.setFont(theme.ui_font(fs))
         p.drawText(QRectF(rect.left(), rect.center().y() + 4,
@@ -152,7 +154,7 @@ def draw(p: QPainter, rect, model: Optional[wa.WeatherModel], state: str = "live
 
     cur = L["current"]
     # 城市
-    p.setPen(QColor(theme.TEXT_DIM))
+    p.setPen(QColor(st.dim))
     p.setFont(theme.ui_font(max(9, int(min(cur.width() * 0.09, 12)))))
     fm = QFontMetricsF(p.font())
     city = model.city or ""
@@ -167,14 +169,14 @@ def draw(p: QPainter, rect, model: Optional[wa.WeatherModel], state: str = "live
 
     # 大号温度
     p.setFont(theme.ui_font(L["temp_fs"], bold=True))
-    p.setPen(QColor(theme.TEXT))
+    p.setPen(QColor(st.text))
     temp_rect = QRectF(cur.left(), cur.top() + L["icon_d"] * 0.72,
                        cur.width(), cur.height() * 0.34)
     p.drawText(temp_rect, Qt.AlignLeft | Qt.AlignVCenter, wa.fmt_temp(model.temp))
 
     # 描述 + 体感
     p.setFont(theme.ui_font(max(9, int(min(cur.width() * 0.075, 12)))))
-    p.setPen(QColor(theme.TEXT_DIM))
+    p.setPen(QColor(st.dim))
     desc = "%s · 体感 %s" % (model.text, wa.fmt_temp(model.feels))
     p.drawText(QRectF(cur.left(), temp_rect.bottom(), cur.width(), 18),
                Qt.AlignLeft | Qt.AlignVCenter, desc)
@@ -182,14 +184,14 @@ def draw(p: QPainter, rect, model: Optional[wa.WeatherModel], state: str = "live
     # 今日高低温
     if model.daily:
         d0 = model.daily[0]
-        p.setPen(QColor(theme.TEXT_FAINT))
+        p.setPen(QColor(st.faint))
         p.drawText(QRectF(cur.left(), cur.bottom() - 20, cur.width(), 18),
                    Qt.AlignLeft | Qt.AlignVCenter,
                    "明日 %s / %s" % (wa.fmt_temp(d0.tmax), wa.fmt_temp(d0.tmin)))
 
     # 缓存角标
     if state == "cached":
-        p.setPen(QColor(theme.TEXT_FAINT))
+        p.setPen(QColor(st.faint))
         p.setFont(theme.ui_font(9))
         p.drawText(QRectF(cur.right() - 120, cur.bottom() - 18, 120, 16),
                    Qt.AlignRight | Qt.AlignVCenter,
@@ -203,18 +205,18 @@ def draw(p: QPainter, rect, model: Optional[wa.WeatherModel], state: str = "live
         mid = col.center().x()
         fs = max(8, int(min(col.width() * 0.18, 11)))
         p.setFont(theme.ui_font(fs))
-        p.setPen(QColor(theme.TEXT_FAINT))
+        p.setPen(QColor(st.faint))
         p.drawText(QRectF(col.left(), col.top(), col.width(), col.height() * 0.2),
                    Qt.AlignHCenter | Qt.AlignVCenter, DAY_LABELS[i])
         iw = min(col.width() * 0.62, col.height() * 0.36)
         draw_weather_icon(p, wa.describe(d.code)[1],
                           QRectF(mid - iw / 2, col.top() + col.height() * 0.24, iw, iw))
         p.setFont(theme.ui_font(fs, bold=True))
-        p.setPen(QColor(theme.TEXT))
+        p.setPen(QColor(st.text))
         p.drawText(QRectF(col.left(), col.top() + col.height() * 0.62,
                           col.width(), col.height() * 0.2),
                    Qt.AlignHCenter | Qt.AlignVCenter, wa.fmt_temp(d.tmax))
-        p.setPen(QColor(theme.TEXT_FAINT))
+        p.setPen(QColor(st.faint))
         p.setFont(theme.ui_font(fs))
         p.drawText(QRectF(col.left(), col.top() + col.height() * 0.80,
                           col.width(), col.height() * 0.18),
@@ -296,10 +298,11 @@ class WeatherWidget(GlassWidget):
 
     # ---------- 绘制 ----------
     def paint_content(self, p: QPainter):
-        draw(p, QRectF(self.rect()), self._model, self._state)
+        draw(p, QRectF(self.rect()), self._model, self._state, style=self.style)
 
     def on_settings_changed(self):
         # 改城市 / 开关联网后立刻重取（关掉联网时走缓存分支）
+        super().on_settings_changed()   # 清样式缓存（颜色可能也改了）
         self.refresh()
 
     def closeEvent(self, e):

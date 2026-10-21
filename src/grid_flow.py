@@ -221,7 +221,8 @@ def pack_cells(order_len: int, cols: int, blocked: Iterable[Cell] = (),
 
 
 def auto_arrange_moves(entries: Sequence[dict], cols: int, dragged_id: str,
-                       target: Cell, extra_occupied: Iterable[Cell] = ()
+                       target: Cell, extra_occupied: Iterable[Cell] = (),
+                       rpp: int = 0, auto_pages=None
                        ) -> Optional[dict]:
     """**自动排列**（反馈 4，v7e）：拖放后整桌密排的位移清单。
 
@@ -230,19 +231,30 @@ def auto_arrange_moves(entries: Sequence[dict], cols: int, dragged_id: str,
       - `reflow_moves` 只让位：把 dragged 插进阅读序、新旧位置之间滑动
         一格，**其余空格原样保留**（自由摆放语义）；
       - 本函数在自动排列下接管：dragged 插到目标处的阅读序位置后，
-        全体图标从左上角**连续密排**，中间不留洞。
+        该页图标从**该页首行**连续密排，中间不留洞。
 
     算法（纯函数）：
-      1. 除 dragged 外的图标按阅读序（row, col）排好；
-      2. 找到第一个比 target 靠后的图标，dragged 插在它前面
-         （目标在队尾之外 = 追加到队尾）；
-      3. 按新的阅读序从 (0,0) 逐格分配，跳组件占位（含 extra_occupied）。
+      1. 按 `rpp` 把条目分组到页（row // rpp）；**每页独立密排**；
+      2. 目标页：除 dragged 外按阅读序排好，找到第一个比 target 靠后的
+         图标，dragged 插在它前面（目标在队尾之外 = 追加）；
+      3. 目标页从 `page*rpp` 起逐格分配，跳组件占位（含 extra_occupied）；
+      4. dragged 从别的页拖来时，**原页也补洞**（该页若属于自动排列）。
+
+    v9 V2 修正（BUG2：拖到下一页松手会跳回初始页）：
+      旧实现用 `pack_cells(len+1, cols)` 从 **(0,0) 全局**密排，与页无关。
+      拖到第 2 页时目标行在页 2，但密排结果全落在页 1——松手瞬间"全体
+      回到初始页"。现在每页从自己的首行开始排，跨页拖动只影响"原页"
+      与"目标页"两页。
+
+    `auto_pages`：允许自动排列的页号集合（None = 全部页）。目标页不在
+    集合内返回 None —— 调用方回退到 `reflow_moves`（自由摆放语义）。
 
     target 越界夹紧到 [0, cols-1]（行不限：可分页）。脏布局（重复占用格）
     返回 None —— 与 reflow_moves 同策：宁可不预览也别写坏。
     """
     if cols < 1:
         return None
+    rpp = max(1, int(rpp) or rows_per_page())
     live = [e for e in entries if e.get("id") is not None]
     ids = [e.get("id") for e in live]
     if dragged_id not in ids:
@@ -253,36 +265,57 @@ def auto_arrange_moves(entries: Sequence[dict], cols: int, dragged_id: str,
 
     tcol = max(0, min(int(cols) - 1, int(target[0])))
     trow = max(0, int(target[1]))
-    tkey = (trow, tcol)
+    tpage = page_of(trow, rpp)
+    if auto_pages is not None and tpage not in auto_pages:
+        return None
 
-    others = [e for e in live if e.get("id") != dragged_id]
-    others.sort(key=lambda e: (int(e.get("row", 0) or 0),
-                               int(e.get("col", 0) or 0)))
-    order = [e["id"] for e in others]
+    by_id = {e.get("id"): e for e in live}
+    by_page: Dict[int, List[dict]] = {}
+    for e in live:
+        by_page.setdefault(page_of(int(e.get("row", 0) or 0), rpp), []).append(e)
 
-    blocked = set(extra_occupied or ())
-    # 槽位 = 密排后的全部格（含给 dragged 的那一格）；插入点取**目标格的
-    # 阅读序下标**——密排世界里"拖到第 3 格"就该落第 3 位，而不是"排在某
-    # 个现有图标前后"。被组件占掉的格不在槽位表里，自然顺延到下一个空槽。
-    slots = pack_cells(len(order) + 1, cols, blocked)
-    tkey = (trow, tcol)
+    def _reading(items):
+        return sorted(items, key=lambda x: (int(x.get("row", 0) or 0),
+                                            int(x.get("col", 0) or 0)))
+
+    def _blocked_in(page):
+        return {c for c in (extra_occupied or ()) if page_of(c[1], rpp) == page}
+
+    moves = {}
+
+    # ---- 目标页：密排 ----
+    src_page = page_of(int(by_id[dragged_id].get("row", 0) or 0), rpp)
+    tgt = [e for e in by_page.get(tpage, []) if e.get("id") != dragged_id]
+    tgt = _reading(tgt)
+    slots = pack_cells(len(tgt) + 1, cols, _blocked_in(tpage),
+                       start=(0, tpage * rpp))
+    # 插入点：目标格的**页内**阅读序下标（密排世界里"拖到第 3 格"就落第 3 位）
+    tkey = (trow - tpage * rpp, tcol)
     pos = len(slots) - 1
     for i, c in enumerate(slots):
-        if (c[1], c[0]) >= tkey:
+        if (c[1] - tpage * rpp, c[0]) >= tkey:
             pos = i
             break
+    order = [e["id"] for e in tgt]
     order.insert(pos, dragged_id)
-
-    targets = slots
-    by_id = {e.get("id"): e for e in live}
-    moves = {}
-    for eid, cell in zip(order, targets):
+    for eid, cell in zip(order, slots):
         e = by_id.get(eid)
         if e is None:
             continue
         if _cell_of(e) != cell:
             moves[eid] = cell
+
+    # ---- 原页：补洞（跨页拖动才有意义；同页已在上一步处理好）----
+    if src_page != tpage and (auto_pages is None or src_page in auto_pages):
+        rest = [e for e in by_page.get(src_page, []) if e.get("id") != dragged_id]
+        rest = _reading(rest)
+        slots2 = pack_cells(len(rest), cols, _blocked_in(src_page),
+                            start=(0, src_page * rpp))
+        for e, cell in zip(rest, slots2):
+            if _cell_of(e) != cell:
+                moves[e["id"]] = cell
     return moves
+
 
 
 def _forward_scan_cell(start: Cell, blocked: set, cols: int,

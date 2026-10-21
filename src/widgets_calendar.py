@@ -21,6 +21,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 
 from . import theme
+from .widget_style import DEFAULT_STYLE, Style
 from .widget_glass import PAD, GlassWidget
 
 WEEKDAY_LABELS = ("一", "二", "三", "四", "五", "六", "日")
@@ -116,7 +117,8 @@ def layout(rect, model: CalendarModel) -> dict:
 
 # ---------------------------------------------------------------- 纯绘制
 
-def draw(p: QPainter, rect, model: CalendarModel) -> None:
+def draw(p: QPainter, rect, model: CalendarModel, style: Optional[Style] = None) -> None:
+    st = style or DEFAULT_STYLE
     rect = QRectF(rect)
     if rect.width() <= 6 or rect.height() <= 6:
         return
@@ -126,11 +128,11 @@ def draw(p: QPainter, rect, model: CalendarModel) -> None:
 
     # 标题
     p.setFont(theme.ui_font(L["title_fs"], bold=True))
-    p.setPen(QColor(theme.TEXT))
+    p.setPen(QColor(st.text))
     p.drawText(L["title_mid"], Qt.AlignCenter, model.title)
 
     # 左右箭头（自绘雪佛龙，比字符 "<" 更居中）
-    p.setPen(QPen(QColor(theme.TEXT_DIM), 1.6, Qt.SolidLine, Qt.RoundCap,
+    p.setPen(QPen(QColor(st.dim), 1.6, Qt.SolidLine, Qt.RoundCap,
                   Qt.RoundJoin))
     for nav, sign in ((L["nav_left"], -1), (L["nav_right"], 1)):
         c = nav.center()
@@ -142,7 +144,7 @@ def draw(p: QPainter, rect, model: CalendarModel) -> None:
 
     # 周标题
     p.setFont(theme.ui_font(L["week_fs"]))
-    p.setPen(QColor(theme.TEXT_FAINT))
+    p.setPen(QColor(st.faint))
     for di, label in enumerate(week_labels(model.firstweekday)):
         cr = QRectF(L["week_row"].left() + di * L["cell_w"], L["week_row"].top(),
                     L["cell_w"], L["week_row"].height())
@@ -160,13 +162,13 @@ def draw(p: QPainter, rect, model: CalendarModel) -> None:
             if is_today:
                 r = min(cr.width(), cr.height()) * TODAY_R
                 p.setPen(Qt.NoPen)
-                p.setBrush(QColor(theme.ACCENT))
+                p.setBrush(QColor(st.accent))
                 p.drawEllipse(cr.center(), r, r)
                 p.setPen(QColor(16, 18, 24))
                 p.setFont(theme.ui_font(L["fs"], bold=True))
             else:
                 weekend = di >= 5
-                p.setPen(QColor(theme.TEXT_DIM) if weekend else QColor(theme.TEXT))
+                p.setPen(QColor(st.dim) if weekend else QColor(st.text))
                 p.setFont(theme.ui_font(L["fs"]))
             p.drawText(cr, Qt.AlignCenter, str(day))
     p.restore()
@@ -221,7 +223,7 @@ class CalendarWidget(GlassWidget):
 
     # ---------- 绘制 / 交互 ----------
     def paint_content(self, p: QPainter):
-        draw(p, QRectF(self.rect()), self.model())
+        draw(p, QRectF(self.rect()), self.model(), style=self.style)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -239,4 +241,5 @@ class CalendarWidget(GlassWidget):
         super().mousePressEvent(e)
 
     def on_settings_changed(self):
+        super().on_settings_changed()   # 清样式缓存 + 重绘
         self.update()

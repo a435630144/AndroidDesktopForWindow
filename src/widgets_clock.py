@@ -1,81 +1,38 @@
 # -*- coding: utf-8 -*-
-"""时钟小组件：深色卡片 + 大号时间（含秒）+ 中文日期。
+"""时钟小组件：玻璃卡片 + 大号时间 + 中文日期（v9 V1 重写）。
 
-M3 排版重做（指导文档 §3.3，反馈 P3「时钟碰撞形状不对+推动无动画」）：
-catalog 一等公民化后 clock = 2×2 格（240×284 @125% DPI），排版按
-容器高度比例缩放——时间行 + 日期行两行式，秒数与时间同行（右侧小号），
-日期在下；任何跨度/DPI 下都按比例重排（on_resized 钩子），2×2 零溢出。
+v9 之前它用 `QLabel` + RichText 排版：玻璃化之后与四个新组件成了两套
+语言（一个新组件是自绘、两个老组件是控件）。这一版统一成
+**纯绘制**：
+
+    model  → `ClockModel`（纯数据，可构造任意时刻）
+    layout → `layout(rect, model)`（纯算术，测试与调试器都能量）
+    draw   → `draw(painter, rect, model, style)`（可画到 QImage 验像素）
+
+`ClockWidget` 只负责"每秒 tick 一次"，组件库预览复用同一个 `draw()`。
 """
-from PySide6.QtCore import QDateTime, QTimer, Qt
-from PySide6.QtWidgets import QLabel, QVBoxLayout
+from dataclasses import dataclass
+from typing import Optional
+
+from PySide6.QtCore import QDateTime, QPointF, QRectF, Qt, QTimer
+from PySide6.QtGui import QColor, QFontMetricsF, QPainter
 
 from . import theme
-from .widget_base import FloatingWidget
+from .widget_glass import GlassWidget
+from .widget_style import DEFAULT_STYLE, Style
+
+# 内边距：与 widget_glass.PAD 同一套语言（组件之间留白必须一致）
+PAD = 18
 
 
-class ClockWidget(FloatingWidget):
-    TYPE = "clock"
-
-    def __init__(self, storage, entry):
-        # interactive=False：纯展示，保持 NOACTIVATE，永不被激活/抢焦点
-        super().__init__(storage, entry, interactive=False)
-        lay = QVBoxLayout(self)
-        lay.setSpacing(0)
-        lay.addStretch(3)          # 时间行偏上（iOS 桌面 widget 语言）
-        self.time_label = QLabel()
-        self.time_label.setAlignment(Qt.AlignCenter)
-        self.time_label.setTextFormat(Qt.RichText)
-        # 字体设在控件上（富文本未覆盖的属性继承控件字体）；
-        # 注意：rich text 的 style 属性值内不能再出现双引号，否则 HTML 会被截断
-        self.time_label.setFont(theme.ui_font(46, bold=True))
-        lay.addWidget(self.time_label)
-        lay.addSpacing(6)
-        self.date_label = QLabel()
-        self.date_label.setAlignment(Qt.AlignCenter)
-        self.date_label.setFont(theme.ui_font(13))
-        self.date_label.setStyleSheet("color: %s; background: transparent;" % theme.rgba(theme.TEXT_DIM))
-        lay.addWidget(self.date_label)
-        lay.addStretch(4)          # 日期行偏下，与时间行拉开呼吸
-        self._fs = (46, 20, 13)    # (time, sec, date) 当前字号，_tick 复用
-        self._apply_fonts()
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._tick)
-        self._timer.start(1000)
-        self._tick()
-
-    # ---------- 比例排版（M3） ----------
-    def on_resized(self):
-        """尺寸变化（span 切换 / DPI 变化）→ 字号与边距按容器比例重算。"""
-        if not hasattr(self, "_fs"):
-            return    # __init__ 尚未走完（基类 setGeometry/show 期间的事件）
-        self._apply_fonts()
-
-    def _apply_fonts(self):
-        """字号 / 边距随容器高度比例缩放；容器高度 = 跨度行数 × 行高，
-        因此 2×2 与将来的 2×3 都自动适配，无需按跨度特判。"""
-        h = max(120, self.height())
-        w = max(180, self.width())
-        t = max(24, int(h * 0.21))          # 284 * 0.21 ≈ 59
-        s = max(12, int(t * 0.46))          # 秒数：时间字号的 46%
-        d = max(10, int(h * 0.075))         # 284 * 0.075 ≈ 21
-        self._fs = (t, s, d)
-        self.time_label.setFont(theme.ui_font(t, bold=True))
-        self.date_label.setFont(theme.ui_font(d))
-        lay = self.layout()
-        if lay is not None:
-            lay.setContentsMargins(int(w * 0.06), int(h * 0.10),
-                                   int(w * 0.06), int(h * 0.08))
-        self._tick()
-
-    def _tick(self):
-        now = QDateTime.currentDateTime()
-        t, s, _d = self._fs
-        self.time_label.setText(
-            '<span style="font-size:%dpx; color:#F2F3F5;">%s</span>'
-            '<span style="font-size:%dpx; color:#A8ADB5;">&nbsp;:%s</span>'
-            % (t, now.toString("HH:mm"), s, now.toString("ss")))
-        weekday = _WEEKDAYS_CN.get(now.toString("dddd"), now.toString("dddd"))
-        self.date_label.setText(now.toString("M月d日") + " " + weekday)
+@dataclass(frozen=True)
+class ClockModel:
+    hhmm: str
+    ss: str
+    date: str
+    weekday: str
+    show_seconds: bool = True
+    show_date: bool = True
 
 
 _WEEKDAYS_CN = {
@@ -84,3 +41,110 @@ _WEEKDAYS_CN = {
     "周一": "星期一", "周二": "星期二", "周三": "星期三",
     "周四": "星期四", "周五": "星期五", "周六": "星期六", "周日": "星期日",
 }
+
+
+def model_now(now: Optional[QDateTime] = None, settings: Optional[dict] = None) -> ClockModel:
+    """当前时刻 → 模型。`settings` 只关心 show_seconds / show_date 两个开关。"""
+    n = now if now is not None else QDateTime.currentDateTime()
+    s = settings if isinstance(settings, dict) else {}
+    show_sec = s.get("show_seconds", True)
+    show_date = s.get("show_date", True)
+    wd = n.toString("dddd")
+    return ClockModel(hhmm=n.toString("HH:mm"), ss=n.toString("ss"),
+                      date=n.toString("M月d日"),
+                      weekday=_WEEKDAYS_CN.get(wd, wd),
+                      show_seconds=bool(show_sec), show_date=bool(show_date))
+
+
+def _fonts(rect: QRectF):
+    """按容器高度比例出字号（2×2 与将来更大的跨度都自动适配）。"""
+    h = max(80.0, rect.height())
+    t = max(20.0, h * 0.215)
+    return (theme.ui_font(int(round(t)), bold=True),
+            theme.ui_font(max(9, int(round(t * 0.46)))),
+            theme.ui_font(max(9, int(round(h * 0.072)))))
+
+
+def layout(rect: QRectF, model: Optional[ClockModel] = None) -> dict:
+    """返回时间/秒/日期的绘制基线（纯算术，便于断言）。"""
+    rect = QRectF(rect)
+    f_time, f_sec, f_date = _fonts(rect)
+    fm_t = QFontMetricsF(f_time)
+    fm_s = QFontMetricsF(f_sec)
+    fm_d = QFontMetricsF(f_date)
+    cx = rect.center().x()
+    time_h = fm_t.height()
+    # 时间行中心：整体略高于几何中心（iOS 桌面 widget 的视觉重心）
+    time_cy = rect.center().y() - (fm_d.height() * 0.55 if (model is None or model.show_date) else 0)
+    sec_w = fm_s.horizontalAdvance("00") * 0.62 + 4
+    tw = fm_t.horizontalAdvance("00:00")
+    total = tw + (sec_w if (model is None or model.show_seconds) else 0)
+    x0 = cx - total / 2.0
+    baseline = time_cy + (fm_t.ascent() - fm_t.descent()) / 2.0
+    return {
+        "font_time": f_time, "font_sec": f_sec, "font_date": f_date,
+        "time_x": x0, "time_baseline": baseline,
+        "time_width": tw,
+        "sec_x": x0 + tw + 4, "sec_baseline": baseline,
+        "date_rect": QRectF(rect.left() + PAD,
+                            baseline + fm_d.ascent() + 8,
+                            max(1.0, rect.width() - PAD * 2), fm_d.height() + 4),
+        "time_height": time_h,
+    }
+
+
+def draw(painter: QPainter, rect, model: ClockModel, style: Optional[Style] = None) -> None:
+    """画时钟内容（不含玻璃底：底色由 `GlassWidget` 负责）。"""
+    style = style or DEFAULT_STYLE
+    L = layout(QRectF(rect), model)
+    p = painter
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setPen(QColor(style.text))
+    p.setFont(L["font_time"])
+    p.drawText(QPointF(L["time_x"], L["time_baseline"]), model.hhmm)
+    if model.show_seconds:
+        p.setPen(QColor(style.dim))
+        p.setFont(L["font_sec"])
+        p.drawText(QPointF(L["sec_x"], L["sec_baseline"]), model.ss)
+    if model.show_date:
+        p.setPen(QColor(style.dim))
+        p.setFont(L["font_date"])
+        p.drawText(L["date_rect"], Qt.AlignHCenter | Qt.AlignTop,
+                   ("%s %s" % (model.date, model.weekday)).strip())
+
+
+class ClockWidget(GlassWidget):
+    TYPE = "clock"
+
+    def __init__(self, storage, entry):
+        # interactive=False：纯展示，保持 NOACTIVATE，永不被激活/抢焦点
+        super().__init__(storage, entry, interactive=False)
+        self._model = model_now(settings=entry.get("settings"))
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(1000)
+
+    def _tick(self):
+        m = model_now(settings=self.entry.get("settings"))
+        # 秒数不显示时只在分钟变化时重绘（省掉 59/60 的无用重绘）
+        if m == self._model:
+            return
+        self._model = m
+        self.update()
+
+    def paint_content(self, p):
+        draw(p, QRectF(self.rect()), self._model, self.style)
+
+    def on_resized(self):
+        """尺寸变化（span 切换 / DPI 变化）：字号是比例算的，重绘即可。"""
+        if hasattr(self, "_model"):
+            self.update()
+
+
+def draw_preview(painter: QPainter, rect, dpr: float = 1.0) -> None:
+    """组件库缩略图：固定 09:41，避免预览每秒闪一次。"""
+    from .widget_glass import paint_glass, PREVIEW_RADIUS
+    rect = QRectF(rect)
+    paint_glass(painter, rect, PREVIEW_RADIUS)
+    m = ClockModel(hhmm="09:41", ss="07", date="10月21日", weekday="星期三")
+    draw(painter, rect, m)

@@ -72,7 +72,8 @@ def main(app):
     clk = widgets_clock.ClockWidget(st, st.widgets[0])
     clk_menu = clk._build_context_menu()
     texts = [a.text() for a in clk_menu.actions()]
-    check("S1 时钟没有「组件设置…」", all("组件设置" not in t for t in texts), str(texts))
+    # v9 V1：时钟有了自己的显示开关（显示秒 / 显示日期），入口随之出现
+    check("S1 时钟有「组件设置…」", any("组件设置" in t for t in texts), str(texts))
     clk.close()
 
     wx = widgets_weather.WeatherWidget(st, st.widgets[1])
@@ -83,19 +84,28 @@ def main(app):
     # ---------- S3 / S4：生成控件与初值 ----------
     spec = reg.get("weather")
     dlg = ws.WidgetSettingsDialog(spec, st.widgets[1], st)
-    edits = dlg.findChildren(QLineEdit)
-    checks = dlg.findChildren(QCheckBox)
-    check("S3 天气生成 1 个输入框 + 1 个开关", len(edits) == 1 and len(checks) == 1,
-          "lineedit=%d check=%d" % (len(edits), len(checks)))
-    check("S4 初值取 entry.settings.city", edits[0].text() == "上海",
-          repr(edits[0].text()))
-    check("S4b bool 缺省值来自 FieldSpec（True）", checks[0].isChecked() is True)
+    # v9：外观字段混进同一张表单（QSpinBox 内部含 QLineEdit，不能数控件），
+    # 按 key 精确断言"哪个字段用什么控件"
+    c = dlg._controls
+    check("S3 天气业务字段 = 输入框 + 开关",
+          isinstance(c["city"], QLineEdit) and isinstance(c["online"], QCheckBox),
+          "%s / %s" % (type(c["city"]).__name__, type(c["online"]).__name__))
+    check("S3b 外观字段 = 取色器 + 滑条 + 数字框",
+          isinstance(c["bg_color"], ws.ColorField)
+          and isinstance(c["bg_alpha"], ws.FloatField)
+          and hasattr(c["radius"], "setValue"),
+          "%s / %s / %s" % (type(c["bg_color"]).__name__,
+                            type(c["bg_alpha"]).__name__,
+                            type(c["radius"]).__name__))
+    check("S4 初值取 entry.settings.city", c["city"].text() == "上海",
+          repr(c["city"].text()))
+    check("S4b bool 缺省值来自 FieldSpec（True）", c["online"].isChecked() is True)
     dlg.close()
 
     # ---------- S5 / S6：应用落盘 ----------
     dlg2 = ws.WidgetSettingsDialog(spec, st.widgets[1], st)
-    dlg2.findChildren(QLineEdit)[0].setText("广州")
-    dlg2.findChildren(QCheckBox)[0].setChecked(False)
+    dlg2._controls["city"].setText("广州")
+    dlg2._controls["online"].setChecked(False)
     dlg2.apply()
     check("S5 应用后 entry.settings.city 更新",
           st.widgets[1]["settings"]["city"] == "广州",
@@ -122,6 +132,27 @@ def main(app):
               st.widgets[2]["settings"].get("week_start") == 6,
               repr(st.widgets[2]["settings"]))
     dlg3.close()
+
+    # ---------- S9：外观字段读写 + 恢复默认 ----------
+    dlg4 = ws.WidgetSettingsDialog(spec, st.widgets[1], st)
+    dlg4._controls["bg_color"].set_value("#3366CC")
+    dlg4._controls["bg_alpha"].set_value(0.45)
+    dlg4._controls["text_color"].set_value("#FFCC00")
+    dlg4._controls["radius"].setValue(26)
+    dlg4.apply()
+    got = st.widgets[1]["settings"]
+    check("S9a 背景色写入", got.get("bg_color") == "#3366CC", repr(got.get("bg_color")))
+    check("S9b 不透明度写入为浮点", abs(float(got.get("bg_alpha", 0)) - 0.45) < 1e-6,
+          repr(got.get("bg_alpha")))
+    check("S9c 文字色写入", got.get("text_color") == "#FFCC00", repr(got.get("text_color")))
+    check("S9d 圆角写入", got.get("radius") == 26, repr(got.get("radius")))
+    dlg4._on_reset()
+    after = dlg4.read_values()
+    check("S9e 恢复默认把外观字段还原",
+          after["bg_color"] == "" and abs(after["bg_alpha"] - 1.0) < 1e-6
+          and after["radius"] == 0,
+          str({k: after[k] for k in ("bg_color", "bg_alpha", "radius")}))
+    dlg4.close()
 
     # ---------- S8：回调 ----------
     calls = []

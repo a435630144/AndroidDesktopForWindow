@@ -27,6 +27,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPen
 
 from . import effects
 from . import theme
+from .widget_style import DEFAULT_STYLE, Style
 from .widget_glass import PAD, GlassWidget
 
 RING_STROKE_RATIO = 0.18      # 环线宽 / 半径
@@ -158,14 +159,14 @@ def _clamp(v: float) -> float:
     return max(0.0, min(100.0, float(v)))
 
 
-def progress_color(value: float) -> QColor:
+def progress_color(value: float, style: Optional[Style] = None) -> QColor:
     """负载分档配色：正常 = ACCENT、偏高 = 琥珀、危险 = DANGER。"""
     v = _clamp(value)
     if v >= DANGER_AT:
         return QColor(theme.DANGER)
     if v >= WARN_AT:
         return QColor(232, 176, 88)
-    return QColor(theme.ACCENT)
+    return QColor((style or DEFAULT_STYLE).accent)
 
 
 RING_KEYS = ("cpu", "mem", "disk")
@@ -214,8 +215,9 @@ def _fmt(value: Optional[float]) -> str:
     return "--" if value is None else "%d%%" % int(round(value))
 
 
-def draw(p: QPainter, rect, snap: Snapshot, smooth: Optional[Dict] = None) -> None:
+def draw(p: QPainter, rect, snap: Snapshot, smooth: Optional[Dict] = None, style: Optional[Style] = None) -> None:
     """把快照画进 rect。`smooth` 传动画中的插值（缺省用原始值）。"""
+    st = style or DEFAULT_STYLE
     rect = QRectF(rect)
     if rect.width() <= 4 or rect.height() <= 4:
         return
@@ -239,7 +241,7 @@ def draw(p: QPainter, rect, snap: Snapshot, smooth: Optional[Dict] = None) -> No
 
         # 进度弧（从 12 点顺时针）
         if val is not None and val > 0.5:
-            p.setPen(QPen(progress_color(val), pen_w, Qt.SolidLine, Qt.RoundCap))
+            p.setPen(QPen(progress_color(val, st), pen_w, Qt.SolidLine, Qt.RoundCap))
             p.drawArc(box, 90 * 16, -int(round(val / 100.0 * 360 * 16)))
 
         # 环心数值（太小就不写字，避免糊成一团）
@@ -274,7 +276,7 @@ def draw(p: QPainter, rect, snap: Snapshot, smooth: Optional[Dict] = None) -> No
             raw = getattr(snap, key)
             val = raw if raw is None else _clamp(sm.get(key, raw))
             p.setFont(theme.ui_font(max(11, int(min(row_h * 0.52, 30))), bold=True))
-            p.setPen(QColor(theme.TEXT) if val is None else progress_color(val))
+            p.setPen(QColor(st.text) if val is None else progress_color(val, st))
             p.drawText(QRectF(col_x, y + row_h * 0.38, col_w, row_h * 0.62),
                        Qt.AlignLeft | Qt.AlignVCenter,
                        _fmt(None if raw is None else val))
@@ -340,9 +342,10 @@ class MonitorWidget(GlassWidget):
 
     # ---------- 绘制 ----------
     def paint_content(self, p: QPainter):
-        draw(p, QRectF(self.rect()), self._snap, self._smooth)
+        draw(p, QRectF(self.rect()), self._snap, self._smooth, style=self.style)
 
     def on_settings_changed(self):
+        super().on_settings_changed()   # 清样式缓存 + 重绘
         self._tick()
 
     def closeEvent(self, e):

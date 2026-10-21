@@ -72,6 +72,14 @@ DEFAULT_SETTINGS = {
     "grid_origin": None,       # [x, y]，逻辑 px；manual 时生效
     "layout_mode": "grid",     # 布局模式：grid 网格（默认）| free 无界
     "icon_px": 96,             # 无界模式图标像素（网格模式置灰，由档位决定）
+    # v9 V2：每页排序规则。默认关 = 所有页跟随 auto_arrange；
+    # 打开后 page_rules 逐页覆盖（缺省仍跟随全局）。判定唯一入口
+    # `page_rules.mode_for()`。
+    "page_rules_custom": False,
+    "page_rules": {},
+    # v9 V4：交互方式。"windows" = 单击选中/双击打开/框选（默认，现行语义）；
+    # "mobile" = 单击直接启动、长按出菜单、滑动翻页（手机语义）。
+    "interaction_mode": "windows",
     "auto_arrange": False,     # 自动排列：False=自由移动（落 target 原位留空），
                                # True=拖动后 reflow 递进（旧 M2 行为）。
                                # 2026-10-19 反馈 3：改为右键「查看 ▸ 自动排列
@@ -548,7 +556,7 @@ class Storage:
             used.add((col, row))
             e["col"], e["row"] = col, row
 
-    def tidy_layout(self):
+    def tidy_layout(self, pages=None):
         """显式整理：按 (row, col) 排序后顺序铺满为连续网格（用户主动触发）。
 
         v6 §1.3：无界模式没有网格可铺——跳过（用户要整齐就切回网格模式）。
@@ -556,12 +564,35 @@ class Storage:
         2026-10-19 反馈 5：**必须避开小组件占位**。旧实现直接 `i % columns`
         铺满前 N 格，图标压在时钟/便签/面板上——整理一次桌面就花一次。
         与 pack_layout 同一条避让语义（组件是一等公民，占位不可覆盖）。
+
+        v9 V2：`pages` 给定时**逐页整理**（只动这些页，每页从自己的首行
+        起排）；`None` = 沿用旧的全局铺满。每页规则开启后，"自动排列"
+        只该整理自动页，自由页一格不动。
         """
         from . import grid_flow
         if grid_flow.free_mode(self):
             return
         cols = max(2, int(self.columns))
         used = set(grid_flow.widget_cells(self))   # 组件占位（不可覆盖）
+        if pages is not None:
+            rpp = grid_flow.rows_per_page()
+            selected = {max(0, int(p)) for p in pages}
+            for page in sorted(selected):
+                group = [e for e in self._data["layout"]
+                         if grid_flow.page_of(int(e.get("row", 0) or 0), rpp) == page]
+                group.sort(key=lambda e: (e.get("row", 0), e.get("col", 0)))
+                col, row = 0, page * rpp
+                for e in group:
+                    while (col, row) in used:
+                        col += 1
+                        if col >= cols:
+                            col, row = 0, row + 1
+                    e["col"], e["row"] = col, row
+                    used.add((col, row))
+                    col += 1
+                    if col >= cols:
+                        col, row = 0, row + 1
+            return
         entries = sorted(self._data["layout"],
                          key=lambda e: (e.get("row", 0), e.get("col", 0)))
         col = row = 0

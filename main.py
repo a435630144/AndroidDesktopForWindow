@@ -66,12 +66,11 @@ from PySide6.QtGui import QIcon                    # noqa: E402
 from PySide6.QtWidgets import QApplication         # noqa: E402
 
 from src import autostart                          # noqa: E402
-from src import widget_center                      # noqa: E402
 from src import win32_layer                        # noqa: E402
 from src.add_apps_dialog import AddAppsDialog      # noqa: E402
 from src.desktop_window import DesktopWindow       # noqa: E402
 from src.paths import asset_path, ensure_app_dirs  # noqa: E402
-from src.settings_dialog import SettingsDialog     # noqa: E402
+from src.settings_dialog import SettingsDialog, open_settings   # noqa: E402
 from src.single_instance import SingleInstance     # noqa: E402
 from src.storage import Storage                    # noqa: E402
 from src.tray import SystemTray                    # noqa: E402
@@ -121,9 +120,11 @@ def main() -> int:
     window.on_widget_grid_changed()
 
     tray = SystemTray(window, storage, layer)
-    tray.openSettings = lambda: SettingsDialog(window, storage, layer).exec()
+    # v9 V2：设置面板改单例 + 非模态（托盘/桌面右键/组件库共用同一个窗口）
+    tray.openSettings = lambda: open_settings(window, storage, layer)
     tray.openAddApps = lambda: AddAppsDialog(window).exec()
-    tray.openWidgetCenter = lambda: widget_center.open_center(layer, window)
+    tray.openWidgetCenter = lambda: open_settings(window, storage, layer,
+                                                 page="widgets")
     window.openSettingsRequested.connect(tray.openSettings)
     window.openAddAppsRequested.connect(tray.openAddApps)
     window.openWidgetCenterRequested.connect(tray.openWidgetCenter)
