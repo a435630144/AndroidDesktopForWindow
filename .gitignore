@@ -34,3 +34,6 @@ desktop.ini
 
 # ---- WorkBuddy ----
 .workbuddy/
+
+# ---- README 动图的中间产物（tools/make_readme_anim.py 生成）----
+tools/_anim/

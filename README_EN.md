@@ -10,7 +10,9 @@ English | [简体中文](README.md)
 
 ---
 
-A third-party desktop organizer / beautifier for Windows (demo), in the spirit of Tencent Desktop Manager. It mounts its own grid layer above the native desktop and replaces native icons with a fully controlled rendering layer: positions, animations, folders, and widgets are all yours to define.
+A third-party desktop organizer / beautifier for Windows in the spirit of Tencent Desktop Manager, with a **phone-style UI and interaction model**: it mounts its own grid layer above the native desktop and replaces native icons with a fully controlled rendering layer — positions, animations, folders and widgets are all yours to define.
+
+Despite the name, this is **far past the prototype stage**: installer, tray residency, crash logging, single-instance guard, auto re-attach watchdog, **79 test files / ~1900 assertions**, plus a full dev log and handover guide ([DEVLOG.md](DEVLOG.md) / [HANDOVER.md](HANDOVER.md), both Chinese). `DesktopOrganizerDemo` is a legacy package name (install dir, single-instance key and registry entries hang off it) — renaming costs more than it buys.
 
 <p align="center"><img src="docs/images/01-desktop.png" width="900" alt="The desktop: Android-style icon grid with anchored widgets"></p>
 
@@ -36,7 +38,7 @@ A third-party desktop organizer / beautifier for Windows (demo), in the spirit o
 
 ## 📸 Screenshots
 
-> Every image below is rendered off-screen from the **real widgets** by [`tools/shot_readme.py`](tools/shot_readme.py) — the grid, the glass widgets and the context menus all go through the same drawing code the product runs. No mock-ups.
+> Every image below is rendered off-screen from the **real widgets** by [`tools/shot_readme.py`](tools/shot_readme.py) — the grid, the glass widgets and the context menus all go through the same drawing code the product runs. No mock-ups. The two animated clips are recorded frame by frame from that same material by [`tools/make_readme_anim.py`](tools/make_readme_anim.py) (HTML timeline + headless screenshots + Pillow).
 
 **Seven desktop widgets**: clock / sticky notes / system monitor / to-do / calendar / weather / desktop panel — one glass material and one typographic scale, sized by grid span
 
@@ -57,6 +59,16 @@ A third-party desktop organizer / beautifier for Windows (demo), in the spirit o
 **Phone input mode**: with Settings ▸ Mode ▸ Input set to "Phone", a single tap launches, holding for 450 ms opens the menu, and continuing to drag after the hold turns into a drag. Multi-select puts a checkmark on each icon; right-click opens the batch menu (merge into folder / move to page / delete selected); swiping on empty space flips pages
 
 <p align="center"><img src="docs/images/06-mobile.png" width="900" alt="Phone input mode: multi-select and batch menu"></p>
+
+**Android-style folders**: the icon itself shows up to four member thumbnails (layout adapts to 1 / 2 / 3 / 4 members); tapping opens a glass popup whose grid shrinks with the member count and paginates horizontally once a page is full. Members can be dragged out, desktop icons can be dragged in
+
+<p align="center"><img src="docs/images/07-folder.png" width="900" alt="Android-style folders: thumbnails and the expanded glass popup"></p>
+
+<p align="center"><img src="docs/images/08-folder-open.gif" width="640" alt="Opening a folder: the glass sheet springs out from the icon"></p>
+
+**Android-style paging**: overflowing icons paginate automatically; swipe left/right to flip, with the page dots following along. The wheel and dragging to the screen edge flip too, and each page can independently opt in or out of auto-arrange
+
+<p align="center"><img src="docs/images/09-paging.gif" width="640" alt="Desktop paging: swipe to flip"></p>
 
 ## 🛠️ Tech Stack & Dependency Versions
 

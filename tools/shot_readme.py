@@ -9,6 +9,7 @@
   04-widget-center.png  设置 ▸ 组件库（融合后的分页）
   05-settings.png       设置 ▸ 布局：分页自动排列 + 图标尺寸
   06-mobile.png         手机模式：多选标记 + 批量菜单 + 图标右键菜单
+  07-folder.png         安卓式文件夹：图标缩略 + 展开后的玻璃弹窗
 
 ## 为什么不是"截屏"
 
@@ -55,6 +56,16 @@ DPR = 2
 # 必须用**绝对路径**：`QFileIconProvider.icon(QFileInfo("notepad.exe"))`
 # 找不到文件就退成"空白文档"通用图标（截图里一排蓝底白纸就是它）。
 _SYS = "C:/Windows/System32/"
+
+# 出图用的壁纸：Windows 自带的深色 Bloom（比自造渐变有层次，也更像真机）。
+# 顺序即优先级；一个都找不到时 `_blank()` 退回程序生成的渐变。
+WALLPAPERS = [
+    "C:/Windows/Web/Wallpaper/ThemeA/img20.jpg",     # Win11 紫粉光环：深浅都有，玻璃有层次
+    "C:/Windows/Web/Wallpaper/Windows/img19.jpg",    # 深色 Bloom（更接近默认桌面，对比略弱）
+    "C:/Windows/Web/Wallpaper/Windows/img0.jpg",
+]
+_WALLPAPER_CACHE = {}
+
 DEMO_APPS = [
     ("记事本", _SYS + "notepad.exe"),
     ("计算器", _SYS + "calc.exe"),
@@ -79,6 +90,31 @@ def _qapp():
     return QApplication.instance() or QApplication(sys.argv)
 
 
+_WALL = None
+
+
+def _wall(rect):
+    """按窗口的**真实位置**从壁纸里裁一块，顶替抓屏。
+
+    文件夹弹窗与小组件的玻璃背板都来自 `effects.grab_backdrop()`——真机上
+    抓的是用户屏幕。出图脚本这么做等于把用户的桌面内容吸进仓库，所以整条
+    链路换成同一张壁纸；**按 rect 位置裁**才能让"组件背后是壁纸的那一块"
+    这件事成立（否则所有玻璃都透同一块颜色，看起来像一块黑板）。
+    """
+    global _WALL
+    if _WALL is None:
+        _WALL = _blank(W, H)
+    from PySide6.QtGui import QPixmap
+    pm = QPixmap.fromImage(_WALL)
+    w = min(max(8, int(rect.width() * DPR)), pm.width())
+    h = min(max(8, int(rect.height() * DPR)), pm.height())
+    x0 = max(0, min(int(rect.x() * DPR), pm.width() - w))
+    y0 = max(0, min(int(rect.y() * DPR), pm.height() - h))
+    out = pm.copy(x0, y0, w, h)
+    out.setDevicePixelRatio(DPR)
+    return out
+
+
 def _isolate():
     """把"动桌面"的两个入口换成 noop，并造一份干净的临时 state。
 
@@ -87,9 +123,12 @@ def _isolate():
     """
     import src.win32_layer as wl
     import src.widget_base as wb
+    import src.effects as fx
     wl.attach_to_desktop = lambda *a, **k: False
     wb.attach_to_desktop = lambda *a, **k: False
     wl.enforce_band_order = lambda *a, **k: None
+    # 弹窗玻璃背板：不抓屏，改喂假壁纸（见 _wall 的说明）
+    fx.grab_backdrop = lambda rect: _wall(rect)
 
 
 def _storage(layout=None, widgets=None, **settings):
@@ -113,17 +152,66 @@ def _storage(layout=None, widgets=None, **settings):
     return st
 
 
-def _blank(w=W, h=H, wallpaper=True):
-    """新画布 + 假壁纸。壁纸只是让玻璃有东西可透，不要抢戏。"""
+def _wallpaper(w, h):
+    """系统自带的 Windows 壁纸（按画布尺寸 cover 裁剪）。
+
+    自造的"三团柔光渐变"看久了确实单调，而且不像真机。这里直接读
+    `C:/Windows/Web/Wallpaper` 里的官方壁纸：深色 Bloom 底子最能衬出
+    玻璃的层次，也最接近用户把桌面整理工具挂在真桌面上的样子。
+
+    找不到文件（精简系统 / CI）时返回 None，调用方退回渐变——出图脚本
+    不该因为少一张壁纸就跑不起来。
+    """
     from PySide6.QtCore import Qt
-    from PySide6.QtGui import QColor, QImage, QLinearGradient, QRadialGradient
-    img = QImage(int(w * DPR), int(h * DPR), QImage.Format_ARGB32_Premultiplied)
+    from PySide6.QtGui import QImage
+    tw, th = int(w * DPR), int(h * DPR)
+    chosen = os.environ.get("SHOT_WALL")
+    for path in ([chosen] if chosen else WALLPAPERS):
+        p = Path(path)
+        if not p.exists():
+            continue
+        src = QImage(str(p))
+        if src.isNull():
+            continue
+        key = (path, tw, th)
+        if key in _WALLPAPER_CACHE:
+            return _WALLPAPER_CACHE[key]
+        scaled = src.scaled(tw, th, Qt.KeepAspectRatioByExpanding,
+                            Qt.SmoothTransformation)
+        x = max(0, (scaled.width() - tw) // 2)
+        y = max(0, (scaled.height() - th) // 2)
+        _WALLPAPER_CACHE[key] = scaled.copy(x, y, tw, th)
+        return _WALLPAPER_CACHE[key]
+    return None
+
+
+def _blank(w=W, h=H, wallpaper=True):
+    """新画布 + 壁纸。壁纸只是让玻璃有东西可透，不要抢戏。"""
+    from PySide6.QtCore import QRectF, Qt
+    from PySide6.QtGui import QColor, QImage, QLinearGradient, QPainter, QRadialGradient
+    tw, th = int(w * DPR), int(h * DPR)
+    img = QImage(tw, th, QImage.Format_ARGB32_Premultiplied)
+    if not wallpaper:
+        img.setDevicePixelRatio(DPR)
+        img.fill(QColor("#12141c"))
+        return img
+
+    shot = _wallpaper(w, h)
+    if shot is not None:
+        # 先按**物理像素**画（此时 DPR 还是 1，坐标不用换算），画完再标 DPR
+        img.fill(QColor("#0d1018"))
+        p = QPainter(img)
+        p.drawImage(0, 0, shot)
+        # 压一层极淡的深色：真实壁纸比自造渐变亮，图标标签与标题字才压得住
+        p.fillRect(0, 0, tw, th, QColor(6, 9, 18, 34))
+        p.end()
+        img.setDevicePixelRatio(DPR)
+        return img
+
     img.setDevicePixelRatio(DPR)
     img.fill(QColor("#12141c"))
-    if not wallpaper:
-        return img
-    from PySide6.QtGui import QPainter
-    p = QPainter(img)
+    from PySide6.QtGui import QPainter as _P
+    p = _P(img)
     p.setRenderHint(QPainter.Antialiasing, True)
     base = QLinearGradient(0, 0, w * 0.85, h)
     base.setColorAt(0.00, QColor("#243c78"))
@@ -201,12 +289,19 @@ def _snap(widget, flags=None):
     return pm
 
 
-def _label(p, text, x, y, size=13, color="#AEB4C2", bold=False, w=900):
+def _label(p, text, x, y, size=13, color="#AEB4C2", bold=False, w=900,
+           shadow=False):
+    """画一行说明文字。`shadow=True` 给压在壁纸亮区的字加一层暗底，
+    否则浅灰字落在紫粉高光上几乎看不见（07 的说明就吃过这个亏）。"""
     from PySide6.QtCore import QRectF, Qt
     from PySide6.QtGui import QColor
     from src import theme
-    p.setPen(QColor(color))
     p.setFont(theme.ui_font(size, bold=bold))
+    if shadow:
+        p.setPen(QColor(0, 0, 0, 150))
+        p.drawText(QRectF(x, y + 1, w, size + 12), Qt.AlignLeft | Qt.AlignVCenter,
+                   text)
+    p.setPen(QColor(color))
     p.drawText(QRectF(x, y, w, size + 12), Qt.AlignLeft | Qt.AlignVCenter, text)
 
 
@@ -252,18 +347,16 @@ def _demo_icons():
             "app": {"name": name, "target": exe, "kind": "app"},
         })
     # 一个文件夹：整理能力最直观的证据（2×2 迷你图标 + 液玻弹窗都是自绘的）
+    # 注意 `apps` 里放的是**纯 app 字典**（无外层 {"id","type","app"} 包装）——
+    # `_paint_folder` 与弹窗都直接把它当 app 用，包一层会让图标退成字母占位。
     out.append({
         "id": "folder1", "type": "folder", "name": "系统工具",
-        "col": 1, "row": 3, "app": None,
+        "col": 1, "row": 3, "app": {},
         "apps": [
-            {"id": "f1", "type": "app", "app": {
-                "name": "记事本", "target": _SYS + "notepad.exe", "kind": "app"}},
-            {"id": "f2", "type": "app", "app": {
-                "name": "计算器", "target": _SYS + "calc.exe", "kind": "app"}},
-            {"id": "f3", "type": "app", "app": {
-                "name": "放大镜", "target": _SYS + "magnify.exe", "kind": "app"}},
-            {"id": "f4", "type": "app", "app": {
-                "name": "字符映射表", "target": _SYS + "charmap.exe", "kind": "app"}},
+            {"name": "记事本", "target": _SYS + "notepad.exe", "kind": "app"},
+            {"name": "计算器", "target": _SYS + "calc.exe", "kind": "app"},
+            {"name": "放大镜", "target": _SYS + "magnify.exe", "kind": "app"},
+            {"name": "字符映射表", "target": _SYS + "charmap.exe", "kind": "app"},
         ],
     })
     return out
@@ -277,21 +370,24 @@ def shot_desktop():
 
     from src.desktop_window import DesktopWindow
 
-    # 锚定（非悬浮）组件：只铺 tint 不画 × / 手柄，才是"融入桌面"的常态
+    # 锚定（非悬浮）组件：只铺 tint 不画 × / 手柄，才是"融入桌面"的常态。
+    # 高度按内容给：便签 4 行刚好放下正文（7 行满高会留一大片空底）；
+    # 时钟与监控各 3 行、**中间空一整行**——贴在一起会被看成一整块。
+    # 3 行也是监控保持 row 布局（三环横排 + 环下标签）的下限：4 列 × 2 行
+    # 宽高比 1.86 会翻进 width 版，三环挤左半边反而更乱。
     widgets = [
         {"id": "w_notes", "type": "notes", "anchored": True,
-         "col": 6, "row": 0, "colspan": 4, "rowspan": 7,
+         "col": 6, "row": 0, "colspan": 4, "rowspan": 4,
          "settings": {"bg_alpha": 0.8},
          "text": "周五之前\n1. 改 Readme 的功能截图\n2. 跑一遍全量回归\n"
                  "3. 把 v9a 发给体验用户\n4. 收一遍手机模式的操作反馈\n\n"
-                 "备注\n· 默认统一右键配置\n· 每页规则等用户确认后再放开\n"
-                 "· 组件皮肤色板要再过一轮\n· 玻璃底在亮壁纸上再压一点\n"
-                 "· 启动耗时目标 1.2s 以内\n· 文档里的截图换成本轮新图"},
+                 "备注\n· 每页规则等确认后再放开\n· 玻璃底在亮壁纸上再压一点\n"
+                 "· 启动耗时目标 1.2s 以内\n· 文档截图换成本轮新图"},
         {"id": "w_clock", "type": "clock", "anchored": True,
          "col": 11, "row": 0, "colspan": 4, "rowspan": 3,
          "settings": {"bg_alpha": 0.8}},
         {"id": "w_monitor", "type": "monitor", "anchored": True,
-         "col": 11, "row": 3, "colspan": 4, "rowspan": 4,
+         "col": 11, "row": 4, "colspan": 4, "rowspan": 3,
          "settings": {"bg_alpha": 0.8}},
     ]
     st = _storage(layout=_demo_icons(), widgets=widgets)
@@ -467,7 +563,7 @@ def shot_style():
     pw, ph = target_w, int(panel.height() * scale)
     p.drawPixmap(760, 132, pw, ph, panel)
     _label(p, "组件右键 ▸「组件设置…」（底部「外观」段）", 760, 132 + ph + 10,
-           13, "#93A0B8", w=620)
+           13, "#D7DEEA", w=620, shadow=True)
 
     p.end()
     _save(img, "03-style.png")
@@ -661,7 +757,8 @@ def shot_mobile():
     for entry, sel, cap in chips:
         chip = _icon_chip(entry, sel)
         p.drawPixmap(x, 124, chip)
-        _label(p, cap, x - 8, 124 + chip.height() / DPR + 4, 12, "#CBD5E6", w=160)
+        _label(p, cap, x - 8, 124 + chip.height() / DPR + 4, 12, "#D7DEEA",
+               w=170, shadow=True)
         x += 172
 
     # 下：两个菜单（grab 出来的图自带 DPR，用逻辑尺寸定位）
@@ -684,12 +781,160 @@ def shot_mobile():
             "· 空白处左右滑直接翻页（不出选框）"]
     ty = 292
     for line in tips:
-        _label(p, line, 900, ty, 14, "#B9C4D6", w=480)
+        _label(p, line, 900, ty, 14, "#E2E8F2", w=480, shadow=True)
         ty += 34
 
     p.end()
     _save(img, "06-mobile.png")
     _close_all(win)
+
+
+# ---------------------------------------------------------------- 图 7：安卓式文件夹
+
+# 成员数不同 -> 图标里的迷你缩略自动换排布（1 居中 / 2 并排 / 3 三角 / 4 田字）
+# (文件夹名, 说明, 成员, 色板)
+_FOLDER_SETS = [
+    ("文档", "1 个成员 · 居中", [("记事本", "notepad.exe")], "#39649F"),
+    ("开发", "2 个成员 · 并排",
+     [("计算器", "calc.exe"), ("命令提示符", "cmd.exe")], "#2C7E6B"),
+    ("工具", "3 个成员 · 三角",
+     [("任务管理器", "taskmgr.exe"), ("放大镜", "magnify.exe"),
+      ("屏幕键盘", "osk.exe")], "#7A55A0"),
+    ("系统", "4 个成员 · 田字",
+     [("字符映射表", "charmap.exe"), ("磁盘清理", "cleanmgr.exe"),
+      ("远程桌面", "mstsc.exe"), ("系统信息", "msinfo32.exe")], "#A96B2A"),
+]
+
+_FOLDER_FULL = [("记事本", "notepad.exe"), ("计算器", "calc.exe"),
+                ("命令提示符", "cmd.exe"), ("任务管理器", "taskmgr.exe"),
+                ("放大镜", "magnify.exe"), ("屏幕键盘", "osk.exe"),
+                ("字符映射表", "charmap.exe"), ("磁盘清理", "cleanmgr.exe"),
+                ("远程桌面", "mstsc.exe")]
+
+
+def _folder_entry(fid, name, members, tint=None):
+    """文件夹条目。`tint` 就是用户在色板里选的那个颜色，图标与弹窗共用。
+
+    `apps` 必须是**纯 app 字典**（`{"name","target"}`）——`_paint_folder`
+    与弹窗都直接把它当 app 交给 `appsource.draw_icon`，包一层外层结构会
+    让缩略图全退成字母占位块。`app` 用空 dict 而非 None（坑 #39）。
+    """
+    e = {"id": fid, "type": "folder", "name": name, "app": {},
+         "apps": [{"name": n, "target": _SYS + exe, "kind": "app"}
+                  for n, exe in members]}
+    if tint:
+        e["tint"] = tint
+    return e
+
+
+def _render_icon(entry, size=96):
+    """单个 AppIcon 的透明底渲染（只画内容，不带窗口底色）。"""
+    from PySide6.QtWidgets import QWidget
+
+    from src.iconwidget import AppIcon
+    icon = AppIcon(entry, size, parent=None)
+    icon.setAttribute(Qt.WA_DontShowOnScreen, True)
+    icon.show()
+    QApplication.processEvents()
+    pm = _snap(icon, QWidget.DrawChildren)
+    icon.close()
+    icon.deleteLater()
+    return pm
+
+
+def _render_popup(storage, entry):
+    """真实 FolderPopup 的稳态图（透明底）。
+
+    两个必须处理的地方：
+
+      1. `__init__` 里 `_open_animate()` 会直接 `show()`——出图时临时把
+         `show` 换掉，否则用户屏幕上会闪一个真弹窗；
+      2. 成员是错峰入场的（`appear_in(120 + i*45)`，淡入 260ms），不等
+         就跑会把透明的成员画出来。等足 760ms 再把 `_appear` 兜底归 1。
+    """
+    from PySide6.QtCore import QRect
+    from PySide6.QtTest import QTest
+
+    from src.folder_popup import FolderPopup
+    from src.iconwidget import AppIcon
+
+    # 给一个"锚点图标"的假位置：弹窗按 place_beside 落在画布左半区，
+    # 玻璃背板就能裁到壁纸的深蓝区（不传的话按屏幕居中，可能裁到屏幕外）
+    anchor = QRect(300, 200, 96, 96)
+    orig = FolderPopup.show
+    FolderPopup.show = lambda self: None
+    try:
+        popup = FolderPopup(storage, entry, anchor)
+    finally:
+        FolderPopup.show = orig
+    try:
+        getattr(popup, "_open_anim", None).stop()
+    except Exception:       # noqa: BLE001  （动画可能已结束/被回收）
+        pass
+    popup._zoom = 1.0
+    popup.setWindowOpacity(1.0)
+    popup.setAttribute(Qt.WA_DontShowOnScreen, True)
+    popup.show()
+    QApplication.processEvents()
+    QTest.qWait(760)
+    for icon in popup.findChildren(AppIcon):
+        icon._appear = 1.0
+        icon.update()
+    QApplication.processEvents()
+    return popup, _snap(popup)
+
+
+def shot_folder():
+    """安卓式文件夹：图标缩略 + 展开后的玻璃弹窗（两种尺寸）。"""
+    from PySide6.QtGui import QPainter
+
+    entries = [_folder_entry("fd%d" % i, name, members, tint)
+               for i, (name, _cap, members, tint) in enumerate(_FOLDER_SETS)]
+    three = _folder_entry("fd_three", "常用", _FOLDER_FULL[:3], "#2C7E6B")
+    full = _folder_entry("fd_full", "系统工具", _FOLDER_FULL, "#39649F")
+    st = _storage(layout=entries + [three, full])
+
+    img = _blank(W, 706)
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    _label(p, "安卓式的桌面文件夹", 52, 36, 27, "#F4F7FD", True)
+    _label(p, "图标里直接就是成员缩略（1 / 2 / 3 / 4 个自动换排布）；点开是玻璃弹窗，"
+              "格子按成员数收缩、超过一页就左右翻页", 52, 78, 14, "#9DAABF", w=1240)
+
+    # 上排：四种成员数的文件夹图标（图标自带的 label 就是文件夹名）
+    x = 64
+    for (_name, cap, _m, _t), entry in zip(_FOLDER_SETS, entries):
+        pm = _render_icon(entry, 96)
+        p.drawPixmap(x, 130, pm)
+        ih = int(pm.deviceIndependentSize().height())
+        _label(p, cap, x - 20, 130 + ih + 2, 12, "#CBD5E6", w=160)
+        x += 172
+
+    # 下排：两个真实弹窗——3 成员收缩成 3×2、9 成员满页 3×3
+    py = 318
+    for i, (entry, cap) in enumerate((
+            (three, "3 个成员 → 3 × 2（按数量收缩，最小 2 × 2）"),
+            (full, "9 个成员 → 3 × 3 满页（再多就左右翻页）"))):
+        popup, pm = _render_popup(st, entry)
+        px = 60 + i * 330
+        p.drawPixmap(px, py, pm)
+        ph = int(pm.deviceIndependentSize().height())
+        _label(p, cap, px - 12, py + ph + 6, 13, "#D7DEEA", w=340, shadow=True)
+        popup.close()
+
+    # 右侧：这套语言里值得说清的四件事
+    tips = ["· 右上角 ○ 换文件夹颜色，图标与弹窗同步变色",
+            "· 从弹窗里把成员拖出去 = 放回桌面",
+            "· 把桌面图标拖到文件夹图标上 = 并入",
+            "· 弹窗里成员名直接显示，不用悬停猜",
+            "· 一页装满了，左右滑动翻页（和桌面分页同一手感）"]
+    ty = 330
+    for line in tips:
+        _label(p, line, 760, ty, 14, "#B9C4D6", w=640)
+        ty += 36
+
+    p.end()
+    _save(img, "07-folder.png")
 
 
 # ---------------------------------------------------------------- 主流程
@@ -701,6 +946,7 @@ SHOTS = [
     ("04", "04-widget-center.png", "设置▸组件库", lambda: shot_widget_center()),
     ("05", "05-settings.png", "设置▸布局与网格", lambda: shot_settings_layout()),
     ("06", "06-mobile.png", "手机模式", lambda: shot_mobile()),
+    ("07", "07-folder.png", "安卓式文件夹", lambda: shot_folder()),
 ]
 
 
