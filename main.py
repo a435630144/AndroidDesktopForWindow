@@ -66,6 +66,7 @@ from PySide6.QtGui import QIcon                    # noqa: E402
 from PySide6.QtWidgets import QApplication         # noqa: E402
 
 from src import autostart                          # noqa: E402
+from src import widget_center                      # noqa: E402
 from src import win32_layer                        # noqa: E402
 from src.add_apps_dialog import AddAppsDialog      # noqa: E402
 from src.desktop_window import DesktopWindow       # noqa: E402
@@ -122,8 +123,10 @@ def main() -> int:
     tray = SystemTray(window, storage, layer)
     tray.openSettings = lambda: SettingsDialog(window, storage, layer).exec()
     tray.openAddApps = lambda: AddAppsDialog(window).exec()
+    tray.openWidgetCenter = lambda: widget_center.open_center(layer, window)
     window.openSettingsRequested.connect(tray.openSettings)
     window.openAddAppsRequested.connect(tray.openAddApps)
+    window.openWidgetCenterRequested.connect(tray.openWidgetCenter)
     window.quitRequested.connect(app.quit)
     tray.show()
 

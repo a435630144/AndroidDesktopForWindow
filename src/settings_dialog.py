@@ -302,7 +302,21 @@ class SettingsDialog(QDialog):
         self._row(c, card, "仅小组件模式",
                   self.chk_widgets_only,
                   "只显示小组件：全部组件无界摆放、隐藏桌面图标")
+
+        # v8 C3：组件库入口（第三处：托盘 / 桌面右键 / 这里）
+        btn_center = QPushButton("组件库…")
+        btn_center.setStyleSheet(theme.BUTTON_QSS)
+        btn_center.clicked.connect(self._open_widget_center)
+        self._row(c, card, "组件库", btn_center, "浏览、预览并添加桌面组件")
         lay.addWidget(card)
+
+    def _open_widget_center(self):
+        """打开组件库（非模态，可与设置窗口并存）。"""
+        try:
+            from . import widget_center
+            widget_center.open_center(getattr(self, "layer", None), self)
+        except Exception:      # noqa: BLE001  —— 组件库打不开不该拖垮设置页
+            pass
 
     def _page_appearance(self, body, lay):
         card, c = self._card(body, "图标")

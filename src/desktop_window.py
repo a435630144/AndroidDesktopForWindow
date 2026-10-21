@@ -58,6 +58,7 @@ EDGE_FLIP_DWELL_MS = 360       # 悬停多久才翻页
 class DesktopWindow(QWidget):
     visibilityChanged = Signal(bool)
     openSettingsRequested = Signal()
+    openWidgetCenterRequested = Signal()   # v8 C3：打开组件库
     openAddAppsRequested = Signal()
     quitRequested = Signal()
 
@@ -2830,6 +2831,8 @@ class DesktopWindow(QWidget):
         # 2026-10-21 反馈 9：右键的「小组件模式」开关移除——与设置页
         # 「显示桌面小组件」是同一个值的两个旋钮，必然互相打架；
         # 新增的「仅小组件模式」开关同样只在设置页，入口唯一。
+        # 上一段（布局能力）已经收过分隔线，这里不再重复加，避免出现两条
+        menu.addAction("添加组件…", self.openWidgetCenterRequested.emit)
         menu.addAction("设置…", self.openSettingsRequested.emit)
         return menu
 

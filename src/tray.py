@@ -42,7 +42,8 @@ class SystemTray:
         self.window = window
         self.storage = storage
         self.layer = layer
-        self.openSettings = None   # 外部注入：打开设置对话框
+        self.openSettings = None
+        self.openWidgetCenter = None   # 外部注入：打开设置对话框
         self.openAddApps = None    # 外部注入：打开添加应用对话框
         self.tray = QSystemTrayIcon(QIcon(asset_path("app_icon.png")))
         self.tray.setToolTip("桌面整理Demo — 右键图标查看菜单")
@@ -116,6 +117,11 @@ class SystemTray:
         act_new = QAction("新建便签", self.widget_menu)
         act_new.triggered.connect(self.layer.add_note)
         self.widget_menu.addAction(act_new)
+        # v8 C3：组件库入口（托盘是三个入口里最常用的一个）
+        act_center = QAction("组件库…", self.widget_menu)
+        act_center.triggered.connect(
+            lambda: self.openWidgetCenter and self.openWidgetCenter())
+        self.widget_menu.addAction(act_center)
 
     # ---------- 动作 ----------
     def _toggle_window(self):
