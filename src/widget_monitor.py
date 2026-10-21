@@ -245,7 +245,10 @@ def draw(p: QPainter, rect, snap: Snapshot, smooth: Optional[Dict] = None, style
             p.drawArc(box, 90 * 16, -int(round(val / 100.0 * 360 * 16)))
 
         # 环心数值（太小就不写字，避免糊成一团）
-        if r >= 12:
+        # 2026-10-22：**宽版不写环心**。wide 布局已经把数值放到右侧一列，
+        # 两处都画 = 同一个数字出现两次；组件库缩略图（318×116 就是 wide）
+        # 里右列还窄，数字直接压到卡片外面去（README 截图时暴露）。
+        if L["mode"] == "row" and r >= 12:
             fs = max(7, int(round(min(r * 0.62, 26))))
             f = theme.ui_font(fs, bold=True)
             p.setFont(f)

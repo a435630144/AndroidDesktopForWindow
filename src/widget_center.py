@@ -40,6 +40,13 @@ CARD_W = 320
 CARD_H = 212
 PREVIEW_H = 118
 COLS = 2
+# 预览区的宽高比（320×118 ≈ 2.7:1）比组件的默认跨度（≈ 1.6:1）扁得多。
+# 直接按预览区矩形的形状去调 `draw()`，组件会以为自己是"宽版"：监控组件
+# 的 wide 布局把数值挪到右侧一列，2.7:1 下这列只有几十像素，"42%" 直接
+# 压出卡片（2026-10-22 出 README 截图时暴露）。所以预览按默认比例收窄
+# 居中渲染，看到的才是真机上那个样子。
+# 取 1.45：必须**低于** widget_monitor.WIDE_RATIO(1.6)，否则监控仍走宽版
+PREVIEW_ASPECT = 1.45
 
 def _btn_qss() -> str:
     return theme.BUTTON_QSS + (
@@ -61,18 +68,25 @@ class PreviewArea(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
         r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        # 按组件默认比例收窄居中（理由见 PREVIEW_ASPECT）
+        vw = min(r.width(), r.height() * PREVIEW_ASPECT)
+        inner = QRectF(r.center().x() - vw / 2.0, r.top(), vw, r.height())
         path = QPainterPath()
         path.addRoundedRect(r, 12, 12)
         p.save()
         p.setClipPath(path)
-        p.fillRect(self.rect(), QColor(18, 20, 26, 190))
+        # 只给真正画预览的那块铺底：预览收窄之后，左右留白若也铺深色，
+        # 看起来就是"卡片里套了一张深色卡片"（双层面板）
+        inner_path = QPainterPath()
+        inner_path.addRoundedRect(inner, 10, 10)
+        p.fillPath(inner_path, QColor(18, 20, 26, 190))
         try:
             if callable(self.spec.preview):
-                self.spec.preview(p, r)
+                self.spec.preview(p, inner)
             else:
-                _fallback_preview(p, r, self.spec.name, self.spec.summary)
+                _fallback_preview(p, inner, self.spec.name, self.spec.summary)
         except Exception:      # noqa: BLE001  —— 一个组件画挂不该让整个库白屏
-            _fallback_preview(p, r, self.spec.name, "预览不可用")
+            _fallback_preview(p, inner, self.spec.name, "预览不可用")
         p.restore()
         p.setBrush(Qt.NoBrush)
         p.setPen(QColor(255, 255, 255, 20))

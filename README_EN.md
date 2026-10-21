@@ -12,6 +12,8 @@ English | [简体中文](README.md)
 
 A third-party desktop organizer / beautifier for Windows (demo), in the spirit of Tencent Desktop Manager. It mounts its own grid layer above the native desktop and replaces native icons with a fully controlled rendering layer: positions, animations, folders, and widgets are all yours to define.
 
+<p align="center"><img src="docs/images/01-desktop.png" width="900" alt="The desktop: Android-style icon grid with anchored widgets"></p>
+
 ---
 
 ## ✨ Features
@@ -23,7 +25,7 @@ A third-party desktop organizer / beautifier for Windows (demo), in the spirit o
 | 📂 Drag-to-merge | Drag an icon onto another to merge into a folder; folder popup uses liquid-glass material with an emergence open/close animation; members can be dragged out / removed |
 | 🖱️ Batch operations | Rubber-band multi-select + whole-group dragging |
 | 🧩 Desktop widgets | Clock / Sticky notes (editable) / Desktop panel (search · quick folders · disks · recent downloads · weather) / **System monitor** (CPU · memory · disk) / **To-do list** (multi-instance) / **Calendar** (month view with remembered month) / **Weather** (live with cache fallback); supports **anchored (non-floating)** mode where widgets join the grid as first-class citizens, with drag-resize and icon mutual displacement |
-| 🧩 Widget library | A dedicated window to browse widgets by category, search, and see four-state cards (not added / hidden / on desktop / added) with **live previews rendered by the very same `draw()`** used on the desktop; reachable from the tray, the desktop context menu and the settings page |
+| 🧩 Widget library | A page inside the settings panel: browse widgets by category, search, and see four-state cards (not added / hidden / on desktop / added) with **live previews rendered by the very same `draw()`** used on the desktop; import or uninstall third-party widget zips, and appearance edits apply immediately |
 | 🔀 Two modes | **Organizer mode** (native icons hidden, desktop rendering taken over) / **native mode** (free-floating): one-click switch, and each mode **keeps its own layout** independently |
 | 📑 Paging | Automatic paging when icons overflow; page dots + wheel paging, drag to the screen edge to flip |
 | 🔄 Desktop sync | Watches the desktop folder (1 s debounce): new files enter automatically, deleted items are cleaned up |
@@ -31,6 +33,30 @@ A third-party desktop organizer / beautifier for Windows (demo), in the spirit o
 | 🖥️ Custom desktop context menu | No more losing right-click in organizer mode: new folder/text file, rescan, icon size, display/personalization settings |
 | 🛡️ BandGuard daemon | Survives Win+D (show desktop) and explorer restarts — automatically re-mounts |
 | ⏱️ System tray | Pause auto-creation / restore native, rescan, panel toggle, autostart, settings |
+
+## 📸 Screenshots
+
+> Every image below is rendered off-screen from the **real widgets** by [`tools/shot_readme.py`](tools/shot_readme.py) — the grid, the glass widgets and the context menus all go through the same drawing code the product runs. No mock-ups.
+
+**Seven desktop widgets**: clock / sticky notes / system monitor / to-do / calendar / weather / desktop panel — one glass material and one typographic scale, sized by grid span
+
+<p align="center"><img src="docs/images/02-widgets.png" width="900" alt="The seven desktop widgets"></p>
+
+**Per-widget appearance**: the same clock in three skins. Background colour, opacity, text colour, accent colour and corner radius are all configurable; leave a field empty to follow the theme. The fields apply to every widget, including third-party plugins
+
+<p align="center"><img src="docs/images/03-style.png" width="820" alt="Per-widget appearance settings"></p>
+
+**Widget library**: now a page inside the settings panel — four-state cards with live previews, plus an "Import widget…" button at the footer that takes a ready-made zip; no restart needed
+
+<p align="center"><img src="docs/images/04-widget-center.png" width="900" alt="Widget library inside the settings panel"></p>
+
+**Layout &amp; paging**: columns, icon size, grid origin and flip direction are adjustable, and "per-page auto-arrange" lets each page decide whether it auto-packs or stays free-form
+
+<p align="center"><img src="docs/images/05-settings.png" width="900" alt="Layout and grid settings"></p>
+
+**Phone input mode**: with Settings ▸ Mode ▸ Input set to "Phone", a single tap launches, holding for 450 ms opens the menu, and continuing to drag after the hold turns into a drag. Multi-select puts a checkmark on each icon; right-click opens the batch menu (merge into folder / move to page / delete selected); swiping on empty space flips pages
+
+<p align="center"><img src="docs/images/06-mobile.png" width="900" alt="Phone input mode: multi-select and batch menu"></p>
 
 ## 🛠️ Tech Stack & Dependency Versions
 
