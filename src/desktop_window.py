@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from . import appsource
 from . import grid_flow
+from . import interaction
 from . import page_rules
 from . import theme
 from . import win32_layer
@@ -80,6 +81,14 @@ class DesktopWindow(QWidget):
         self._page = max(0, int(storage.get_setting("current_page") or 0))
         self._widget_layer = None      # main.py 装配时注入（翻页联动组件）
         self._selected = set()      # 多选：entry id 集合（单击/Ctrl/框选）
+        # v9 V4：手机模式的多选态（长按菜单 ▸ 选择 进入）。与 `_selected`
+        # 分工：`_selected` 是"选了谁"，`_selection_mode` 是"现在是不是在
+        # 选"。分开的理由——Windows 模式也有选中集合（单击/Ctrl/框选），
+        # 但那时单击必须"选中"，手机模式的单击必须"启动"，只有
+        # `_selection_mode` 能区分这两种同集合不同语义的状态。
+        self._selection_mode = False
+        self._swipe_start = None    # 手机模式空白滑动起点（控件坐标）
+        self._swipe_moved = False
         self._drag_active = False   # QDrag 进行中：命中测试临时全窗口接收
         self._drag_entry_id = None  # 当前正在拖的条目（多选拖动时判成员）
         self._ole_active = False    # 外部文件 OLE 拖入进行中（拖放目标全窗口）
@@ -513,6 +522,9 @@ class DesktopWindow(QWidget):
         #  _drag_multi 卡死会让单选拖动也走多选平移分支）
         self._drag_active = False
         self._drag_multi = False
+        # 新一次按下：上一次可能因信号丢失留下的滑动起点要清掉
+        self._swipe_start = None
+        self._swipe_moved = False
         # 点桌面 = 退出组件编辑态（安卓语义：点空白结束编辑）
         if self._widget_layer is not None:
             try:
@@ -537,11 +549,39 @@ class DesktopWindow(QWidget):
                     self.goto_page(best)
                     return
         if e.button() == Qt.LeftButton and self._organize_mode():
-            self._band_start = e.pos()
-            self._band_rect = None
-            self._band_moved = False
+            if interaction.is_mobile(self.storage):
+                # v9 V4-5：手机模式空白处不是框选，而是"整页滑动翻页"的起点。
+                # 两套手势不能共存：同一个拖动动作到底是画选框还是翻页，
+                # 没有第三种信息可以分辨（用户要的就是手机那种）。
+                self._swipe_start = e.pos()
+                self._swipe_moved = False
+            else:
+                self._band_start = e.pos()
+                self._band_rect = None
+                self._band_moved = False
 
     def mouseMoveEvent(self, e):
+        if self._swipe_start is not None:
+            if not (e.buttons() & Qt.LeftButton):
+                return
+            delta = e.pos() - self._swipe_start
+            axis = grid_flow.page_axis(self.storage)
+            main = delta.x() if axis != grid_flow.PAGE_AXIS_VERTICAL else delta.y()
+            if abs(main) >= interaction.SWIPE_PX:
+                self._swipe_moved = True
+                # 够一格就翻，并把起点前移一页：一次长滑可以连翻多页
+                # （手机上也是这个手感），又不会因为松手晚而只翻一页。
+                step = -1 if main > 0 else 1
+                self.goto_page(self._page + step)
+                if axis != grid_flow.PAGE_AXIS_VERTICAL:
+                    self._swipe_start = QPoint(self._swipe_start.x()
+                                               + step * interaction.SWIPE_PX,
+                                               self._swipe_start.y())
+                else:
+                    self._swipe_start = QPoint(self._swipe_start.x(),
+                                               self._swipe_start.y()
+                                               + step * interaction.SWIPE_PX)
+            return
         if self._band_start is None or not (e.buttons() & Qt.LeftButton):
             return
         if (e.pos() - self._band_start).manhattanLength() >= QApplication.startDragDistance():
@@ -556,6 +596,20 @@ class DesktopWindow(QWidget):
             self.update(r.adjusted(-2, -2, 2, 2))
 
     def mouseReleaseEvent(self, e):
+        if self._swipe_start is not None:
+            if e.button() != Qt.LeftButton:
+                return
+            moved = self._swipe_moved
+            self._swipe_start = None
+            self._swipe_moved = False
+            # 手机语义：多选态点空白 = 退出多选（且不启动任何应用）；
+            # 非多选态点空白 = 取消选中（与 Windows 模式一致）
+            if not moved:
+                if self._selection_mode:
+                    self.exit_selection_mode()
+                else:
+                    self._clear_selection()
+            return
         if e.button() != Qt.LeftButton or self._band_start is None:
             return
         if self._band_moved and self._band_rect is not None:
@@ -1234,6 +1288,7 @@ class DesktopWindow(QWidget):
                                layout=layout)
                 self._wire_icon(icon)
                 icon.set_selected(entry["id"] in self._selected)
+                icon.set_selection_visible(self._selection_mode)
                 icon.move(*self._entry_pos(entry))
                 if stagger:
                     # 错峰淡入（模式切换 / 首次显示的仪式感；业务 rebuild 不加，
@@ -1292,6 +1347,7 @@ class DesktopWindow(QWidget):
                        layout=layout)
         self._wire_icon(icon)
         icon.set_selected(entry["id"] in self._selected)
+        icon.set_selection_visible(self._selection_mode)
         icon.move(*self._entry_pos(entry))
         icon.appear_in(0)
         icon.show()
@@ -1352,6 +1408,15 @@ class DesktopWindow(QWidget):
 
     # ---------- 多选 ----------
     def _on_icon_clicked(self, entry_id):
+        if self._selection_mode:
+            # 多选态：单击 = 勾选 / 取消勾选，**不启动应用**
+            # （手机选多个应用时点一下就开始跑，是最难受的误操作）
+            if entry_id in self._selected:
+                self._selected.discard(entry_id)
+            else:
+                self._selected.add(entry_id)
+            self._refresh_selection()
+            return
         ctrl = bool(QApplication.keyboardModifiers() & Qt.ControlModifier)
         if ctrl:
             if entry_id in self._selected:
@@ -1379,6 +1444,157 @@ class DesktopWindow(QWidget):
         if self._selected:
             self._selected.clear()
             self._refresh_selection()
+
+    # ---------- 手机模式：多选态（v9 V4） ----------
+    def enter_selection_mode(self, first_id=None):
+        """进入多选态：所有图标左上角出现空心圆（选中项变对钩）。"""
+        self._selection_mode = True
+        if first_id:
+            self._selected = {first_id}
+        self._sync_selection_visible()
+        self._refresh_selection()
+
+    def exit_selection_mode(self):
+        """退出多选态：清掉多选标记与选中集合（不影响应用本身）。"""
+        self._selection_mode = False
+        self._selected.clear()
+        self._sync_selection_visible()
+        self._refresh_selection()
+
+    def _sync_selection_visible(self):
+        for icon in self.icons.values():
+            try:
+                icon.set_selection_visible(self._selection_mode)
+            except RuntimeError:
+                pass
+
+    def set_interaction_mode(self, key):
+        """切换交互方式（桌面右键 ▸ 交互方式 / 设置页，同一个值）。
+
+        切换时必须清掉"半途手势"：正在拖的选框、正在累计的滑动位移都
+        属于上一套语义，留着会在新语义下被当成另一件事执行（框选残影
+        画到松手才消失 / 一按就翻页）。
+        """
+        was_mobile = interaction.is_mobile(self.storage)
+        interaction.set_mode(self.storage, key)
+        if was_mobile and not interaction.is_mobile(self.storage):
+            self.exit_selection_mode()
+        self._band_start = None
+        self._band_rect = None
+        self._band_moved = False
+        self._swipe_start = None
+        self._swipe_moved = False
+        self.update()
+
+    def _selected_entries(self):
+        """选中的条目，按布局顺序（合并/移页要稳定顺序，不能靠 set 的迭代序）。"""
+        out = []
+        for e in self.storage.layout:
+            if e.get("id") in self._selected:
+                out.append(e)
+        return out
+
+    def _build_batch_menu(self):
+        """多选态的批量菜单：合并为文件夹 / 移动到分页 / 删除选中。"""
+        n = len(self._selected)
+        menu = QMenu(self)
+        menu.setStyleSheet(theme.MENU_QSS)
+        self._ctx_submenus = []
+        if n == 0:
+            menu.addAction("全选", self._select_all)
+            menu.addSeparator()
+            menu.addAction("退出选择", self.exit_selection_mode)
+            return menu
+        menu.addAction("合并为文件夹（%d）" % n, self._batch_merge)
+        sub = menu.addMenu("移动到分页")
+        self._ctx_submenus.append(sub)
+        cur = self._page
+        total = max(grid_flow.page_count(self.storage), cur + 2, 2)
+        for i in range(total):
+            act = sub.addAction("第 %d 页" % (i + 1),
+                                lambda _c=False, i=i: self._batch_move_to_page(i))
+            act.setCheckable(True)
+            act.setChecked(i == cur)
+        menu.addAction("删除选中（%d）" % n, self._remove_selected)
+        menu.addSeparator()
+        menu.addAction("退出选择", self.exit_selection_mode)
+        return menu
+
+    def _select_all(self):
+        """全选当前页（其它页的条目不在视野里，全选会让用户莫名删掉看不见的东西）。"""
+        self._selected = {eid for eid, icon in self.icons.items()
+                          if not icon.isHidden()}
+        self._refresh_selection()
+
+    def _batch_merge(self):
+        """把选中的条目合并成一个文件夹（第一个当容器，其余并入）。"""
+        entries = self._selected_entries()
+        if len(entries) < 2:
+            return
+        target = entries[0]
+        for other in entries[1:]:
+            if not other.get("app") and other.get("type") != "folder":
+                continue
+            if target.get("type") == "folder":
+                self._absorb(target, other)
+                continue
+            if other.get("type") == "folder":
+                target["type"] = "folder"
+                target["app"] = {}
+                target["apps"] = [m for m in [target.get("app")] if m]
+                self._absorb(target, other)
+            else:
+                members = [m for m in (target.get("app"), other.get("app")) if m]
+                target["type"] = "folder"
+                target["app"] = {}      # 空 dict 而非 None（坑 #39）
+                target["apps"] = members
+                self.storage.remove_entry(other["id"])
+        self.storage.compact_layout()
+        self.storage.save()
+        self._selected = {target["id"]}
+        self._sync_structure()
+        self._refresh_selection()
+        if self._popup is not None:
+            self._popup.refresh()
+
+    def _batch_move_to_page(self, page):
+        """把选中的条目搬到第 page 页（0 基）。
+
+        网格模式：在目标页里按顺序找空格（跳过已被占用的格与本次已分配的格）；
+        无界模式：只改 `fpage`（无界坐标本来就不共享网格，页归属是唯一语义）。
+        两种模式都只写"页归属"这一个事实，不动尺寸与其它字段。
+        """
+        entries = self._selected_entries()
+        if not entries:
+            return
+        page = max(0, int(page))
+        if grid_flow.free_mode(self.storage):
+            for e in entries:
+                e["fpage"] = page
+            self.storage.save()
+            self._sync_icons()
+            self.goto_page(page)
+            return
+
+        rpp = grid_flow.rows_per_page()
+        cols = max(1, int(self.storage.columns))
+        moving = {e.get("id") for e in entries}
+        blocked = set()
+        for e in self.storage.layout:
+            if e.get("id") in moving:
+                continue
+            blocked.add((int(e.get("col", 0) or 0), int(e.get("row", 0) or 0)))
+        for col, row in grid_flow.widget_cells(self.storage):
+            blocked.add((col, row))
+        lo = page * rpp
+        free = [(c, r) for r in range(lo, lo + rpp) for c in range(cols)
+                if (c, r) not in blocked]
+        for e, (c, r) in zip(entries, free):
+            e["col"], e["row"] = c, r
+        self.storage.save()
+        self._sync_icons()
+        self.goto_page(page)
+
 
     # ---------- 拖拽 ----------
     def _on_drag_started(self):
@@ -2834,6 +3050,16 @@ class DesktopWindow(QWidget):
                 menu.addAction("添加空白页", self._add_blank_page)
                 if self._page in grid_flow.extra_pages(self.storage):
                     menu.addAction("删除当前空白页", self._remove_blank_page)
+                # v9 V4：交互方式也放在这里（与设置 ▸ 模式 是同一个值，
+                # 只是多一个就近入口；写值统一走 interaction.set_mode）
+                mode_menu = menu.addMenu("交互方式")
+                cur_mode = interaction.mode(self.storage)
+                for key, text in interaction.MODES:
+                    act = mode_menu.addAction(text)
+                    act.setCheckable(True)
+                    act.setChecked(cur_mode == key)
+                    act.triggered.connect(
+                        lambda checked=False, k=key: self.set_interaction_mode(k))
             # 网格原点定位是**开发者功能**（v7 §3.4），入口只在设置页
             # 「高级 → 调试」里，且要开发者开关打开才可配置。
             # 2026-10-20 用户反馈 5：桌面右键不该出现这两项。

@@ -21,16 +21,16 @@ from .widget_glass import GlassWidget
 from .widget_style import DEFAULT_STYLE, Style, of as style_of
 
 PAD = 18
-TITLE_H = 20
+HEAD_H = 20        # 标题行高度（本组件自己的；别与 widget_glass.TITLE_H 混用）
 MAX_LEN = 4000          # 单个便签的字数上限（超出后拒绝输入，防误粘贴整篇文档）
 
 
 def text_rect(rect: QRectF) -> QRectF:
     """正文区（绘制与控件几何共用同一份算术）。"""
     r = QRectF(rect)
-    return QRectF(r.left() + PAD, r.top() + PAD + TITLE_H,
+    return QRectF(r.left() + PAD, r.top() + PAD + HEAD_H,
                   max(1.0, r.width() - PAD * 2),
-                  max(1.0, r.height() - PAD * 2 - TITLE_H))
+                  max(1.0, r.height() - PAD * 2 - HEAD_H))
 
 
 def draw(painter: QPainter, rect, text: str, style: Optional[Style] = None) -> None:
@@ -41,7 +41,7 @@ def draw(painter: QPainter, rect, text: str, style: Optional[Style] = None) -> N
     p.setRenderHint(QPainter.Antialiasing, True)
     p.setPen(QColor(style.faint))
     p.setFont(theme.ui_font(12))
-    p.drawText(QRectF(r.left() + PAD, r.top() + PAD - 4, r.width() - PAD * 2, TITLE_H),
+    p.drawText(QRectF(r.left() + PAD, r.top() + PAD - 4, r.width() - PAD * 2, HEAD_H),
                Qt.AlignLeft | Qt.AlignVCenter, "便签")
     p.setPen(QColor(style.text))
     p.setFont(theme.ui_font(13))
@@ -62,7 +62,7 @@ class NotesWidget(GlassWidget):
         # interactive=True：去掉 NOACTIVATE，QTextEdit 才能获得键盘焦点输入
         super().__init__(storage, entry, interactive=True)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(PAD, PAD + TITLE_H, PAD, PAD)
+        lay.setContentsMargins(PAD, PAD + HEAD_H, PAD, PAD)
         lay.setSpacing(0)
         self.edit = QTextEdit()
         self.edit.setPlaceholderText("写点什么，自动保存…")
@@ -101,7 +101,7 @@ class NotesWidget(GlassWidget):
         p.setPen(QColor(st.faint))
         p.setFont(theme.ui_font(12))
         p.drawText(QRectF(r.left() + PAD, r.top() + PAD - 4,
-                          max(1.0, r.width() - PAD * 2), TITLE_H),
+                          max(1.0, r.width() - PAD * 2), HEAD_H),
                    Qt.AlignLeft | Qt.AlignVCenter, "便签")
 
     def on_resized(self):

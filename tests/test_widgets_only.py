@@ -105,9 +105,10 @@ def reload_state():
 class FakeLayer:
     """WidgetLayer 的最小面：只记录 apply_layout_mode / set_visible。"""
 
-    def __init__(self):
+    def __init__(self, storage=None):
         self.modes = 0
         self.visible_calls = []
+        self.storage = storage
 
     def apply_layout_mode(self):
         self.modes += 1
@@ -116,6 +117,14 @@ class FakeLayer:
         self.visible_calls.append(bool(on))
 
     def add_note(self):
+        pass
+
+    def entries_of(self, wtype):
+        """v9 V2：设置面板里的「组件库」分页需要它（组件卡片查已有实例）。
+        这个假层没有实例，返回空列表即可——本测试只关心模式开关。"""
+        return []
+
+    def toggle_entry(self, entry_id, visible):
         pass
 
     def toggle_entry(self, eid, checked):
@@ -269,7 +278,7 @@ def main(app):
     # ---------- W8 托盘 ----------
     st8 = make_state([clock()], icons=0)
     fw8 = FakeWin(st8)
-    t = SystemTray(fw8, st8, layer=FakeLayer())
+    t = SystemTray(fw8, st8, layer=FakeLayer(st8))
     check("W8 托盘无「显示原生桌面」入口", not hasattr(t, "act_toggle"))
     check("W8 托盘无「小组件模式」入口", not hasattr(t, "act_widgets"))
     texts8 = action_texts(t.menu)
@@ -294,7 +303,7 @@ def main(app):
     # ---------- W10 设置页 ----------
     st10 = make_state([clock()], icons=3)
     fw10 = FakeWin(st10)
-    dlg = SettingsDialog(fw10, st10, layer=FakeLayer())
+    dlg = SettingsDialog(fw10, st10, layer=FakeLayer(st10))
     check("W10 设置页有「仅小组件模式」开关", hasattr(dlg, "chk_widgets_only"))
     check("W10 是苹果风 Switch", isinstance(dlg.chk_widgets_only, Switch))
     check("W10 默认未勾选", dlg.chk_widgets_only.isChecked() is False)
@@ -319,7 +328,7 @@ def main(app):
     st12 = make_state([clock()], icons=3)
     st12.set_setting("show_widgets", False)
     fw12 = FakeWin(st12)
-    dlg12 = SettingsDialog(fw12, st12, layer=FakeLayer())
+    dlg12 = SettingsDialog(fw12, st12, layer=FakeLayer(st12))
     dlg12.chk_widgets_only.setChecked(True)
     app.processEvents()
     check("W12 先关组件再开仅小组件 → 组件开关跟着开",

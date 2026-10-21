@@ -26,10 +26,10 @@
 from PySide6.QtCore import (QEasingCurve, QMimeData, QPoint, QPointF,
                             QPropertyAnimation, QRect, QRectF, QSize, Qt,
                             Signal, Property, QTimer)
-from PySide6.QtGui import (QBrush, QColor, QDragEnterEvent, QDragLeaveEvent,
-                           QDragMoveEvent, QDropEvent, QFontMetrics,
-                           QLinearGradient, QPainterPath, QPen, QPixmap,
-                           QPainter)
+from PySide6.QtGui import (QBrush, QColor, QCursor, QDragEnterEvent,
+                           QDragLeaveEvent, QDragMoveEvent, QDropEvent,
+                           QFontMetrics, QLinearGradient, QPainterPath, QPen,
+                           QPixmap, QPainter)
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMenu,
                                QSlider, QToolTip, QVBoxLayout,
                                QWidget, QWidgetAction)
@@ -37,12 +37,28 @@ from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMenu,
 from . import appsource
 from . import drag_merge
 from . import effects
+from . import interaction
 from .folder_tint import folder_tint
 from .stepper import Stepper
 from . import theme
 from .storage import entry_app
 
 MIME_TYPE = "application/x-desktoporg-item"
+
+
+def _cursor_pos() -> QPoint:
+    """当前光标的全局坐标。
+
+    单独抽出来是为了可测：长按菜单开着时 QMenu 有自己的 grab，
+    AppIcon 收不到 mouseMove，只能主动读光标。"把系统级读取做成模块
+    级函数"让测试可以替换它，而不必真的去挪鼠标。
+    """
+    return QCursor.pos()
+
+
+def _left_button_down() -> bool:
+    """物理左键是否仍按着（长按后"还在滑"还是"已松手"的分界）。"""
+    return bool(QApplication.mouseButtons() & Qt.LeftButton)
 
 # 拖到图标上后进入「合并文件夹」武装状态所需的悬停时长（ms）。
 # 未满即松手 -> 走网格让位置换（安卓 launcher 默认语义）；
@@ -217,6 +233,24 @@ class AppIcon(QWidget):
         self._dwell.setSingleShot(True)
         self._dwell.setInterval(DWELL_MERGE_MS)
         self._dwell.timeout.connect(self._arm_merge)
+        # ---------- v9 V4：手机模式的长按 ----------
+        # 按下即起表；抬起 / 形成拖动 / 超过拖拽阈值都要撤表，否则"按住拖"
+        # 会先弹出一个菜单再开始拖（用户看到菜单闪一下）。
+        self._long = QTimer(self)
+        self._long.setSingleShot(True)
+        self._long.setInterval(interaction.LONG_PRESS_MS)
+        self._long.timeout.connect(self._on_long_press)
+        self._long_fired = False       # 本次按下是否已弹出长按菜单
+        self._long_menu = None         # 长按菜单（持引用，防 GC + 便于主动关）
+        self._long_origin = None       # 长按触发时的全局坐标
+        self._press_global = None
+        # 长按菜单开着时的"滑动即拖动"轮询：菜单是独立弹层（有自己的
+        # 事件抓取），AppIcon 收不到 mouseMove，只能靠自己读光标位置判断
+        self._long_watch = QTimer(self)
+        self._long_watch.setInterval(30)
+        self._long_watch.timeout.connect(self._watch_long_slide)
+        # 多选态（手机模式菜单 ▸ 选择）：左上角画空心圆 / 选中画对钩
+        self._selection_visible = False
         # 外围 chrome 缩放（留白 / 标签字号 / 行高随 DPI×用户缩放同比放大，
         # 图标本身由 icon_size 已经放大——2026-10-18 DPI 感知）
         self._m = max(0.5, float(chrome_scale))
@@ -471,6 +505,9 @@ class AppIcon(QWidget):
         self._paint_icon_only(p, dpr)
         if not self._no_label:
             self._paint_label(p)
+        # 多选态标记画在最上层：压在图标左上角（不参与缩放，避免跟着
+        # 悬停/按压一起抖）
+        self._paint_select_badge(p)
 
     def _paint_icon_only(self, p: QPainter, dpr: float = 1.0):
         """只画图标本体（文件夹瓷砖或应用图标 pixmap），不画任何 chrome。
@@ -645,17 +682,151 @@ class AppIcon(QWidget):
         except RuntimeError:
             pass
 
+    # ---------- 交互方式（v9 V4） ----------
+    def _host(self):
+        """宿主桌面窗口（文件夹弹窗里的图标没有，返回 None）。"""
+        try:
+            return self.window()
+        except RuntimeError:
+            return None
+
+    def _storage(self):
+        return getattr(self._host(), "storage", None)
+
+    def _mobile(self) -> bool:
+        return interaction.is_mobile(self._storage())
+
+    def _select_mode(self) -> bool:
+        """宿主是否处于多选态（手机模式菜单 ▸ 选择）。"""
+        return bool(getattr(self._host(), "_selection_mode", False))
+
+    # ---------- 长按（v9 V4-2 / V4-3） ----------
+    def _on_long_press(self):
+        """按住 450ms 不动：弹出菜单（手机语义），顶部多一项「选择」。"""
+        if self._drag_loop or self._dragged or self._press_pos is None:
+            return
+        # 取点态下长按也不该弹菜单（那一态的唯一语义是"点哪儿定哪儿"）
+        if self._picking_origin():
+            return
+        self._long_fired = True
+        self._long_origin = self._press_global or _cursor_pos()
+        # 按压态回弹：菜单都出来了还缩着会显得卡住
+        self._animate(b"press_scale", self._press_scale, 1.0, 160,
+                      effects.spring_curve(1.0, 160))
+        menu = self._build_context_menu(long_press=True)
+        self._long_menu = menu
+        menu.aboutToHide.connect(self._on_long_menu_hidden)
+        # popup 而不是 exec：exec 会开自己的模态循环，滑动事件被菜单吃掉，
+        # 就再也做不到"长按后直接滑动转拖动"（用户要的手感）
+        menu.popup(self._long_origin)
+        self._long_watch.start()
+
+    def _watch_long_slide(self):
+        """菜单开着时轮询光标：动了就关菜单、转拖动。
+
+        QMenu 弹出时有 mouse grab，AppIcon 收不到 mouseMove——只能主动读
+        `QCursor.pos()`。30ms 一次，人手滑动 3px/帧都能跟上，代价可忽略。
+        """
+        if self._long_menu is None:
+            self._long_watch.stop()
+            return
+        if not _left_button_down():
+            # 已经松手，菜单在等用户点选：判定交给菜单自己
+            self._long_watch.stop()
+            return
+        pos = _cursor_pos()
+        origin = self._long_origin or pos
+        if (pos - origin).manhattanLength() < interaction.LONG_SLIDE_SLOP:
+            return
+        self._long_watch.stop()
+        self._close_long_menu()
+        self._dragged = True
+        # 等 popup 真正撤掉 grab 再起拖动循环（同一次事件里 grabMouse 会被弹层抢回）
+        QTimer.singleShot(0, self._slide_into_drag)
+
+    def _slide_into_drag(self):
+        if self._drag_loop or not self._dragged:
+            return
+        self._press_pos = None
+        self.dragStarted.emit()
+        self._exec_drag()
+
+    def _close_long_menu(self):
+        m = self._long_menu
+        self._long_menu = None
+        self._long_watch.stop()
+        if m is not None:
+            try:
+                m.close()
+            except RuntimeError:
+                pass
+
+    def _stop_long(self):
+        """撤掉长按表并关掉已弹出的菜单（形成拖动 / 打包拆除时用）。"""
+        self._long.stop()
+        if self._long_menu is not None:
+            self._close_long_menu()
+
+    def _on_long_menu_hidden(self):
+        self._long_watch.stop()
+        self._long_menu = None
+        # 菜单收起后本次按下就结束了：清掉按下态，避免后续误判成"单击"
+        # （点菜单项时抬起事件不会回到图标）
+        self._press_pos = None
+        self._long_fired = False
+
+    # ---------- 多选态（v9 V4-2） ----------
+    def set_selection_visible(self, on: bool):
+        """进入/退出多选态：左上角出现空心圆（选中变对钩）。"""
+        on = bool(on)
+        if self._selection_visible != on:
+            self._selection_visible = on
+            self.update()
+
+    def _paint_select_badge(self, p):
+        """左上角多选标记：空心圆 → 实心对钩。"""
+        if not self._selection_visible:
+            return
+        d = max(16, int(round(17 * self._m)))
+        left = (self._box_x if self._box_x is not None else int(round(2 * self._m)))
+        rect = QRectF(left + 1, 1, d, d)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        if self.selected:
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(theme.ACCENT))
+            p.drawEllipse(rect)
+            pen = QPen(QColor("#FFFFFF"), max(1.6, d * 0.12))
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            p.setPen(pen)
+            x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+            p.drawPolyline([
+                QPointF(x + w * 0.26, y + h * 0.52),
+                QPointF(x + w * 0.44, y + h * 0.70),
+                QPointF(x + w * 0.76, y + h * 0.33),
+            ])
+        else:
+            p.setPen(QPen(QColor(255, 255, 255, 190), max(1.2, d * 0.09)))
+            p.setBrush(QColor(0, 0, 0, 70))
+            p.drawEllipse(rect.adjusted(0.8, 0.8, -0.8, -0.8))
+
     def mousePressEvent(self, e):
         if self._picking_origin():
             self._forward_pick(e)
             return
         if e.button() == Qt.LeftButton:
             self._press_pos = e.pos()
+            self._press_global = e.globalPos()
             self._dragged = False
+            self._long_fired = False
             # 苹果 HIG 按压反馈：scale(0.97) 100ms ease-out，pointer-down
             # 即触发不等松手（按下即反馈，消灭延迟）
             self._animate(b"press_scale", self._press_scale, 0.97, 100,
                           QEasingCurve.OutCubic)
+            # v9 V4：手机模式按住 450ms 弹菜单。Windows 模式不起表
+            # （那套语义是"单击选中 / 双击打开"，长按没有定义）
+            if self._mobile():
+                self._long.start()
         elif e.button() == Qt.RightButton and self._drag_loop:
             # 拖动中按右键 = 取消（与 OLE 拖拽语义一致）
             self._cancel_drag()
@@ -670,6 +841,9 @@ class AppIcon(QWidget):
             return
         if (e.pos() - self._press_pos).manhattanLength() < QApplication.startDragDistance():
             return
+        # 形成拖动：撤长按表，并关掉可能已经弹出的长按菜单（"按住不放
+        # 久了会先出菜单，再拖就该是拖"——菜单不能挂在那儿跟着走）
+        self._stop_long()
         self._dragged = True
         self.dragStarted.emit()
         self._exec_drag()
@@ -678,11 +852,24 @@ class AppIcon(QWidget):
         if self._drag_loop and e.button() == Qt.LeftButton:
             self._finish_drag(e.globalPos())
             return
+        long_fired = self._long_fired
+        self._long.stop()
+        if e.button() == Qt.LeftButton:
+            self._long_fired = False
         if e.button() == Qt.LeftButton and self._press_pos is not None and not self._dragged:
-            if self.is_folder:
+            if long_fired:
+                # 长按已弹菜单：这次抬起不算"单击"——否则用户长按看一眼菜单，
+                # 松手就把应用启动了（手机上也不会这样）
+                self._animate(b"press_scale", self._press_scale, 1.0, 180,
+                              effects.spring_curve(1.0, 180))
+            elif self.is_folder:
                 # 打开文件夹：脉冲反馈（自带弹簧回落，不再叠加归位动画）
                 self.pulse()
                 self.folderClicked.emit(self.entry["id"])
+            elif self._mobile() and not self._select_mode():
+                # 手机语义：单击直接启动（Windows 模式的"单击选中"是另一套）
+                self.pulse()
+                self.activated.emit(self.entry.get("app", {}))
             else:
                 self.clicked.emit(self.entry["id"])
                 # 松开回弹：点按无动量，按苹果规范用临界阻尼弹簧（无过冲）
@@ -1154,14 +1341,32 @@ class AppIcon(QWidget):
 
     # ---------- 右键菜单 ----------
     def contextMenuEvent(self, e):
+        # v9 V4：多选态下的右键 = 批量操作（对单个图标调大小/改写语义没意义）
+        if self._select_mode():
+            host = self._host()
+            build = getattr(host, "_build_batch_menu", None)
+            if callable(build):
+                menu = build()
+                if menu is not None:
+                    menu.exec(e.globalPos())
+                    return
         self._build_context_menu().exec(e.globalPos())
 
-    def _build_context_menu(self):
-        """构建图标右键菜单（拆出来便于单测：v7 反馈 14 的尺寸子菜单）。"""
+    def _build_context_menu(self, long_press: bool = False):
+        """构建图标右键菜单（拆出来便于单测：v7 反馈 14 的尺寸子菜单）。
+
+        `long_press=True` = 手机模式长按弹出的那份：顶部多一项「选择」
+        （进入多选，随后可批量合并 / 移页 / 删除）。
+        """
         menu = QMenu(self)
         menu.setStyleSheet(theme.MENU_QSS)
         # 子菜单是 Python 所有的 QMenu，需要持引用防 GC（DEVLOG 坑 #39）
         self._ctx_submenus = []
+        if long_press:
+            host = self._host()
+            if host is not None and hasattr(host, "enter_selection_mode"):
+                menu.addAction("选择", host.enter_selection_mode)
+                menu.addSeparator()
         if self.in_folder:
             menu.addAction("打开", self._open)
             menu.addAction("移出文件夹", self._remove_from_folder)

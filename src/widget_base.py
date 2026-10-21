@@ -741,10 +741,8 @@ class FloatingWidget(QWidget):
                                   int(self.entry.get("row", 0)))
                 return
         if not self.anchored and self._close_rect().contains(e.pos()):
-            self.entry["hidden"] = True
-            self.storage.save()
-            self.closed.emit(self.entry.get("id", ""))
-            self.close()
+            # 右上角 × 和右键「关闭」走同一条路（同一份三步走，别各写一份）
+            self._hide_self()
             return
         if not self.anchored and self._grip_rect().contains(e.pos()):
             self._resizing = True
@@ -853,8 +851,12 @@ class FloatingWidget(QWidget):
         else:
             menu.addAction("锚定到桌面（融入壁纸）", self._toggle_anchored)
         self._add_settings_action(menu)
-        menu.addAction("隐藏", self._hide_self)
-        menu.addAction("关闭", self._close_self)
+        # v9 修复（2026-10-21 反馈）：旧菜单同时有「隐藏」和「关闭」，描述重复；
+        # 且「关闭」只走 close() 不写 entry["hidden"]，WidgetLayer._on_closed
+        # 见 entry 未隐藏就立刻补建一个新实例（那里是"形态切换后重建"的保底
+        # 逻辑），用户看到的就是"点关闭没反应/闪一下又回来"。合并为单项
+        # 「关闭」：语义 = 从桌面移除但保留数据与设置，可在组件库/托盘重开。
+        menu.addAction("关闭", self._hide_self)
         return menu
 
     # ---------- 组件设置（v8 C8） ----------
@@ -920,11 +922,17 @@ class FloatingWidget(QWidget):
         self.close()
 
     def _hide_self(self):
+        """「关闭」的唯一实现：置 hidden + 落盘 + 通知层移除 + 淡出关窗。
+
+        三步必须一起做，缺一就会出 BUG：
+        - 少写 `entry["hidden"]` → WidgetLayer._on_closed 会认为这是形态切换
+          重建，立刻再 spawn 一个，用户看到"关闭无效"（v9 修复的问题）；
+        - 少 storage.save() → 重启后组件又回来，用户看到"关不掉"；
+        - 少 closed.emit() → 层里仍持有这个窗口对象的引用（拖拽/翻页还会
+          去找它），且托盘勾选状态不会刷新。
+        """
         self.entry["hidden"] = True
         self.storage.save()
         self.closed.emit(self.entry.get("id", ""))
         self.close()
 
-    def _close_self(self):
-        self.closed.emit(self.entry.get("id", ""))
-        self.close()

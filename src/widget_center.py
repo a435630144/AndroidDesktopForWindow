@@ -124,6 +124,17 @@ class WidgetCard(QFrame):
         self.remove_btn.setStyleSheet(_btn_qss())
         self.remove_btn.clicked.connect(self._on_remove)
         row.addWidget(self.remove_btn)
+
+        # v9 V3：外部组件可卸载（= 删目录 + 移出注册表）；内置组件不给这个按钮，
+        # 因为"删掉时钟"没有语义——它是程序的一部分。
+        self.uninstall_btn = QPushButton("卸载")
+        self.uninstall_btn.setCursor(Qt.PointingHandCursor)
+        self.uninstall_btn.setFixedWidth(52)
+        self.uninstall_btn.setStyleSheet(_btn_qss())
+        self.uninstall_btn.setToolTip("从本机删除这个外部组件（桌面上的实例一并移除）")
+        self.uninstall_btn.clicked.connect(self._on_uninstall)
+        self.uninstall_btn.setVisible(bool(spec.plugin))
+        row.addWidget(self.uninstall_btn)
         root.addLayout(row)
 
         self.refresh_state()
@@ -167,6 +178,21 @@ class WidgetCard(QFrame):
         if entries:
             self.layer.remove(entries[0].get("id"))
         self.owner.refresh()
+
+    def _on_uninstall(self):
+        from PySide6.QtWidgets import QMessageBox
+        ok = QMessageBox.question(
+            self, "卸载组件",
+            "确定卸载「%s」？\n\n本机上的组件文件会被删除，桌面上它的实例也会被移除。"
+            % self.spec.name,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if ok != QMessageBox.Yes:
+            return
+        for e in list(self.entries()):
+            self.layer.remove(e.get("id"))
+        from . import widget_plugin
+        widget_plugin.uninstall(self.spec.type)
+        self.owner.reload_specs()
 
 
 class WidgetCenterPage(QWidget):
@@ -242,6 +268,19 @@ class WidgetCenterPage(QWidget):
                                        % theme.rgba(theme.TEXT_FAINT))
         foot.addWidget(self.count_label)
         foot.addStretch(1)
+
+        # v9 V3：导入外部组件（zip）+ 打开组件目录（自己放目录进去也行）
+        self.btn_open_dir = QPushButton("组件目录…")
+        self.btn_open_dir.setStyleSheet(_btn_qss())
+        self.btn_open_dir.setToolTip("打开 %APPDATA%\\DesktopOrganizerDemo\\widgets")
+        self.btn_open_dir.clicked.connect(self._open_plugin_dir)
+        foot.addWidget(self.btn_open_dir)
+
+        self.btn_import = QPushButton("导入组件…")
+        self.btn_import.setStyleSheet(_btn_qss())
+        self.btn_import.setToolTip("导入开发者打包好的组件 zip（见 docs/组件开发指南.md）")
+        self.btn_import.clicked.connect(self.import_zip_dialog)
+        foot.addWidget(self.btn_import)
         root.addLayout(foot)
 
         self._build_cards()
@@ -291,6 +330,52 @@ class WidgetCenterPage(QWidget):
             return True
         q = query.strip().lower()
         return q in spec.name.lower() or q in spec.summary.lower()
+
+    def reload_specs(self):
+        """注册表变了（导入/卸载插件）后重建卡片与分类。
+
+        只重建**这一层**，不碰桌面组件实例：卸载流程自己负责把实例删掉，
+        导入流程不需要重启任何东西。
+        """
+        for card in self.cards:
+            card.setParent(None)
+            card.deleteLater()
+        self.cards = []
+        self._build_cards()
+        self._build_categories()
+        self.refresh()
+
+    def import_zip_dialog(self):
+        """选一个组件 zip 导入（返回 spec；取消/失败返回 None）。"""
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        from . import widget_plugin
+        path, _f = QFileDialog.getOpenFileName(
+            self, "导入组件", str(widget_plugin.plugin_root().parent),
+            "组件包 (*.zip)")
+        if not path:
+            return None
+        try:
+            spec = widget_plugin.import_zip(path)
+        except widget_plugin.PluginError as exc:
+            QMessageBox.warning(self, "导入失败", str(exc))
+            return None
+        except Exception as exc:      # noqa: BLE001 —— 任何异常都要给出可读反馈
+            QMessageBox.warning(self, "导入失败", "%s: %s" % (type(exc).__name__, exc))
+            return None
+        self.reload_specs()
+        self.select_category("全部")
+        self.search.setText(spec.name)      # 导入后直接定位到它，省得找
+        return spec
+
+    def _open_plugin_dir(self):
+        import os
+        from . import widget_plugin
+        root = widget_plugin.plugin_root()
+        root.mkdir(parents=True, exist_ok=True)
+        try:
+            os.startfile(str(root))      # noqa: S606 —— Windows 资源管理器
+        except Exception:                # noqa: BLE001
+            pass
 
     def refresh(self):
         cat = self.current_category()

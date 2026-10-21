@@ -206,10 +206,20 @@ def _with_style(specs: List[WidgetSpec]) -> List[WidgetSpec]:
     就等于"这个组件不能改颜色"，用户只会觉得坏了。
     组件自己的字段在前（先配业务），外观在后（分组标题隔开）。
     """
-    out = []
-    for spec in specs:
-        out.append(replace(spec, settings=tuple(spec.settings) + STYLE_FIELDS))
-    return out
+    return [with_style(spec) for spec in specs]
+
+
+def with_style(spec: WidgetSpec) -> WidgetSpec:
+    """给一个组件补齐通用外观字段（已有的同名字段不重复添加）。
+
+    内置组件在注册表构造时走这里；插件在 `register_plugin` 时走同一个
+    函数——"外观是所有人的能力"不能只对内建生效。
+    """
+    have = {f.key for f in spec.settings}
+    extra = tuple(f for f in STYLE_FIELDS if f.key not in have)
+    if not extra:
+        return spec
+    return replace(spec, settings=tuple(spec.settings) + extra)
 
 
 REGISTRY: Dict[str, WidgetSpec] = {s.type: s for s in
@@ -284,7 +294,7 @@ def register_plugin(spec: WidgetSpec) -> None:
     """
     if spec.type in REGISTRY:
         raise ValueError("组件类型 %r 与内置组件冲突" % spec.type)
-    PLUGINS[spec.type] = replace(spec, plugin=True)
+    PLUGINS[spec.type] = replace(with_style(spec), plugin=True)
 
 
 def unregister(wtype: str) -> bool:

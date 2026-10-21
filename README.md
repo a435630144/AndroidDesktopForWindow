@@ -4,9 +4,9 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前版本 **v8a**（安装包 3.0.0，v8 迭代第一个包），**73 个测试文件 / 约 1700 条断言全绿**；v7 的 39 条实机反馈（17 + 4 + 10 + 8）全部闭环，v8 首批新增**组件库 + 四个新组件**（系统监控 / 待办清单 / 日历 / 天气）。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v8.md](docs/指导文档_v8.md)，实施计划见 [docs/实施计划_v8.md](docs/实施计划_v8.md)。
+> 🚧 **项目处于活跃开发中**：当前版本 **v9a**（安装包 4.0.0，v9 迭代第一个包），**79 个测试文件 / 约 1900 条断言全绿**；v7 的 39 条实机反馈与 v8 的组件中心全部闭环。v9 首批带来**全组件外观自定义**（背景色/透明度/文字色/强调色）、**组件插件平台**（写一个目录或 zip 就能装进桌面，见 [docs/组件开发指南.md](docs/组件开发指南.md)）、**组件库并入设置面板**、**每页独立排序规则**，以及**手机式双交互**（单击启动 / 长按菜单 / 多选批量 / 滑动翻页）。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v9.md](docs/指导文档_v9.md)，实施计划见 [docs/实施计划_v9.md](docs/实施计划_v9.md)。
 
-[![release](https://img.shields.io/badge/release-v3.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-73%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v4.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-79%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -170,6 +170,7 @@ pwsh -File scripts/build_portable.ps1
 | v7c | **v7b 之后的 4 项反馈闭环**：文件夹「添加应用 / 换颜色」改独立表单（16 预设+自动+自定义，换色不再重建成员）/ 组件手动改尺寸后碰撞形状同步（含四角双向步进）/ 图标默认「中」双源合并 / 网格调试信息移入设置面板 | 2.1.1 |
 | v7d | **v7c 之后的 10 项反馈闭环**：滑条断触防抖 / 行列 Stepper 自绘步进器 / 文件夹满页分页 / 3×3 弹窗两级居中 / 组件 span 碰撞 / 文件夹内拖出碰撞预览 / 入夹双区判定 / 边缘悬停翻页 / 仅小组件模式 / 单图标自动解散文件夹 | 2.1.2 |
 | v7e | **v7d 之后的 8 项反馈闭环 + B5 视觉批次**：推让/提示节拍两头提前（450/700→350/470，翻页 600→360）/ 无界松手不回弹 / 组件右键菜单随模式 / 无界→网格组件坐标回算 / 自动排列真正密排 / 弹窗图标 40–56 与绘制单点 / 控制点改圆球 + ≥22px 命中区 / 仅小组件归还原生桌面 / 脏区重绘守 60fps（`frame_stats` 可读） | 2.1.3 |
+| v9a | **v9 首批：外观自定义 + 组件插件平台 + 双交互**：全组件统一外观（背景色/透明度/文字色/强调色/圆角，注册时自动注入，组件零改动）/ 时钟便签玻璃化重写 / 每页独立排序规则（跨页拖动不再回弹）/ 组件库并入设置面板（独立窗口带来的"被压住 + 点不动"从结构上消失）/ 组件开发标准文档 + `widget_plugin`（manifest 校验、zip-slip 防护、命名空间隔离）+ 预览调试器 + 打包脚本 + 组件库一键导入 / **手机式交互**（单击启动、长按 450ms 菜单、长按后滑动转拖动、多选空心圆与对钩、批量合并文件夹/移动分页/删除、空白滑动翻页）/ 组件「隐藏」「关闭」合并为「关闭」 | 4.0.0 |
 | v8a | **v8 首批：组件库 + 四个新组件**：组件注册表单点化（`WidgetSpec` 一处声明跨度/分类/形态/设置/预览）/ 玻璃卡片基类（静态玻璃，不做实时模糊）/ 系统监控（CPU·内存·磁盘，纯 Win32 无新依赖）/ 待办清单（多实例）/ 日历（月视图，翻月记忆）/ 天气（Open-Meteo，实时 / 缓存 / 空 三级降级）/ 组件设置弹窗（`FieldSpec` 驱动）/ 独立组件库窗口（四态卡片 + 实时预览） | 3.0.0 |
 
 **v7 已交付**（规格 [docs/指导文档_v7.md](docs/指导文档_v7.md)，计划 [docs/实施计划_v7.md](docs/实施计划_v7.md)）：
@@ -181,7 +182,15 @@ pwsh -File scripts/build_portable.ps1
 - [x] **B5** 文件夹与视觉细节：弹窗图标比例（`popup_metrics` 与桌面档位解耦）/ 弹窗贴边与两级居中 / 编辑控制点改圆球 + 放大命中区（v7e 完成）
 - [x] **B6** 浮层与分页：下拉弹层实心（`ui_choice.ComboBox`）、分页入口两模式可用
 
-**v8 实施中**（规格 [docs/指导文档_v8.md](docs/指导文档_v8.md)，计划 [docs/实施计划_v8.md](docs/实施计划_v8.md)）：
+**v9 实施中**（规格 [docs/指导文档_v9.md](docs/指导文档_v9.md)，计划 [docs/实施计划_v9.md](docs/实施计划_v9.md)）：
+
+- [x] **V1** 外观自定义：样式层 `widget_style` + 全组件统一注入 + 时钟便签玻璃化
+- [x] **V2** 两个 BUG（组件库被压住 / 自动排布跨页回弹）+ 每页排序规则 + 组件库融入设置页
+- [x] **V3** 组件开发标准：[组件开发指南](docs/组件开发指南.md) + `widget_plugin` + 预览调试器 + zip 打包/导入
+- [x] **V4** 双交互逻辑：Windows 习惯 / 手机习惯（长按菜单、多选批量、滑动翻页）
+- [x] **V5** 回归 + 门禁 + 出包 v9a
+
+**v8 已交付**（规格 [docs/指导文档_v8.md](docs/指导文档_v8.md)，计划 [docs/实施计划_v8.md](docs/实施计划_v8.md)）：
 
 - [x] **C1** 组件注册表：`WidgetSpec` 单点声明，`WIDGET_TYPES` / `WIDGET_NAMES` / `WIDGET_CATALOG` 全部退化为派生（旧调用点一行未改）
 - [x] **C2** 玻璃卡片基类 `GlassWidget`：静态玻璃（竖向渐变 tint + 顶部 specular + 圆角裁剪），**不做实时高斯模糊**——常驻组件每帧抓桌面会推翻 v7 的 60fps

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame,
 
 from . import autostart
 from . import grid_flow
+from . import interaction
 from . import page_rules
 from .stepper import Stepper
 from .ui_choice import ComboBox
@@ -559,6 +560,23 @@ class SettingsDialog(QDialog):
         lay.addWidget(card)
 
     def _page_mode(self, body, lay):
+        # ---- v9 V4-6 交互方式（Windows 习惯 / 手机习惯） ----
+        # 放在「模式」页最上面：这是"桌面怎么用"的总开关，比布局细节更基础。
+        card, c = self._card(body, "交互方式")
+        self.cmb_interaction = ComboBox()
+        for key, text in interaction.MODES:
+            self.cmb_interaction.addItem(text, key)
+        self.cmb_interaction.setCurrentIndex(
+            max(0, self.cmb_interaction.findData(interaction.mode(self.storage))))
+        self.cmb_interaction.currentIndexChanged.connect(self._apply_interaction)
+        self._row(c, card, "操作逻辑", self.cmb_interaction,
+                  "切换后立即生效，不需要重启")
+        self.lbl_interaction = QLabel(interaction.describe(interaction.mode(self.storage)))
+        self.lbl_interaction.setObjectName("rowHint")
+        self.lbl_interaction.setWordWrap(True)
+        c.addWidget(self.lbl_interaction)
+        lay.addWidget(card)
+
         card, c = self._card(body, "桌面接管")
         # 反馈 16：**启动即接管**——「接管系统桌面」开关冗余，已删除。
         # 想回到原生桌面就退出程序；只想用小组件就把「通用 → 显示桌面
@@ -1180,6 +1198,21 @@ class SettingsDialog(QDialog):
         if not mode or mode == grid_flow.layout_mode(self.storage):
             return
         self.window.set_layout_mode(mode)
+
+    def _apply_interaction(self, _index=0):
+        """交互方式落盘（v9 V4-6）。
+
+        优先走窗口的 `set_interaction_mode`：它负责清掉半途手势、退出多选
+        标记——两处入口（设置页 / 桌面右键）必须做同一件事，各自写一份
+        逻辑迟早漂移。
+        """
+        key = self.cmb_interaction.currentData()
+        apply_win = getattr(self.window, "set_interaction_mode", None)
+        if callable(apply_win):
+            apply_win(key)
+        else:
+            interaction.set_mode(self.storage, key)
+        self.lbl_interaction.setText(interaction.describe(key))
 
     def _apply_auto_clone(self, checked):
         self.storage.set_setting("auto_clone_desktop", bool(checked))

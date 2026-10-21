@@ -82,7 +82,10 @@ class WidgetLayer(QObject):
     def _spawn(self, entry):
         if entry.get("hidden"):
             return
-        cls = WIDGET_TYPES.get(entry.get("type"))
+        # v9 V3：工厂走注册表而不是模块级字典快照——外部插件是运行时
+        # 注册的，`WIDGET_TYPES` 在 import 时就定死了，拿不到新组件。
+        spec = widget_registry.get(entry.get("type"))
+        cls = spec.factory if spec is not None else WIDGET_TYPES.get(entry.get("type"))
         if cls is None:
             return
         if entry.get("anchored"):
