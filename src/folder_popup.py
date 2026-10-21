@@ -59,6 +59,54 @@ from . import win32_layer
 from .folder_tint import auto_tint, folder_tint
 from .iconwidget import AppIcon
 
+
+# ---------- 文件夹弹窗度量（纯函数，v7 B5 反馈 10） ----------
+# 旧实现 `_member_icon_size() = max(34, icon_metric() * 0.62)`：成员图标随
+# **桌面图标尺寸**线性放大，而弹窗宽有 240 下限——用户把图标调大后弹窗里
+# 的成员挤满、留白被吃掉（"弹窗图标过大"）。现在完全由 cell 驱动：
+POPUP_ICON_MIN, POPUP_ICON_MAX = 40, 56
+POPUP_WIDTH_MAX = 520
+
+
+def popup_metrics(cell_w: int, n_members: int = 0, avail_h: int = 0) -> dict:
+    """文件夹弹窗度量（**不读 storage**，纯函数，可单测）。
+
+    v7 §7.1：`icon` 只由 cell 宽度决定（clamp 40~56），与桌面图标档位
+    解耦；成员越多先缩 gap、再让 icon 落到下限，宽度上限 520。
+    """
+    cell_w = max(1, int(cell_w))
+    n = max(0, int(n_members))
+    icon = max(POPUP_ICON_MIN, min(POPUP_ICON_MAX, int(round(cell_w * 0.66))))
+    if n <= 4:
+        cols = 2
+    elif n <= 9:
+        cols = 3
+    else:
+        cols = 4
+    rows = max(1, (n + cols - 1) // cols) if n else 1
+    gap = 12
+    box = icon + 16
+    pad = 16
+    title_h, bar_h = 30, 38
+    width = pad * 2 + cols * box + (cols - 1) * gap
+    # 先减 gap 再减 icon（顺序固定：图标可读性优先于间距）
+    while width > POPUP_WIDTH_MAX and gap > 4:
+        gap -= 1
+        width = pad * 2 + cols * box + (cols - 1) * gap
+    guard = 0
+    while width > POPUP_WIDTH_MAX and icon > POPUP_ICON_MIN and guard < 40:
+        icon -= 2
+        box = icon + 16
+        width = pad * 2 + cols * box + (cols - 1) * gap
+        guard += 1
+    width = max(240, min(POPUP_WIDTH_MAX, width))
+    height = title_h + rows * box + (rows - 1) * gap + bar_h + pad * 2
+    if avail_h:
+        height = min(height, int(avail_h * 0.82))
+    return {"icon": icon, "box": box, "gap": gap, "pad": pad,
+            "title_h": title_h, "bar_h": bar_h, "cols": cols, "rows": rows,
+            "width": width, "height": height}
+
 ZOOM_FROM = 0.62   # 打开时玻璃初始缩放（相对最终尺寸）
 ZOOM_TO = 0.55     # 关闭时玻璃收起的缩放
 SCRIM_ALPHA = 71   # 幕布黑透明度（0.28 × 255 ≈ 71）
@@ -424,9 +472,17 @@ class FolderPopup(QWidget):
         return [(QRect(x0 + i * (d + gap), y0, d, d), i) for i in range(total)]
 
     def _member_icon_size(self):
-        """文件夹内部图标边长（比桌面图标小一档；手机文件夹的密度）。"""
-        base = max(40, int(self.storage.icon_metric()))
-        return max(34, int(round(base * 0.62)))
+        """文件夹内部图标边长：**只由网格 cell 决定**（v7 B5 反馈 10）。
+
+        旧实现读 `icon_metric() * 0.62`——桌面图标档位一调，弹窗成员跟着
+        无限放大，而弹窗宽度有下限，比例当场失衡。现在走纯函数
+        `popup_metrics()`：clamp(cell_w * 0.66, 40, 56)，与图标档位解耦。
+        """
+        try:
+            cell_w = grid_flow.cell_size(self.storage)[0]
+        except Exception:
+            cell_w = 83
+        return popup_metrics(cell_w, len(self.entry.get("apps", [])))["icon"]
 
     def _member_label_h(self):
         """成员名的单行标签高度（与 AppIcon 紧凑格同一公式）。"""

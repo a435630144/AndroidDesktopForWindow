@@ -11,7 +11,7 @@
   F3 free：拖到被占格与占据者交换
   F4 free：组件占位格拒绝（不覆盖组件）
   F5 free：commit 后落盘正确
-  F6 auto_arrange=True：递进行为恢复（向后兼容）
+  F6 auto_arrange=True：整桌密排（v7e 反馈 4：铺满整行、不留洞）
 
 运行：python tests/test_free_move.py   （offscreen）
 """
@@ -172,10 +172,18 @@ def main(app):
     tgt = cell_of(w, st, 5, 0)
     w._reflow_preview("a", w._cell_at(tgt))
     ea, eb, ec = (st.find_entry(i) for i in ("a", "b", "c"))
-    check("F6 auto 递进：a 落 (5,0)", (ea["col"], ea["row"]) == (5, 0))
-    check("F6 auto 递进：b/c 前移",
+    # v7e 反馈 4：自动排列改成"整桌密排"——目标格超出最后一个槽位时，
+    # 拖的图标排到队尾（不再留 (5,0) 这种洞），b/c 依次前移补位。
+    check("F6 auto 密排：a 排到队尾 (2,0)（不留洞）",
+          (ea["col"], ea["row"]) == (2, 0),
+          "a=%s" % ((ea["col"], ea["row"]),))
+    check("F6 auto 密排：b/c 前移补位 (0,0)/(1,0)",
           (eb["col"], eb["row"]) == (0, 0) and (ec["col"], ec["row"]) == (1, 0),
           "b=%s c=%s" % ((eb["col"], eb["row"]), (ec["col"], ec["row"])))
+    check("F6 auto 密排：占用格连续无洞",
+          sorted((e["col"], e["row"]) for e in st.layout)
+          == [(0, 0), (1, 0), (2, 0)],
+          "cells=%s" % (sorted((e["col"], e["row"]) for e in st.layout),))
 
     print("-" * 60)
     if failures:

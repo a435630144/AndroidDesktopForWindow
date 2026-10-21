@@ -28,7 +28,8 @@ from PySide6.QtCore import (QEasingCurve, QMimeData, QPoint, QPointF,
                             Signal, Property, QTimer)
 from PySide6.QtGui import (QBrush, QColor, QDragEnterEvent, QDragLeaveEvent,
                            QDragMoveEvent, QDropEvent, QFontMetrics,
-                           QLinearGradient, QPen, QPixmap, QPainter)
+                           QLinearGradient, QPainterPath, QPen, QPixmap,
+                           QPainter)
 from PySide6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QMenu,
                                QSlider, QToolTip, QVBoxLayout,
                                QWidget, QWidgetAction)
@@ -46,7 +47,12 @@ MIME_TYPE = "application/x-desktoporg-item"
 # 拖到图标上后进入「合并文件夹」武装状态所需的悬停时长（ms）。
 # 未满即松手 -> 走网格让位置换（安卓 launcher 默认语义）；
 # 悬停足够久图标高亮后松手 -> 合并文件夹。两套手势由此分流。
-DWELL_MERGE_MS = 450
+#
+# 2026-10-21 反馈 1（v7e）：450 → 350。用户原话「挤开反应迟钝，但不能
+# 快到老来不及弹出合并」——挤开本身也提速到 470（PUSH_DWELL_MS），
+# 若提示还是 450，两者只差 20ms，手感上就是"没提示就被挤走"。把**提示
+# 提前**（350）而不是把挤开推后，两条诉求才能同时满足：提示先到 120ms。
+DWELL_MERGE_MS = 350
 
 # 拖放命中分流（2026-10-21 反馈 7 = v7 指导文档 §5.2 双区模型）：
 #   拖影中心在目标核心区（中心 55% 内缩矩形）-> 合并候选（武装 dwell）
@@ -516,20 +522,31 @@ class AppIcon(QWidget):
                    QPointF(box.right() - s * 0.16, box.top() + 1.2))
         members = self.entry.get("apps", [])
         n = len(members)
+        # v7 B5 反馈 13（2026-10-21）：比例改 0.42 / 0.34 / 0.30（1 / 2 / 3-4
+        # 成员），并且一律走 `appsource.draw_icon` 的 contain 居中绘制——
+        # 旧实现"用请求尺寸算偏移、用 pixmap 实际尺寸落笔"，源图偏小时
+        # 迷你图标缩在槽位左上角，看起来只有十几像素。
         if n <= 1:
-            slots = [(0.50, 0.50, 0.52)]
+            slots = [(0.50, 0.50, 0.42)]
         elif n == 2:
-            slots = [(0.28, 0.50, 0.36), (0.72, 0.50, 0.36)]
+            slots = [(0.28, 0.50, 0.34), (0.72, 0.50, 0.34)]
         elif n == 3:
-            slots = [(0.50, 0.27, 0.32), (0.27, 0.73, 0.32), (0.73, 0.73, 0.32)]
+            slots = [(0.50, 0.27, 0.30), (0.27, 0.73, 0.30),
+                     (0.73, 0.73, 0.30)]
         else:
-            slots = [(0.28, 0.28, 0.32), (0.72, 0.28, 0.32), (0.28, 0.72, 0.32), (0.72, 0.72, 0.32)]
+            slots = [(0.27, 0.27, 0.30), (0.73, 0.27, 0.30),
+                     (0.27, 0.73, 0.30), (0.73, 0.73, 0.30)]
+        clip = QPainterPath()
+        clip.addRoundedRect(box, s * 0.24, s * 0.24)
+        p.save()
+        p.setClipPath(clip)      # 防溢出瓷砖（圆角外不再露 icon 边角）
         for (fx, fy, fr), app in zip(slots, members[:4]):
-            cs = max(8, int(s * fr))
-            pm = appsource.icon_pixmap(app, cs, dpr)
-            cx = box.left() + fx * box.width() - cs / 2
-            cy = box.top() + fy * box.height() - cs / 2
-            p.drawPixmap(int(cx), int(cy), pm)
+            cs = max(8, int(round(s * fr)))
+            cx = box.left() + fx * box.width()
+            cy = box.top() + fy * box.height()
+            appsource.draw_icon(p, app, QRectF(cx - cs / 2.0, cy - cs / 2.0,
+                                               cs, cs), dpr)
+        p.restore()
 
     def _paint_label(self, p: QPainter):
         name = self._display_name()

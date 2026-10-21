@@ -497,6 +497,43 @@ def icon_pixmap(app: dict, logical_size: int, dpr: float = 1.0) -> QPixmap:
     return pm
 
 
+def draw_icon(painter, app: dict, rect, dpr: float = 1.0) -> int:
+    """把应用图标按 contain + 居中画进 `rect`（图标绘制**唯一入口**）。
+
+    v7 B5 反馈 13（2026-10-21）：旧绘制点各自算偏移、用 pixmap 的**实际**
+    像素尺寸落笔——源图小于请求尺寸时（`KeepAspectRatio` 缩完只有几十
+    像素的第三方图标），图标就缩在槽位左上角，肉眼就是"加入文件夹后变得
+    非常小"。这里统一三件事：
+      1. contain 缩放（小图**强制上采样**，不允许原尺寸落笔）；
+      2. 按缩放后的逻辑尺寸居中到 rect（非方形源图也不偏）；
+      3. dpr 归一化：pixmap 的 devicePixelRatio 不参与布局计算。
+
+    返回实际绘制的逻辑边长（测试用它断言"请求 56 就真画 ~56"）。
+    """
+    w, h = int(rect.width()), int(rect.height())
+    if w <= 0 or h <= 0:
+        return 0
+    target = max(1, min(w, h))
+    pm = icon_pixmap(app, target, dpr)
+    if pm.isNull():
+        return 0
+    ratio = pm.devicePixelRatio() or 1.0
+    lw, lh = pm.width() / ratio, pm.height() / ratio
+    if lw <= 0 or lh <= 0:
+        return 0
+    scale = min(w / lw, h / lh)
+    dw, dh = max(1, int(round(lw * scale))), max(1, int(round(lh * scale)))
+    if (dw, dh) != (int(round(lw)), int(round(lh))):
+        pm = pm.scaled(max(1, int(round(dw * dpr))),
+                       max(1, int(round(dh * dpr))),
+                       Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        pm.setDevicePixelRatio(dpr)
+    x = int(round(rect.x() + (w - dw) / 2.0))
+    y = int(round(rect.y() + (h - dh) / 2.0))
+    painter.drawPixmap(x, y, pm)
+    return max(dw, dh)
+
+
 def _letter_pixmap(ch: str, size: int) -> QPixmap:
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)

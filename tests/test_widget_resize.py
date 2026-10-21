@@ -169,12 +169,13 @@ def main(app):
               "w=%d span=%d×%d" % (note.width(), cs, rs))
 
         # ---------- R7：控制点圆心压在虚线框上（反馈 2） ----------
-        # 虚线框 = rect().adjusted(2,2,-2,-2)；控制点是圆，圆心必须落在
-        # 那条线上（一半在内一半在外），旧实现内缩半个点宽 -> 看着"浮在框里"。
+        # 控制点是圆，圆心必须落在虚线上。2026-10-21（v7 B5 反馈 20）：
+        # 内缩不再写死 2px，改由点径推导 `_edit_line() = max(3, s//2+1)`
+        # ——固定 2px 时 18px 的圆点有一半落在窗外被裁成碎块。
         note._enter_edit()
         hs = note._handle_rects()
         w, h = note.width(), note.height()
-        line = 2
+        line = note._edit_line()
         centers = {k: (r.center().x(), r.center().y()) for k, r in hs.items()}
         check("R7 角控制点圆心落在虚线框四角",
               abs(centers["nw"][0] - line) <= 1

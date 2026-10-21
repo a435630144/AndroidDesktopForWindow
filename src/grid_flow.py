@@ -193,6 +193,98 @@ def reflow_moves(entries: Sequence[dict], cols: int, dragged_id: str,
     return moves
 
 
+def pack_cells(order_len: int, cols: int, blocked: Iterable[Cell] = (),
+               start: Cell = (0, 0)) -> list:
+    """从 start 起按阅读序给出 `order_len` 个**未被占**的格子。
+
+    阅读序 = 「铺满整行再换行」：同一行内列递增，行尾回到列 0、行 +1。
+    blocked（组件占位）整格跳过——组件是网格一等公民，图标不许压它。
+    """
+    cols = max(1, int(cols))
+    used = set(blocked or ())
+    out = []
+    col = max(0, min(int(start[0]), cols - 1))
+    row = max(0, int(start[1]))
+    # 上界保护：blocked 最多占满若干行，给 2 倍余量足以排完（防死循环）
+    limit = (row + order_len + len(used) + 2) * cols + cols
+    guard = 0
+    while len(out) < order_len:
+        guard += 1
+        if guard > limit:
+            break
+        if (col, row) not in used:
+            out.append((col, row))
+        col += 1
+        if col >= cols:
+            col, row = 0, row + 1
+    return out
+
+
+def auto_arrange_moves(entries: Sequence[dict], cols: int, dragged_id: str,
+                       target: Cell, extra_occupied: Iterable[Cell] = ()
+                       ) -> Optional[dict]:
+    """**自动排列**（反馈 4，v7e）：拖放后整桌密排的位移清单。
+
+    与 `reflow_moves` 的分工（用户原话："自动排列的时候……其余图标应该
+    自动排列铺满整行后再排列到第二行"）：
+      - `reflow_moves` 只让位：把 dragged 插进阅读序、新旧位置之间滑动
+        一格，**其余空格原样保留**（自由摆放语义）；
+      - 本函数在自动排列下接管：dragged 插到目标处的阅读序位置后，
+        全体图标从左上角**连续密排**，中间不留洞。
+
+    算法（纯函数）：
+      1. 除 dragged 外的图标按阅读序（row, col）排好；
+      2. 找到第一个比 target 靠后的图标，dragged 插在它前面
+         （目标在队尾之外 = 追加到队尾）；
+      3. 按新的阅读序从 (0,0) 逐格分配，跳组件占位（含 extra_occupied）。
+
+    target 越界夹紧到 [0, cols-1]（行不限：可分页）。脏布局（重复占用格）
+    返回 None —— 与 reflow_moves 同策：宁可不预览也别写坏。
+    """
+    if cols < 1:
+        return None
+    live = [e for e in entries if e.get("id") is not None]
+    ids = [e.get("id") for e in live]
+    if dragged_id not in ids:
+        return None
+    cells = [_cell_of(e) for e in live]
+    if len(set(cells)) != len(cells):
+        return None
+
+    tcol = max(0, min(int(cols) - 1, int(target[0])))
+    trow = max(0, int(target[1]))
+    tkey = (trow, tcol)
+
+    others = [e for e in live if e.get("id") != dragged_id]
+    others.sort(key=lambda e: (int(e.get("row", 0) or 0),
+                               int(e.get("col", 0) or 0)))
+    order = [e["id"] for e in others]
+
+    blocked = set(extra_occupied or ())
+    # 槽位 = 密排后的全部格（含给 dragged 的那一格）；插入点取**目标格的
+    # 阅读序下标**——密排世界里"拖到第 3 格"就该落第 3 位，而不是"排在某
+    # 个现有图标前后"。被组件占掉的格不在槽位表里，自然顺延到下一个空槽。
+    slots = pack_cells(len(order) + 1, cols, blocked)
+    tkey = (trow, tcol)
+    pos = len(slots) - 1
+    for i, c in enumerate(slots):
+        if (c[1], c[0]) >= tkey:
+            pos = i
+            break
+    order.insert(pos, dragged_id)
+
+    targets = slots
+    by_id = {e.get("id"): e for e in live}
+    moves = {}
+    for eid, cell in zip(order, targets):
+        e = by_id.get(eid)
+        if e is None:
+            continue
+        if _cell_of(e) != cell:
+            moves[eid] = cell
+    return moves
+
+
 def _forward_scan_cell(start: Cell, blocked: set, cols: int,
                        max_row: int) -> Cell:
     """从 start 起按阅读序找第一个非 blocked 格（v6 §5.0 顺延扫描）。
@@ -980,19 +1072,30 @@ def to_free_coords(storage) -> int:
 
 
 def to_grid_coords(storage) -> int:
-    """切回网格：**只补缺、不换算、不删 fx/fy**（v7 B2 / 反馈 13）。
+    """切回网格：图标**只补缺**、组件**按无界位回算**，一律不删 fx/fy。
 
-    旧实现按 `fx/fy` 反算吸附回最近格点，然后 `del fx/fy`——两件事都是
-    破坏性的：
+    旧实现（v6）按 `fx/fy` 反算吸附回最近格点，然后 `del fx/fy`——两件事
+    都是破坏性的：
 
     1. 用户在无界模式摆好的位置当场销毁（下次进去重新从格点生成）；
     2. 吸附结果覆盖了整理好的 `col/row` → 切回来一堆 cell 叠在一起
-       （反馈 13 的截图就是这个）。
+       （v6 反馈 13 的截图就是这个）。
 
-    新契约：**双坐标只增不删**。无界模式期间从不写 `col/row`（松手只写
-    `fx/fy/fpage`），所以切回来天然就是原样，这里几乎什么都不做；只有
-    对"根本没有 col/row"的条目（并发新增 / 极旧数据）才按 fx/fy 补一次
-    反算。返回**补算个数**（正常切换恒为 0）。
+    v7 B2 改成"只补缺"，对**图标**是对的：两套布局并存，切回网格就该
+    回到网格那一套（用户可能只是去无界临时摆一下）。
+
+    2026-10-21 反馈 3（v7e）：**组件必须例外**。用户原话"从无界切换回
+    网格会忘记小组件的坐标位置，导致 cell 重叠"。原因有两层：
+      a) `widget_base._save_geom_free` 曾把 `row` 改写成 `page*rpp`
+         （已修，改只写 fpage）；
+      b) 即便 row 没被冲掉，无界里把组件拖到新位置后，`col/row` 仍是
+         **上一次网格布局的旧格**——切回来组件凭空跳回旧位，而那一格
+         可能已被图标占用 = "忘记坐标 + cell 重叠"。
+    组件是**单实例、无"双布局"语义**的（用户看到的就是屏幕上那一个），
+    所以切回网格按它**当前无界像素位**就近吸附，再消解组件间冲突。
+    fx/fy 保留：下次进无界仍回到用户摆的像素位（只增不删不变）。
+
+    返回**换算/补算个数**。
     """
     n = 0
     for e in getattr(storage, "layout", []):
@@ -1006,19 +1109,40 @@ def to_grid_coords(storage) -> int:
         e["col"], e["row"] = col, row
         n += 1
     for w in getattr(storage, "widgets", []):
-        if not w.get("anchored") or ("col" in w and "row" in w):
+        if not w.get("anchored"):
             continue
         if "fx" not in w or "fy" not in w:
             continue
-        page = entry_page(storage, w)
+        # 此刻 layout_mode 已是 grid，entry_page 会改读 row —— 必须显式
+        # 取无界页（fpage），否则第 2 页的组件被吸附到第 0 页。
+        page = _fpage_of(w)
         col, row = free_pos_cell(storage, int(w.get("fx", 0)),
                                  int(w.get("fy", 0)), page)
         cs, rs = widget_span(storage, w)
         col, row = clamp_widget_cell(storage, col, row, cs, rs)
+        col, row = resolve_widget_cell(storage, col, row, cs, rs,
+                                       exclude_id=w.get("id"))
+        if (w.get("col"), w.get("row")) != (col, row):
+            n += 1
         w["col"], w["row"] = col, row
+        w["colspan"], w["rowspan"] = cs, rs
         w["x"], w["y"] = cell_pos(storage, col, row)
-        n += 1
     return n
+
+
+def _fpage_of(entry) -> int:
+    """无界页号（缺 fpage 时退回 row 推导）——与 entry_page 的无界分支同源。
+
+    独立出来是因为 to_grid_coords 在 `layout_mode` 已切回 grid **之后**
+    才被调用，此时 entry_page 会走网格分支。
+    """
+    raw = entry.get("fpage")
+    if not isinstance(raw, bool):
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            pass
+    return page_of(int(entry.get("row", 0) or 0))
 
 
 def extra_pages(storage) -> list:

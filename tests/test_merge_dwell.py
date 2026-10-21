@@ -14,7 +14,7 @@
   D3 未武装松手仍走 reflowDrop（快速拖到图标上 = 让位/交换）
   D4 窗口 _reflow_preview：目标格被非拖动条目占用时不动布局
   D5 目标格为空时照常让位预览（回归：让位不能整体失效）
-  D6 dwell 时长足够看清提示（>= 450ms）
+  D6 dwell 时长足够看清提示（300~400ms）且推让留出 >=100ms 余量
   D7 拖动经过图标（dragMove 数次）后目标格占用者位置不变
 
 运行：python tests/test_merge_dwell.py   （offscreen）
@@ -128,8 +128,9 @@ def main(app):
     icon.dropEvent(drag_event("a"))
     check("D3 未武装松手仍走 reflowDrop（快速拖 = 让位）",
           got["drop"] == 1, "drop=%d" % got["drop"])
-    check("D6 dwell 时长 >= 450ms（够看清合并提示）", DWELL_MERGE_MS >= 450,
-          "%dms" % DWELL_MERGE_MS)
+    # v7e 反馈 1：450 缩到 350（提示更早出现），同时推让 470 留 120ms 余量
+    check("D6 dwell 300~400ms（够看清合并提示）",
+          300 <= DWELL_MERGE_MS <= 400, "%dms" % DWELL_MERGE_MS)
 
     # ---------- D4/D5/D7：窗口层不再抢走占用者 ----------
     st = make_state([("a", 0, 0), ("b", 1, 0), ("c", 3, 0)])

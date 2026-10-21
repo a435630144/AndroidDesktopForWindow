@@ -29,6 +29,10 @@ from . import theme
 from . import win32_layer
 from .win32_layer import attach_to_desktop
 
+# 编辑态控制点直径基准（逻辑像素，v7 B5 反馈 20）。
+# 旧基准 14 偏大（18px @125%），iOS/安卓编辑框手柄在 10~12。
+HANDLE_D_REF = 10
+
 
 class FloatingWidget(QWidget):
     closed = Signal(str)  # widget id
@@ -297,18 +301,26 @@ class FloatingWidget(QWidget):
         return True
 
     def _save_geom_free(self):
-        """v6 §1.3 无界模式几何持久化：fx/fy = 松手像素位。
+        """v6 §1.3 无界模式几何持久化：fx/fy = 松手像素位（页内坐标）。
 
-        x/y 同步写一份——widget_pos 的fx/fy 回退源与 __init__ 的初始
-        geometry 都读它；row 置为当前页载体（无界模式 row 只决定第几页，
-        松手即落入当前页）。
+        x/y 同步写一份——widget_pos 的 fx/fy 回退源与 __init__ 的初始
+        geometry 都读它。
+
+        2026-10-21 反馈 3（v7e）：**不再写 `row`**。row 是网格坐标
+        （第几页 + 页内行），无界拖动把它改成 `page*rpp` 等于把用户整理
+        好的网格行号冲掉：切回网格时组件落在**页首行**、正压着一排图标
+        （用户描述"忘记小组件的坐标位置 + cell 重叠"）。页归属写
+        `fpage`——`entry_page()` 在无界模式读的就是它（v7 B2 双坐标分派），
+        写 row 是既无用又有害的重复来源。
         """
+        page = grid_flow.current_page()
+        dx, dy = grid_flow.page_offset(self.storage, page)
         g = self.geometry()
-        self.entry["fx"], self.entry["fy"] = g.x(), g.y()
-        self.entry["x"], self.entry["y"] = g.x(), g.y()
+        fx, fy = g.x() - dx, g.y() - dy
+        self.entry["fx"], self.entry["fy"] = fx, fy
+        self.entry["x"], self.entry["y"] = fx, fy
         self.entry["w"], self.entry["h"] = g.width(), g.height()
-        self.entry["row"] = (grid_flow.current_page()
-                             * grid_flow.rows_per_page())
+        self.entry["fpage"] = page
         self.storage.save()
 
     def _close_rect(self):
@@ -326,28 +338,31 @@ class FloatingWidget(QWidget):
     EDIT_HANDLES = ("nw", "n", "ne", "e", "se", "s", "sw", "w")
 
     def _handle_size(self):
-        """控制点边长（随 DPI×用户缩放，18@125%）。"""
+        """控制点直径（视觉尺寸，随 DPI×用户缩放）。
+
+        2026-10-21 反馈 20（v7e / v7 B5）：基准 14 → 10（iOS/安卓编辑框
+        手柄在 10~12 逻辑像素），本机 125% = 13px（旧 18px）。旧值偏大
+        且圆心贴边被裁，两个毛病叠在一起才显得"像碎块"。
+        """
         try:
             m = self.storage.icon_chrome_scale()
         except Exception:
             m = 1.0
-        return max(12, int(round(14 * float(m))))
+        return max(9, int(round(HANDLE_D_REF * float(m))))
 
-    def _handle_rects(self):
-        """八个控制点矩形（部件内坐标）；非编辑态 / 无界模式返回 {}。
+    def _edit_line(self):
+        """编辑虚线框（与圆点圆心）距部件边缘的距离。
 
-        控制点**圆心压在虚线上**（2026-10-19 用户反馈 2）：虚线框是
-        rect().adjusted(2,2,-2,-2)，所以控制点中心 = 该框的四角/四边中点，
-        圆点一半在内一半在外——安卓小组件编辑框的观感。旧实现把中心
-        内缩了半个点宽，看起来"浮在框里"。
+        由点径推导：`line = max(3, s//2 + 1)`——圆心距边 ≥ 半径 + 1，
+        任何 DPI 下圆点都**完整落在部件矩形内**（旧实现固定内缩 2px，
+        圆心压在 2px 处，18px 的点有一半在窗外被裁掉）。
         """
-        if not self._edit_mode or not self.anchored:
-            return {}
-        if grid_flow.free_mode(self.storage):
-            return {}
-        s = self._handle_size()
+        return max(3, self._handle_size() // 2 + 1)
+
+    def _handle_center(self, key) -> tuple:
+        """控制点圆心（部件内坐标）：恒等于虚线框的四角 / 四边中点。"""
+        line = self._edit_line()
         w, h = self.width(), self.height()
-        line = 2                      # 与 paintEvent 的虚线框内缩一致
         left, top, right, bottom = line, line, w - line, h - line
         pts = {
             "nw": (left, top), "n": (w // 2, top),
@@ -356,11 +371,42 @@ class FloatingWidget(QWidget):
             "sw": (left, bottom), "s": (w // 2, bottom),
             "se": (right, bottom),
         }
-        return {k: QRect(x - s // 2, y - s // 2, s, s)
-                for k, (x, y) in pts.items()}
+        return pts[key]
+
+    def _handle_rects(self):
+        """八个控制点的**可见圆**矩形（部件内坐标）；非编辑态 / 无界返回 {}。
+
+        v7 B5 反馈 20：圆心 = 虚线框角点/边中点（`_edit_line()` 内缩），
+        边长 = 直径 s —— 整圆在部件内，不再被窗口边界裁成碎块。
+        """
+        if not self._edit_mode or not self.anchored:
+            return {}
+        if grid_flow.free_mode(self.storage):
+            return {}
+        s = self._handle_size()
+        out = {}
+        for k in ("nw", "n", "ne", "w", "e", "sw", "s", "se"):
+            cx, cy = self._handle_center(k)
+            out[k] = QRect(int(cx - s // 2), int(cy - s // 2), s, s)
+        return out
+
+    def _handle_hit_rects(self):
+        """控制点**命中区**：每点外扩到 ≥ 22×22（HIG 最小点击目标）。
+
+        画得小、点得中——旧实现直接用 18px 可见矩形做命中，可见部分只有
+        右下角一小块弧，用户点在"看起来是圆"的位置经常不中。
+        """
+        s = self._handle_size()
+        side = max(22, s + 9)
+        out = {}
+        for k, r in self._handle_rects().items():
+            c = r.center()
+            out[k] = QRect(int(c.x() - side / 2), int(c.y() - side / 2),
+                           side, side)
+        return out
 
     def _handle_at(self, pos):
-        for k, r in self._handle_rects().items():
+        for k, r in self._handle_hit_rects().items():
             if r.contains(pos):
                 return k
         return None
@@ -471,17 +517,24 @@ class FloatingWidget(QWidget):
             if self._edit_mode:
                 # 编辑框：虚线圈 + 八点（安卓小组件编辑语言的桌面版）。
                 # 线色用 ACCENT，点用实心白 + 主色描边，保证深/浅壁纸都可辨。
+                # 2026-10-21 反馈 20（v7e / v5 B5）：虚线框与圆点**共用**
+                # `_edit_line()` 的圆心，圆点用 center+半径绘制——
+                # QRect.adjusted(1,1,-1,-1) 在奇偶直径下会偏心 0.5px，
+                # 正是"看起来不够圆"的第二层原因。
+                line = self._edit_line()
                 pen = QPen(QColor(theme.ACCENT))
                 pen.setWidth(2)
                 pen.setStyle(Qt.DashLine)
                 p.setPen(pen)
                 p.setBrush(Qt.NoBrush)
-                r = self.rect().adjusted(2, 2, -2, -2)
+                r = self.rect().adjusted(line, line, -line, -line)
                 p.drawRoundedRect(r, theme.RADIUS_PANEL, theme.RADIUS_PANEL)
-                p.setPen(QPen(QColor(theme.ACCENT), 1.5))
-                p.setBrush(QColor(255, 255, 255, 235))
-                for hr in self._handle_rects().values():
-                    p.drawEllipse(hr.adjusted(1, 1, -1, -1))
+                s = self._handle_size()
+                p.setPen(QPen(QColor(theme.ACCENT), 1.25))
+                p.setBrush(QColor(255, 255, 255, 242))
+                for key in ("nw", "n", "ne", "w", "e", "sw", "s", "se"):
+                    cx, cy = self._handle_center(key)
+                    p.drawEllipse(QPointF(cx, cy), s / 2 - 0.5, s / 2 - 0.5)
             return
         p.setBrush(theme.SURFACE)
         p.setPen(theme.BORDER)

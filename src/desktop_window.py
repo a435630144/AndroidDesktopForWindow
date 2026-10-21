@@ -26,14 +26,20 @@ HTTRANSPARENT, HTCLIENT = -1, 1
 
 # 拥挤推让的悬停时长（ms）：拖到别人格子上停这么久，对方实时让开。
 # 2026-10-20 用户反馈 F3："想合并却先被挤走"——旧值 260ms 比合并武装
-# （DWELL_MERGE_MS=450ms）**短**，拖影抖动一下掉回"擦边"目标就被推走，
+# （DWELL_MERGE_MS）**短**，拖影抖动一下掉回"擦边"目标就被推走，
 # 合并提示永远等不到。改成 dwell + 250ms：**提示先出现，推让后到**。
 # 2026-10-21 反馈 7 起合并/挤走改由双区模型分流（iconwidget._hit_target
 # 按拖影中心判核心区），本窗口只在**让位区**的 dragMove 里被驱动——
 # 合并候选的拖动根本到不了这里（合成事件发给目标图标），"提示优先"
 # 由路由结构保证；进核心区时桌面收到的 dragLeave 也会撤销推让
 # （见 dragLeaveEvent），两者不会双触发。
-PUSH_DWELL_MS = DWELL_MERGE_MS + 250
+#
+# 2026-10-21 反馈 1（v7e）：700 → 470（dwell 350 + 120）。用户原话
+# 「挤开反应可以更快，但不能快到老来不及弹出合并」——所以不是把推让
+# 拉近到与提示同级，而是**两头一起提前**：提示 350（早 100ms）、推让
+# 470（早 230ms），间距反而从 250 收到 120——反应更快、先后关系仍在。
+# 双区模型下二者几何互斥，这个间距是"手感留白"而非并发保护。
+PUSH_DWELL_MS = DWELL_MERGE_MS + 120
 
 # 反馈 8（2026-10-21）：「图标位于屏幕边缘且左或右存在分页的时候，会在
 # hover 图标的情况下，把图标拽到下一个分页，就跟手机的逻辑一样。」
@@ -43,7 +49,10 @@ PUSH_DWELL_MS = DWELL_MERGE_MS + 250
 #      手势抢同一位置（翻页后旧页的推让武装也会被 _on_edge_flip 撤掉）；
 #   2. 没有邻页（首页再往上 / 末页再往下）不武装，见 _edge_dir_at。
 EDGE_FLIP_BAND = 24            # 指针进边缘带（px）才算"在边缘"
-EDGE_FLIP_DWELL_MS = 600       # 悬停多久才翻页
+# 2026-10-21 反馈 1（v7e）：600 → 360。推让整体提前到 470 后，翻页若仍
+# 停在 600 就会变成"先推让、后翻页"，边缘列的目标图标先被挤走再整页滑
+# 动——顺序反了（翻页是视图动作，应该先发生）。360 为推让留 110ms 余量。
+EDGE_FLIP_DWELL_MS = 360       # 悬停多久才翻页
 
 
 class DesktopWindow(QWidget):
@@ -83,6 +92,10 @@ class DesktopWindow(QWidget):
         # （_hl_span），否则 2×1 组件只框住 1 格，用户以为只检测一半
         self._hl_cell = None
         self._hl_span = (1, 1)
+        # 反馈 8（v7e）：帧统计（paintEvent 自绘耗时 / 绘制面积），
+        # 用于盯"全程 60 帧"——整屏重绘会直接把 last_area 顶到屏幕面积。
+        self._frame_stats = {"count": 0, "last_ms": 0.0, "max_ms": 0.0,
+                             "area": 0, "last_area": 0, "ring": [], "ts": []}
         self.icons = {}
         # v6 §4：图标当前构建所用的 IconLayout 签名（快照就绪前后 cell
         # 变化时检测到即重建——启动时 rebuild 早于 GridMetrics，旧 chrome
@@ -141,18 +154,25 @@ class DesktopWindow(QWidget):
 
     # ---------- 模式 ----------
     def _organize_mode(self) -> bool:
-        """桌面整理模式 = 「接管系统桌面」开关（v6 §7.2 唯一入口）。
+        """桌面整理接管 = 「接管系统桌面」**且不是仅小组件模式**。
 
-        开：隐藏原生图标，由本窗口全盘接管（框选 / 自己的右键菜单）；
-        关：仅悬浮，原生桌面照常可用。
+        v6 §7.2 的唯一入口；2026-10-21 反馈 7（v7e）追加第二项：
+        用户原话"切换到仅小组件模式的时候，应该显示原生桌面图标，现在是
+        空白"。旧实现让 widgets_only 继续藏着原生图标、只是不画自己的
+        图标 —— 于是桌面上什么都没有。语义上"仅小组件"= **只保留小组件，
+        桌面还给系统**：原生图标可见可点，网格/页点/框选/右键菜单全部退场。
+
+        这一判定同时决定：原生图标显隐、命中分流（HTTRANSPARENT）、
+        是否画页点与空态提示。
         """
-        return self.storage.takeover()
+        return self.storage.takeover() and not self._widgets_only()
 
     def _widgets_only(self) -> bool:
-        """仅小组件模式（2026-10-21 反馈 9）。
+        """仅小组件模式（2026-10-21 反馈 9，v7e 反馈 7 修订）。
 
-        开：只显示小组件——图标全隐藏、页点/空态提示停画、组件切无界
-        （不占格）；接管不变（原生图标仍由我们藏着）。
+        开：只保留小组件——我们自己的图标不建、页点/空态提示不画、
+        组件切无界（不占格）；**桌面还给系统**：原生图标恢复可见可点
+        （`_organize_mode()` 因此返回 False，命中整窗穿透）。
         """
         return bool(self.storage.get_setting("widgets_only"))
 
@@ -188,6 +208,10 @@ class DesktopWindow(QWidget):
         if switched:
             self.set_layout_mode(target)     # 内部自带坐标换算 + rebuild
         self.rebuild(stagger=True)
+        # 反馈 7（v7e）：仅小组件模式把桌面还给系统——原生图标按
+        # `_organize_mode()`（接管 且 非 widgets_only）显隐，进出都要同步，
+        # 否则进来一片空白、出去原生图标还压在壁纸上。
+        self._sync_native_icons()
         self.storage.save()
         self.update()
 
@@ -281,8 +305,12 @@ class DesktopWindow(QWidget):
 
     # ---------- 原生桌面图标 ----------
     def _sync_native_icons(self):
-        """按「接管系统桌面」开关隐藏 / 恢复系统原生桌面图标（克隆模式核心）。"""
-        hide = self.storage.takeover()
+        """按「接管系统桌面」开关隐藏 / 恢复系统原生桌面图标（克隆模式核心）。
+
+        反馈 7：判定必须走 `_organize_mode()`，不能直读 takeover——仅小组件
+        模式下接管开着但桌面要给回系统（原生图标可见、可点）。
+        """
+        hide = self._organize_mode()
         win32_layer.set_native_icons_visible(not hide)
 
     def apply_native_icons_setting(self):
@@ -300,7 +328,7 @@ class DesktopWindow(QWidget):
         """守护周期回调：保持原生图标隐藏（explorer 重启等会令其重新可见）；
         M1 附加：工作区几何变化（DPI / 分辨率 / 任务栏位置变化，
         WM_SETTINGCHANGE/WM_DISPLAYCHANGE 的轮询兜底）时重算网格。"""
-        if self.storage.takeover() and self.isVisible():
+        if self._organize_mode() and self.isVisible():
             # 三重巡检（2026-10-19）：
             #   1) 缓存标志——进程内我们自己知道的隐藏状态；
             #   2) 图标列表实查——explorer 重启 / 重建 SysListView32 后句柄
@@ -317,6 +345,56 @@ class DesktopWindow(QWidget):
                 self._update_grid_metrics()
 
     def paintEvent(self, event):
+        # 反馈 8（v7e）：帧耗时探针。只测本窗口自绘耗时（不含 DWM 合成），
+        # 但足以定位"每次 update 都整屏刷"这类结构性浪费——测试断言
+        # 红框换格时**绘制面积**远小于全屏，就是这条链的守门人。
+        import time as _time
+        t0 = _time.perf_counter()
+        self._paint_frame(event)
+        self._note_frame((_time.perf_counter() - t0) * 1000.0, event.rect())
+
+    def _note_frame(self, ms: float, rect):
+        """记录一帧绘制耗时 / 面积（环形缓冲，零依赖，恒开）。"""
+        import time as _time
+        st = self._frame_stats
+        st["count"] += 1
+        st["last_ms"] = ms
+        st["max_ms"] = max(st["max_ms"], ms)
+        st["area"] += int(rect.width()) * int(rect.height())
+        st["last_area"] = int(rect.width()) * int(rect.height())
+        ring = st["ring"]
+        ring.append(ms)
+        if len(ring) > 120:
+            del ring[0]
+        ts = st["ts"]
+        ts.append(_time.perf_counter())
+        if len(ts) > 120:
+            del ts[0]
+
+    def frame_stats(self) -> dict:
+        """帧统计快照（探针 / 测试 / 排查卡顿用）。
+
+        fps 是**重绘帧率**（桌面静止时没有重绘，读数会很低/为 0，属正常）；
+        动画/拖动期间它才是有效指标。峰值 max_ms 是进程内累计最大自绘耗时，
+        超过 16.7ms 的那一帧就是会掉帧的帧。
+        """
+        import time as _time
+        st = self._frame_stats
+        ring = sorted(st["ring"])
+        p95 = ring[int(len(ring) * 0.95)] if ring else 0.0
+        n = max(1, len(ring))
+        ts = st["ts"]
+        fps = 0.0
+        if len(ts) >= 2 and (_time.perf_counter() - ts[-1]) < 0.5:
+            span = ts[-1] - ts[0]
+            if span > 0.001:
+                fps = (len(ts) - 1) / span
+        return {"count": st["count"], "last_ms": st["last_ms"],
+                "max_ms": st["max_ms"], "avg_ms": sum(ring) / n,
+                "p95_ms": p95, "last_area": st["last_area"],
+                "total_area": st["area"], "fps": fps}
+
+    def _paint_frame(self, event):
         hl = self._hl_cell is not None
         if self.attached:
             # 命中填充：分层窗口（WA_TranslucentBackground + WS_EX_LAYERED）的
@@ -325,7 +403,12 @@ class DesktopWindow(QWidget):
             # 启动）。全窗铺一层 alpha=2（0.8% 不透明度，视觉不可见）使整个
             # surface 可被系统命中；「是否吃事件」仍由 nativeEvent 策略决定
             # （原生模式空闲对非图标区返回 HTTRANSPARENT，穿透不受影响）。
-            self._paint_hit_fill()
+            #
+            # 反馈 7（v7e）：仅小组件模式**一片都不画**。alpha=0 的像素系统
+            # 不会命中——本窗口整块变成"不存在"，原生桌面图标照常可点，
+            # 组件是独立顶层窗口、各自吃自己的矩形。
+            if not self._widgets_only():
+                self._paint_hit_fill()
             # 空态提示只在整理模式画：原生模式下桌面是系统原生的，不能盖任何东西；
             # 仅小组件模式（反馈 9）也不画——没有图标就没有"空空如也"
             if (not self.icons and self._organize_mode()
@@ -462,8 +545,13 @@ class DesktopWindow(QWidget):
         if (e.pos() - self._band_start).manhattanLength() >= QApplication.startDragDistance():
             self._band_moved = True
         if self._band_moved:
+            old = self._band_rect
             self._band_rect = QRect(self._band_start, e.pos()).normalized()
-            self.update()
+            # 反馈 8：框选也走脏区（旧框 ∪ 新框），不再整屏重绘
+            r = self._band_rect
+            if old is not None:
+                r = r.united(old)
+            self.update(r.adjusted(-2, -2, 2, 2))
 
     def mouseReleaseEvent(self, e):
         if e.button() != Qt.LeftButton or self._band_start is None:
@@ -717,16 +805,39 @@ class DesktopWindow(QWidget):
         return grid_flow.cell_by_overlap(
             self.storage, (tl.x(), tl.y(), g.width(), g.height()))
 
+    def _hl_rect(self, cell, span) -> QRect:
+        """红框的窗口矩形（空 cell 返回空矩形）。绘制与脏区共用同一份定义。"""
+        if cell is None:
+            return QRect()
+        cs, rs = span
+        x, y = grid_flow.cell_pos(self.storage, cell[0], cell[1])
+        cw, ch = grid_flow.cell_size(self.storage)
+        return QRect(x - 3, y - 3, cw * max(1, int(cs)) + 6,
+                     ch * max(1, int(rs)) + 6)
+
     def _set_highlight(self, cell, span=(1, 1)):
-        """v6 §5.2：目标格红框。只在跨格/换跨度时重绘——dragMove 是高频
-        事件，全屏窗口每次 update() 都贵，跨格才换目标。
+        """v6 §5.2：目标格红框。只在跨格/换跨度时重绘。
 
         span：占位格数（反馈 5）。组件是多格占位，红框要画成整块；
         图标永远是 1×1（默认值）。
+
+        2026-10-21 反馈 8（v7e）：**只重绘两个框的并集**。旧实现调
+        `self.update()`（全窗）——全屏分层窗口每次 update 都是一次整屏
+        ARGB 合成，dragMove 每跨一格就来一次，正是"拖动时掉帧"的主因。
+        红框之外那块像素根本没变（命中填充是整片均匀 alpha=2），
+        只擦旧框 + 画新框即可。
         """
-        if cell != self._hl_cell or tuple(span) != self._hl_span:
-            self._hl_cell = cell
-            self._hl_span = tuple(span) if cell is not None else (1, 1)
+        span = tuple(span)
+        if cell == self._hl_cell and span == self._hl_span:
+            return
+        old = self._hl_rect(self._hl_cell, self._hl_span)
+        self._hl_cell = cell
+        self._hl_span = span if cell is not None else (1, 1)
+        new = self._hl_rect(self._hl_cell, self._hl_span)
+        r = old.united(new)
+        if r.isValid() and not r.isEmpty():
+            self.update(r)
+        elif old.isValid() and new.isValid():
             self.update()
 
     def _drag_pos(self, fallback: QPoint):
@@ -789,9 +900,17 @@ class DesktopWindow(QWidget):
         self.storage.save()
         for eid, (fx, fy) in moved.items():
             icon = self.icons.get(eid)
-            if icon is not None:
-                icon.animate_to(fx, fy)
-                icon.set_drag_ghost(False)
+            if icon is None:
+                continue
+            # 2026-10-21 反馈 2（v7e）：「无界模式移动图标还有一个奇怪的
+            # 回弹动画」。落点就是拖影松手的那一格像素——拖影已经全程
+            # 贴在指针下面，图标本体此时还在**起点**（拖动期间它以拖影
+            # 为代表、本体不可见）。旧实现 animate_to 从起点弹到落点，
+            # 弹簧曲线 0.8 阻尼带过冲 → 肉眼看到"回弹一下才停住"。
+            # 正确语义：拖影消失的同时本体出现在落点，位移为零。
+            # 先 move 再取消 ghost（顺序反了会先在起点闪一帧本体）。
+            icon.move(int(fx), int(fy))
+            icon.set_drag_ghost(False)
         self._cull_page_icons()
         self._clear_preview()
         self.update()
@@ -1053,6 +1172,15 @@ class DesktopWindow(QWidget):
                    "DEV 网格 ox=%d oy=%d %d列×%d行 格%dx%d 第%d/%d页"
                    % (m.ox, m.oy, m.cols, m.rows, m.cw, m.ch,
                       self._page + 1, max(1, total)))
+        # 反馈 8（v7e）：帧率/峰值读数——排查"掉帧卡顿"时不用再开性能
+        # 分析器，开发者模式左上角直接看（峰值 > 16ms 就是掉帧帧）。
+        st = self.frame_stats()
+        p.setPen(QPen(QColor(0, 255, 170, 200), 1))
+        p.drawText(QRect(x0 + 6, y0 + 24, 560, 18),
+                   Qt.AlignLeft | Qt.AlignVCenter,
+                   "帧 %.0ffps  均 %.1fms  峰 %.1fms  上次绘制 %.1f万px"
+                   % (st["fps"], st["avg_ms"], st["max_ms"],
+                      st["last_area"] / 10000.0))
         p.end()
 
     # ---------- 重建 ----------
@@ -1312,6 +1440,18 @@ class DesktopWindow(QWidget):
             # （目标被占时会落到第一个空格），红框必须画在那一格，
             # 否则用户看着红框松手、图标却出现在别处
             self._set_highlight(self._extract_landing_cell(cell))
+            return
+        if self._hl_cell == cell:
+            # 反馈 8（v7e，性能）：**同一格不重算**。dragMove 按鼠标采样率
+            # 来（高精度鼠标 125~1000Hz），而布局只与"哪一格"有关——同一格
+            # 重复跑 _free_moves/_arrange_moves + 重启动画是纯粹的每帧浪费。
+            # 只补一件事：推让武装可能被 dragLeave 撤销过（拖影压到图标再
+            # 出来），这里把它重新武装，其余一律跳过。
+            occ = self.storage.occupant(cell[0], cell[1], exclude_id=dragged)
+            if occ is not None and self._push_cell != cell:
+                self._push_cell = cell
+                self._push_dragged = dragged
+                self._push_timer.start()
             return
         self._set_highlight(cell)       # v6 §5.2：红框跟随面积判定结果
         self._reflow_preview(dragged, cell)
@@ -1681,14 +1821,8 @@ class DesktopWindow(QWidget):
         self._push_timer.stop()
         self._push_cell = None
         if self._auto_arrange():
-            cols = self.storage.columns
-            # M6：不再传 rows=GridMetrics.rows——那是单屏行数，分页后目标行
-            # 是全局行（可到 page*rpp + rpp-1），传了会把落点错夹回第 0 页
-            # （probe21 S4 抓到：拖到 page1 底行落回 row 7）。落点限页由
-            # pos_cell 的局部行夹紧保证，reflow 层不做行夹紧。
-            moves = grid_flow.reflow_moves(self.storage.layout, cols, dragged_id,
-                                           cell, rows=None,
-                                           extra_occupied=self._widget_cells())
+            # 自动排列：整桌密排（反馈 4）——落位清单由 _arrange_moves 统一定义
+            moves = self._arrange_moves(dragged_id, cell)
         else:
             moves = self._free_moves(dragged_id, cell)
         if not moves:
@@ -1698,6 +1832,23 @@ class DesktopWindow(QWidget):
     def _auto_arrange(self) -> bool:
         """自动排序开关（v6 §3.2）：False=自由移动（默认）。"""
         return bool(self.storage.get_setting("auto_arrange"))
+
+    def _arrange_moves(self, dragged: str, cell, rows=None):
+        """落位清单唯一入口：自动排列 = 密排，否则 = 局部让位（保留空格）。
+
+        反馈 4（v7e）：用户原话"自动排列的时候，用户只能手动控制小组件的
+        位置，其余图标应该自动排列铺满整行后再排列到第二行"。旧实现两种
+        情况下都走 `reflow_moves`（只把新旧位置之间的图标滑动一格）——
+        别处的空格永远还在，勾了"自动排列图标"跟没勾一样。现在开关
+        真正参与算法选择：开 -> `auto_arrange_moves` 从左上角连续密排。
+        """
+        if self._auto_arrange():
+            return grid_flow.auto_arrange_moves(
+                self.storage.layout, self.storage.columns, dragged, cell,
+                extra_occupied=self._widget_cells())
+        return grid_flow.reflow_moves(
+            self.storage.layout, self.storage.columns, dragged, cell,
+            rows=rows, extra_occupied=self._widget_cells())
 
     def _push_occupied(self):
         """悬停够久：把占着落点的图标实时挤走（手机 launcher 语义）。
@@ -1717,10 +1868,7 @@ class DesktopWindow(QWidget):
         if occ is None:
             return  # 已经空出来了（上次推让生效）
         if self._auto_arrange():
-            moves = grid_flow.reflow_moves(self.storage.layout,
-                                           self.storage.columns, dragged, cell,
-                                           rows=None,
-                                           extra_occupied=self._widget_cells())
+            moves = self._arrange_moves(dragged, cell)
         else:
             moves = None
         if not moves:
@@ -1919,10 +2067,7 @@ class DesktopWindow(QWidget):
             self._commit_preview()
             return
         if self._auto_arrange():
-            moves = grid_flow.reflow_moves(self.storage.layout,
-                                           self.storage.columns,
-                                           dragged_id, cell,
-                                           extra_occupied=self._widget_cells())
+            moves = self._arrange_moves(dragged_id, cell)
         else:
             moves = self._free_moves(dragged_id, cell)
         if not moves:
