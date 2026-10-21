@@ -74,6 +74,7 @@ def _build_registry() -> Dict[str, WidgetSpec]:
     from .widgets_panel import DesktopPanel
     from .widget_monitor import MonitorWidget, draw_preview as _preview_monitor
     from .widgets_calendar import CalendarWidget, draw_preview as _preview_calendar
+    from .widgets_weather import WeatherWidget, draw_preview as _preview_weather
     from .widgets_todo import TodoWidget, draw_preview as _preview_todo
 
     specs = [
@@ -136,7 +137,28 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             spans=((2, 2), (3, 3)),
             category="时间",
             default_anchored=True,
+            settings=(
+                FieldSpec("week_start", "每周起始", "combo", 0,
+                          choices=((0, "周一"), (6, "周日"))),
+            ),
             preview=_preview_calendar,
+        ),
+        WidgetSpec(
+            type="weather",
+            name="天气",
+            summary="当前天气与未来三天，断网看缓存",
+            factory=WeatherWidget,
+            spans=((2, 2), (4, 2)),
+            category="信息",
+            default_anchored=True,
+            multi_instance=False,
+            settings=(
+                FieldSpec("city", "城市", "text", "",
+                          placeholder="例如：北京"),
+                FieldSpec("online", "允许联网", "bool", True,
+                          hint="关闭后只显示上次缓存，不再发起任何请求"),
+            ),
+            preview=_preview_weather,
         ),
     ]
     return {s.type: s for s in specs}
