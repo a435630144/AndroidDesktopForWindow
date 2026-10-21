@@ -4,9 +4,9 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前版本 **v7c**（安装包 2.1.1，v7 迭代的第三个包），**57 个测试脚本 / 约 1200 条断言全绿**；**v7a 的 17 条 + v7b 后的 4 条实机反馈全部闭环**（尺寸两层解耦 / 双布局并存 / 拖拽连锁避让 / 组件命中 / 文件夹文件名与尺寸 / 启动即接管 + 小组件模式 / 文件夹表单独立 + 色板 16 色 / 组件改尺寸后碰撞同步 / 图标默认「中」单源），等实机验收。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v7.md](docs/指导文档_v7.md)，实施计划见 [docs/实施计划_v7.md](docs/实施计划_v7.md)。
+> 🚧 **项目处于活跃开发中**：当前版本 **v7e**（安装包 2.1.3，v7 迭代的第五个包），**65 个测试文件 / 约 1500 条断言全绿**；**v7a 的 17 条 + v7b 4 条 + v7c 10 条 + v7d 8 条实机反馈全部闭环**（尺寸两层解耦 / 双布局并存 / 拖拽连锁避让 / 组件命中 / 文件夹文件名与尺寸 / 启动即接管 + 仅小组件模式 / 文件夹表单独立 + 色板 16 色 / 行列 Stepper / 文件夹分页 / 边缘悬停翻页 / 节拍重调 / 无界松手不回弹 / 自动排列真正密排 / 弹窗图标与控制点圆球 / 脏区重绘守 60fps），等实机验收。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v7.md](docs/指导文档_v7.md)，实施计划见 [docs/实施计划_v7.md](docs/实施计划_v7.md)。
 
-[![release](https://img.shields.io/badge/release-v2.1.1-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-57%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v2.1.3-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-65%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -167,6 +167,8 @@ pwsh -File scripts/build_portable.ps1
 | v7a | 尺寸两层模型（`cell_from_native` + `solve_dims`）+ 网格原点可手动定位 | 2.0.0 |
 | v7b | **v7a 实机 17 项反馈全部闭环**：双布局并存 / 拖拽连锁避让 / 组件透明区命中 / 下拉浮层实心 / 文件夹文件名+尺寸+右上角入口 / 单图标尺寸 / 启动即接管+小组件模式 | 2.1.0 |
 | v7c | **v7b 之后的 4 项反馈闭环**：文件夹「添加应用 / 换颜色」改独立表单（16 预设+自动+自定义，换色不再重建成员）/ 组件手动改尺寸后碰撞形状同步（含四角双向步进）/ 图标默认「中」双源合并 / 网格调试信息移入设置面板 | 2.1.1 |
+| v7d | **v7c 之后的 10 项反馈闭环**：滑条断触防抖 / 行列 Stepper 自绘步进器 / 文件夹满页分页 / 3×3 弹窗两级居中 / 组件 span 碰撞 / 文件夹内拖出碰撞预览 / 入夹双区判定 / 边缘悬停翻页 / 仅小组件模式 / 单图标自动解散文件夹 | 2.1.2 |
+| v7e | **v7d 之后的 8 项反馈闭环 + B5 视觉批次**：推让/提示节拍两头提前（450/700→350/470，翻页 600→360）/ 无界松手不回弹 / 组件右键菜单随模式 / 无界→网格组件坐标回算 / 自动排列真正密排 / 弹窗图标 40–56 与绘制单点 / 控制点改圆球 + ≥22px 命中区 / 仅小组件归还原生桌面 / 脏区重绘守 60fps（`frame_stats` 可读） | 2.1.3 |
 
 **v7 实施中**（规格 [docs/指导文档_v7.md](docs/指导文档_v7.md)，计划 [docs/实施计划_v7.md](docs/实施计划_v7.md)）：
 
@@ -174,7 +176,7 @@ pwsh -File scripts/build_portable.ps1
 - [x] **B2** 双布局并存：网格与无界各自保存，切换零换算零清空（含图标尺寸单源，`icon_px` 退役）
 - [x] **B3** 拖拽：预览避让的连锁结果一并进动画清单（布局为唯一真相），组件落定无条件重排
 - [x] **B4** 命中系统：组件矩形领地内不再吞点击（alpha=2 全窗填充 + `WM_NCHITTEST`→`HTCLIENT`）；逐像素 `AlphaMask` 经评估**不再需要**
-- [ ] **B5** 文件夹与视觉细节：图标比例、弹窗贴边、编辑控制点
+- [x] **B5** 文件夹与视觉细节：弹窗图标比例（`popup_metrics` 与桌面档位解耦）/ 弹窗贴边与两级居中 / 编辑控制点改圆球 + 放大命中区（v7e 完成）
 - [x] **B6** 浮层与分页：下拉弹层实心（`ui_choice.ComboBox`）、分页入口两模式可用
 - [ ] **v7.1**（延后）：组件中心 / 组件商店（模块化组件生态）
 

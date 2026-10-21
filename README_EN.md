@@ -4,9 +4,9 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: current version **v7c** (installer 2.1.1, third package of the v7 line) with **57 test scripts / ~1200 assertions green**; **all 17 items from v7a plus the 4 follow-ups after v7b are closed** (two-layer sizing / coexisting dual layouts / chained drag displacement / widget hit-testing / folder labels & sizing / takeover-by-default + widgets mode / standalone folder forms with 16-color palette / span sync after manual resize / single-source default icon size), pending field verification. Bug reports and ideas are welcome via Issues — current spec: [docs/指导文档_v7.md](docs/指导文档_v7.md), plan: [docs/实施计划_v7.md](docs/实施计划_v7.md) (both Chinese).
+> 🚧 **Under active development**: current version **v7e** (installer 2.1.3, fifth package of the v7 line) with **65 test files / ~1500 assertions green**; **all 17 items from v7a, 4 after v7b, 10 after v7c and 8 after v7d are closed** (two-layer sizing / coexisting dual layouts / chained drag displacement / widget hit-testing / folder labels & sizing / takeover-by-default + widgets-only mode / standalone folder forms with 16-color palette / row-column steppers / folder paging / edge-hover paging / retuned dwell timings / no bounce on release in free mode / true compact auto-arrange / popup icon & handle sizing / dirty-region repaint for 60 fps), pending field verification. Bug reports and ideas are welcome via Issues — current spec: [docs/指导文档_v7.md](docs/指导文档_v7.md), plan: [docs/实施计划_v7.md](docs/实施计划_v7.md) (both Chinese).
 
-[![release](https://img.shields.io/badge/release-v2.1.1-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-57%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v2.1.3-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-65%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -164,15 +164,19 @@ pwsh -File scripts/build_portable.ps1
 |---|---|---|
 | v5 | Adaptive grid / iOS-style local reflow / widget span model / folder popup redesign / paging | 1.3.0 |
 | v6 → v6g | Two modes (organizer / native) / widgets in grid / desktop folder sync / wallpaper preserved / Win+D guardian, plus 14 field-reported fixes | 1.7.0 |
+| v7a | Two-layer sizing (`cell_from_native` + `solve_dims`) + manually placeable grid origin | 2.0.0 |
+| v7b | **All 17 field reports after v7a closed**: coexisting dual layouts / chained drag displacement / widget transparent-area hit-testing / solid combo popup / folder name + size + corner entries / single-icon sizing / takeover by default + widgets mode | 2.1.0 |
+| v7c | **The 4 follow-ups after v7b closed**: standalone folder forms for "add app / change color" (16 presets + auto + custom; recoloring no longer rebuilds members) / collision shape synced after manual widget resize (bidirectional corner stepping) / single-source default icon size / grid debug readout moved into settings | 2.1.1 |
+| v7d | **The 10 follow-ups after v7c closed**: slider dead-touch debounce / self-drawn row-column Stepper / folder full-page paging / two-level centering of the 3×3 popup / widget span collision / collision preview when dragging out of a folder / two-zone merge decision / edge-hover paging / widgets-only mode / auto-dissolve single-icon folders | 2.1.2 |
+| v7e | **The 8 follow-ups after v7d closed + the B5 visual batch**: dwell/push timings moved earlier (450/700→350/470 ms, edge flip 600→360 ms) / no bounce on release in free mode / widget context menu follows the mode / widget coords recomputed when switching back to grid / auto-arrange truly packs / popup icons 40–56 px with single-point drawing / round edit handles with ≥22 px hit area / widgets-only returns the desktop to the system / dirty-region repaint for a steady 60 fps (`frame_stats`) | 2.1.3 |
 
 **v7 in progress** (spec: [docs/指导文档_v7.md](docs/指导文档_v7.md), plan: [docs/实施计划_v7.md](docs/实施计划_v7.md)):
 
-- [x] **B1** Sizing foundation: `cell_from_native` derives cells from the native icon size, tiers only change in-cell ratio (`icon_fit`), row count = pure cropping, grid origin is manually placeable (source `v7a`, not built yet)
+- [x] **B1** Sizing foundation: `cell_from_native` derives cells from the native icon size, tiers only change in-cell ratio (`icon_fit`), row count = pure cropping, grid origin is manually placeable
 - [x] **B2** Coexisting layouts: grid and free-floating each persist their own layout; switching never converts or clears (single sizing source, `icon_px` retired)
-- [ ] **B3** Dragging: widget hover judged by frame / center-merge vs outer-ring push-away zones / hint timing
-- [ ] **B4** Hit-testing: per-pixel `WM_NCHITTEST` for widgets and popups so transparent areas stop swallowing clicks
-- [ ] **B5** Folder & visual polish: icon proportions, popup edge placement, edit handles
-- [ ] **B6** Overlays & paging: custom page creation, combo popup styling
+- [x] **B3** Dragging: the chained result of preview displacement goes into the animation list (layout is the only truth), widget drop always reflows
+- [x] **B4** Hit-testing: the widget's rectangular territory no longer swallows clicks (`alpha=2` full-window fill + `WM_NCHITTEST`→`HTCLIENT`); per-pixel `AlphaMask` is **no longer needed**
+- [x] **B5** Folder & visual polish: popup icon ratio decoupled from the desktop tier (`popup_metrics`) / popup edge placement and two-level centering / edit handles rebuilt as round dots with enlarged hit areas (delivered in v7e)
 - [ ] **v7.1** (deferred): widget hub / widget store (modular ecosystem)
 
 Further out: native capability parity (F2 rename / Delete to recycle bin / clipboard), Ctrl+Z undo, multi-monitor.

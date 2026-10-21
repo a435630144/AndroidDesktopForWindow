@@ -21,7 +21,7 @@ import datetime
 import os
 import sys
 
-VERSION = "7d"
+VERSION = "7e"
 
 
 def build_stamp() -> datetime.datetime | None:
