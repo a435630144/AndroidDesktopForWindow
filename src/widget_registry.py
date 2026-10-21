@@ -72,6 +72,7 @@ def _build_registry() -> Dict[str, WidgetSpec]:
     from .widgets_clock import ClockWidget
     from .widgets_notes import NotesWidget
     from .widgets_panel import DesktopPanel
+    from .widget_monitor import MonitorWidget, draw_preview as _preview_monitor
 
     specs = [
         WidgetSpec(
@@ -102,6 +103,16 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             spans=((3, 4),),
             category="效率",
             default_anchored=True,
+        ),
+        WidgetSpec(
+            type="monitor",
+            name="系统监控",
+            summary="CPU / 内存 / 磁盘实时占用（纯本地，不联网）",
+            factory=MonitorWidget,
+            spans=((2, 2), (4, 2)),
+            category="系统",
+            default_anchored=True,
+            preview=_preview_monitor,
         ),
     ]
     return {s.type: s for s in specs}
