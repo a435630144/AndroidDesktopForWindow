@@ -73,6 +73,7 @@ def _build_registry() -> Dict[str, WidgetSpec]:
     from .widgets_notes import NotesWidget
     from .widgets_panel import DesktopPanel
     from .widget_monitor import MonitorWidget, draw_preview as _preview_monitor
+    from .widgets_calendar import CalendarWidget, draw_preview as _preview_calendar
     from .widgets_todo import TodoWidget, draw_preview as _preview_todo
 
     specs = [
@@ -126,6 +127,16 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             interactive=True,
             multi_instance=True,
             preview=_preview_todo,
+        ),
+        WidgetSpec(
+            type="calendar",
+            name="日历",
+            summary="月视图，左右翻月，点标题回到今天",
+            factory=CalendarWidget,
+            spans=((2, 2), (3, 3)),
+            category="时间",
+            default_anchored=True,
+            preview=_preview_calendar,
         ),
     ]
     return {s.type: s for s in specs}
