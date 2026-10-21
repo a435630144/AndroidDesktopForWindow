@@ -23,6 +23,8 @@ verify_render.png
 verify_shot.png
 window_render_test.png
 desktoporg_probe_*.json
+selftest_report.txt
+selftest_shot.png
 
 # ---- IDE / 系统 ----
 .vscode/
