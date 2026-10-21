@@ -209,6 +209,19 @@ def main(app):
           abs(wg.glass_radius(False) - theme.GLASS_RADIUS) < 0.01,
           "%s vs %s" % (wg.glass_radius(False), theme.GLASS_RADIUS))
 
+    # 2026-10-21 实测：本测试曾"16/16 PASS 之后段错误 rc=139"。
+    # 根因 = 控件（Python 局部变量）比 QApplication 活得久——解释器退出时
+    # Qt 对象析构顺序不确定，C++ 侧访问已销毁的 QApplication 直接段错误。
+    # 症状很迷惑：断言全过、退出码却是 139（且只在全量串联跑时稳定复现）。
+    # 正解：在 QApplication 还活着的时候显式销毁控件，别交给解释器收尾。
+    for _w in (w, w2):
+        try:
+            _w.close()
+            _w.deleteLater()
+        except RuntimeError:        # 已被删（幂等）
+            pass
+    app.processEvents()
+
     if STATE.exists():
         STATE.unlink()
 

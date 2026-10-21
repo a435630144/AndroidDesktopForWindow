@@ -206,6 +206,16 @@ def main(app):
               "%s %s %s %s" % (spec.spans, spec.multi_instance,
                                spec.default_anchored, spec.interactive))
 
+    # 控件必须比 QApplication 先死——否则解释器退出时段错误 rc=139
+    # （test_widget_glass 上实测过：断言全过、退出码 139）。
+    for _w in QApplication.topLevelWidgets():
+        try:
+            _w.close()
+            _w.deleteLater()
+        except RuntimeError:
+            pass
+    QApplication.instance().processEvents()
+
     if STATE.exists():
         STATE.unlink()
 

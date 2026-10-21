@@ -134,6 +134,15 @@ def main(app):
           repr(st.widgets[1]["settings"]))
     wx.close()
 
+    # 控件必须比 QApplication 先死——否则解释器退出时段错误 rc=139。
+    for _w in QApplication.topLevelWidgets():
+        try:
+            _w.close()
+            _w.deleteLater()
+        except RuntimeError:
+            pass
+    QApplication.instance().processEvents()
+
     if STATE.exists():
         STATE.unlink()
 

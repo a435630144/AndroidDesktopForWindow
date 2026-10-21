@@ -204,6 +204,15 @@ def main(app):
               and spec.multi_instance is False and spec.default_anchored is True,
               "%s %s %s" % (spec.spans, spec.category, spec.default_anchored))
 
+    # 控件必须比 QApplication 先死——否则解释器退出时段错误 rc=139。
+    for _w in QApplication.topLevelWidgets():
+        try:
+            _w.close()
+            _w.deleteLater()
+        except RuntimeError:
+            pass
+    QApplication.instance().processEvents()
+
     if STATE.exists():
         STATE.unlink()
 

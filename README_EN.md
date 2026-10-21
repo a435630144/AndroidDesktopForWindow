@@ -4,9 +4,9 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: current version **v7e** (installer 2.1.3, fifth package of the v7 line) with **65 test files / ~1500 assertions green**; **all 17 items from v7a, 4 after v7b, 10 after v7c and 8 after v7d are closed** (two-layer sizing / coexisting dual layouts / chained drag displacement / widget hit-testing / folder labels & sizing / takeover-by-default + widgets-only mode / standalone folder forms with 16-color palette / row-column steppers / folder paging / edge-hover paging / retuned dwell timings / no bounce on release in free mode / true compact auto-arrange / popup icon & handle sizing / dirty-region repaint for 60 fps), pending field verification. Bug reports and ideas are welcome via Issues — current spec: [docs/指导文档_v7.md](docs/指导文档_v7.md), plan: [docs/实施计划_v7.md](docs/实施计划_v7.md) (both Chinese).
+> 🚧 **Under active development**: current version **v8a** (installer 3.0.0, first package of the v8 line) with **73 test files / ~1700 assertions green**; all 39 v7 field reports (17 + 4 + 10 + 8) are closed, and v8's first batch adds a **widget library plus four new widgets** (system monitor / to-do list / calendar / weather). Bug reports and ideas are welcome via Issues — current spec: [docs/指导文档_v8.md](docs/指导文档_v8.md), plan: [docs/实施计划_v8.md](docs/实施计划_v8.md) (both Chinese).
 
-[![release](https://img.shields.io/badge/release-v2.1.3-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-65%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v3.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-73%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -22,7 +22,8 @@ A third-party desktop organizer / beautifier for Windows (demo), in the spirit o
 | 🤏 Slide-to-rearrange | Neighboring icons elastically slide aside while you drag (true spring physics curve), snap precisely to the target cell, and slide back on cancel |
 | 📂 Drag-to-merge | Drag an icon onto another to merge into a folder; folder popup uses liquid-glass material with an emergence open/close animation; members can be dragged out / removed |
 | 🖱️ Batch operations | Rubber-band multi-select + whole-group dragging |
-| 🧩 Desktop widgets | Clock / Sticky notes (editable) / Desktop panel (search · quick folders · disks · recent downloads · weather); supports **anchored (non-floating)** mode where widgets join the grid as first-class citizens, with drag-resize and icon mutual displacement |
+| 🧩 Desktop widgets | Clock / Sticky notes (editable) / Desktop panel (search · quick folders · disks · recent downloads · weather) / **System monitor** (CPU · memory · disk) / **To-do list** (multi-instance) / **Calendar** (month view with remembered month) / **Weather** (live with cache fallback); supports **anchored (non-floating)** mode where widgets join the grid as first-class citizens, with drag-resize and icon mutual displacement |
+| 🧩 Widget library | A dedicated window to browse widgets by category, search, and see four-state cards (not added / hidden / on desktop / added) with **live previews rendered by the very same `draw()`** used on the desktop; reachable from the tray, the desktop context menu and the settings page |
 | 🔀 Two modes | **Organizer mode** (native icons hidden, desktop rendering taken over) / **native mode** (free-floating): one-click switch, and each mode **keeps its own layout** independently |
 | 📑 Paging | Automatic paging when icons overflow; page dots + wheel paging, drag to the screen edge to flip |
 | 🔄 Desktop sync | Watches the desktop folder (1 s debounce): new files enter automatically, deleted items are cleaned up |
@@ -170,14 +171,27 @@ pwsh -File scripts/build_portable.ps1
 | v7d | **The 10 follow-ups after v7c closed**: slider dead-touch debounce / self-drawn row-column Stepper / folder full-page paging / two-level centering of the 3×3 popup / widget span collision / collision preview when dragging out of a folder / two-zone merge decision / edge-hover paging / widgets-only mode / auto-dissolve single-icon folders | 2.1.2 |
 | v7e | **The 8 follow-ups after v7d closed + the B5 visual batch**: dwell/push timings moved earlier (450/700→350/470 ms, edge flip 600→360 ms) / no bounce on release in free mode / widget context menu follows the mode / widget coords recomputed when switching back to grid / auto-arrange truly packs / popup icons 40–56 px with single-point drawing / round edit handles with ≥22 px hit area / widgets-only returns the desktop to the system / dirty-region repaint for a steady 60 fps (`frame_stats`) | 2.1.3 |
 
-**v7 in progress** (spec: [docs/指导文档_v7.md](docs/指导文档_v7.md), plan: [docs/实施计划_v7.md](docs/实施计划_v7.md)):
+| v8a | **v8 first batch: widget library + four new widgets**: widgets declared once via `WidgetSpec` (spans / category / form / settings / preview) / glass card base class (static glass, no live blur) / system monitor (CPU · memory · disk, pure Win32, no new dependency) / to-do list (multi-instance) / calendar (month view with remembered month) / weather (Open-Meteo, live → cache → empty fallback) / widget settings dialog driven by `FieldSpec` / dedicated widget library window | 3.0.0 |
+
+**v7 delivered** (spec: [docs/指导文档_v7.md](docs/指导文档_v7.md), plan: [docs/实施计划_v7.md](docs/实施计划_v7.md)):
 
 - [x] **B1** Sizing foundation: `cell_from_native` derives cells from the native icon size, tiers only change in-cell ratio (`icon_fit`), row count = pure cropping, grid origin is manually placeable
 - [x] **B2** Coexisting layouts: grid and free-floating each persist their own layout; switching never converts or clears (single sizing source, `icon_px` retired)
 - [x] **B3** Dragging: the chained result of preview displacement goes into the animation list (layout is the only truth), widget drop always reflows
 - [x] **B4** Hit-testing: the widget's rectangular territory no longer swallows clicks (`alpha=2` full-window fill + `WM_NCHITTEST`→`HTCLIENT`); per-pixel `AlphaMask` is **no longer needed**
 - [x] **B5** Folder & visual polish: popup icon ratio decoupled from the desktop tier (`popup_metrics`) / popup edge placement and two-level centering / edit handles rebuilt as round dots with enlarged hit areas (delivered in v7e)
-- [ ] **v7.1** (deferred): widget hub / widget store (modular ecosystem)
+- [x] **B6** Popups & paging: solid combo popup (`ui_choice.ComboBox`), paging entry available in both modes
+
+**v8 in progress** (spec: [docs/指导文档_v8.md](docs/指导文档_v8.md), plan: [docs/实施计划_v8.md](docs/实施计划_v8.md)):
+
+- [x] **C1** Widget registry: every static fact declared once in `WidgetSpec`; `WIDGET_TYPES` / `WIDGET_NAMES` / `WIDGET_CATALOG` all became derived views (no call site changed)
+- [x] **C2** Glass card base class `GlassWidget`: static glass (vertical gradient tint + top specular + rounded clip), **no real-time blur** — grabbing the desktop every frame would break the 60 fps work done in v7
+- [x] **C3** Widget library window: categories + search + four-state cards + live preview reusing the desktop `draw()`
+- [x] **C4–C7** Four new widgets: system monitor / to-do list / calendar / weather (model → layout → draw → widget, the first two layers unit-testable)
+- [x] **C8** Widget settings: declarative forms from `FieldSpec`; the context-menu entry only appears when a widget declares settings
+- [x] **C9** Regression + docs gate + v8a package
+
+- [ ] **v7.1** (deferred): widget store (install widget packages online, modular ecosystem)
 
 Further out: native capability parity (F2 rename / Delete to recycle bin / clipboard), Ctrl+Z undo, multi-monitor.
 

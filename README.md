@@ -4,9 +4,9 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前版本 **v7e**（安装包 2.1.3，v7 迭代的第五个包），**65 个测试文件 / 约 1500 条断言全绿**；**v7a 的 17 条 + v7b 4 条 + v7c 10 条 + v7d 8 条实机反馈全部闭环**（尺寸两层解耦 / 双布局并存 / 拖拽连锁避让 / 组件命中 / 文件夹文件名与尺寸 / 启动即接管 + 仅小组件模式 / 文件夹表单独立 + 色板 16 色 / 行列 Stepper / 文件夹分页 / 边缘悬停翻页 / 节拍重调 / 无界松手不回弹 / 自动排列真正密排 / 弹窗图标与控制点圆球 / 脏区重绘守 60fps），等实机验收。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v7.md](docs/指导文档_v7.md)，实施计划见 [docs/实施计划_v7.md](docs/实施计划_v7.md)。
+> 🚧 **项目处于活跃开发中**：当前版本 **v8a**（安装包 3.0.0，v8 迭代第一个包），**73 个测试文件 / 约 1700 条断言全绿**；v7 的 39 条实机反馈（17 + 4 + 10 + 8）全部闭环，v8 首批新增**组件库 + 四个新组件**（系统监控 / 待办清单 / 日历 / 天气）。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v8.md](docs/指导文档_v8.md)，实施计划见 [docs/实施计划_v8.md](docs/实施计划_v8.md)。
 
-[![release](https://img.shields.io/badge/release-v2.1.3-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-65%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v3.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-73%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -22,7 +22,8 @@
 | 🤏 滑动让位 | 拖动图标时相邻图标弹性滑动让位（真弹簧物理曲线），落点精确到目标格，可取消滑回 |
 | 📂 拖拽合并 | 图标拖到图标上悬停即合并成文件夹；文件夹弹窗为液态玻璃材质 + 涌现开合动画，成员可拖出/移出 |
 | 🖱️ 批量操作 | 橡皮筋框选 + 多选整体拖动 |
-| 🧩 桌面小组件 | 时钟 / 便签（可编辑）/ 桌面面板（搜索 · 快捷文件夹 · 磁盘 · 最近下载 · 天气）；支持**锚定（非悬浮）**模式，融入网格成为一等公民，可拖拽缩放、与图标互相让位 |
+| 🧩 桌面小组件 | 时钟 / 便签（可编辑）/ 桌面面板（搜索 · 快捷文件夹 · 磁盘 · 最近下载 · 天气）/ **系统监控**（CPU · 内存 · 磁盘）/ **待办清单**（可多实例）/ **日历**（月视图，翻月记忆）/ **天气**（实时 + 缓存降级）；支持**锚定（非悬浮）**模式，融入网格成为一等公民，可拖拽缩放、与图标互相让位 |
+| 🧩 组件库 | 独立组件库窗口：按分类浏览、搜索、四态卡片（未添加 / 已隐藏 / 显示中 / 已添加）与**实时预览**（预览与桌面渲染同一个 `draw()`）；托盘、桌面右键、设置页三处入口 |
 | 🔀 双模式 | **整理模式**（隐藏原生图标、接管桌面渲染）/ **原生模式**（无界自由摆放）：一键切换，两种布局**各自独立保存**，互不清空 |
 | 📑 分页 | 图标溢出自动分页，页点 + 滚轮翻页，拖到屏幕边缘翻页 |
 | 🔄 桌面同步 | 监听桌面目录增删改（1s debounce），新文件自动入场、删除项自动清理 |
@@ -169,8 +170,9 @@ pwsh -File scripts/build_portable.ps1
 | v7c | **v7b 之后的 4 项反馈闭环**：文件夹「添加应用 / 换颜色」改独立表单（16 预设+自动+自定义，换色不再重建成员）/ 组件手动改尺寸后碰撞形状同步（含四角双向步进）/ 图标默认「中」双源合并 / 网格调试信息移入设置面板 | 2.1.1 |
 | v7d | **v7c 之后的 10 项反馈闭环**：滑条断触防抖 / 行列 Stepper 自绘步进器 / 文件夹满页分页 / 3×3 弹窗两级居中 / 组件 span 碰撞 / 文件夹内拖出碰撞预览 / 入夹双区判定 / 边缘悬停翻页 / 仅小组件模式 / 单图标自动解散文件夹 | 2.1.2 |
 | v7e | **v7d 之后的 8 项反馈闭环 + B5 视觉批次**：推让/提示节拍两头提前（450/700→350/470，翻页 600→360）/ 无界松手不回弹 / 组件右键菜单随模式 / 无界→网格组件坐标回算 / 自动排列真正密排 / 弹窗图标 40–56 与绘制单点 / 控制点改圆球 + ≥22px 命中区 / 仅小组件归还原生桌面 / 脏区重绘守 60fps（`frame_stats` 可读） | 2.1.3 |
+| v8a | **v8 首批：组件库 + 四个新组件**：组件注册表单点化（`WidgetSpec` 一处声明跨度/分类/形态/设置/预览）/ 玻璃卡片基类（静态玻璃，不做实时模糊）/ 系统监控（CPU·内存·磁盘，纯 Win32 无新依赖）/ 待办清单（多实例）/ 日历（月视图，翻月记忆）/ 天气（Open-Meteo，实时 / 缓存 / 空 三级降级）/ 组件设置弹窗（`FieldSpec` 驱动）/ 独立组件库窗口（四态卡片 + 实时预览） | 3.0.0 |
 
-**v7 实施中**（规格 [docs/指导文档_v7.md](docs/指导文档_v7.md)，计划 [docs/实施计划_v7.md](docs/实施计划_v7.md)）：
+**v7 已交付**（规格 [docs/指导文档_v7.md](docs/指导文档_v7.md)，计划 [docs/实施计划_v7.md](docs/实施计划_v7.md)）：
 
 - [x] **B1** 尺寸地基：`cell_from_native` 由原生图标推导格子、档位只改格内占比（`icon_fit`）、行数=纯裁剪、网格原点可手动定位
 - [x] **B2** 双布局并存：网格与无界各自保存，切换零换算零清空（含图标尺寸单源，`icon_px` 退役）
@@ -178,7 +180,17 @@ pwsh -File scripts/build_portable.ps1
 - [x] **B4** 命中系统：组件矩形领地内不再吞点击（alpha=2 全窗填充 + `WM_NCHITTEST`→`HTCLIENT`）；逐像素 `AlphaMask` 经评估**不再需要**
 - [x] **B5** 文件夹与视觉细节：弹窗图标比例（`popup_metrics` 与桌面档位解耦）/ 弹窗贴边与两级居中 / 编辑控制点改圆球 + 放大命中区（v7e 完成）
 - [x] **B6** 浮层与分页：下拉弹层实心（`ui_choice.ComboBox`）、分页入口两模式可用
-- [ ] **v7.1**（延后）：组件中心 / 组件商店（模块化组件生态）
+
+**v8 实施中**（规格 [docs/指导文档_v8.md](docs/指导文档_v8.md)，计划 [docs/实施计划_v8.md](docs/实施计划_v8.md)）：
+
+- [x] **C1** 组件注册表：`WidgetSpec` 单点声明，`WIDGET_TYPES` / `WIDGET_NAMES` / `WIDGET_CATALOG` 全部退化为派生（旧调用点一行未改）
+- [x] **C2** 玻璃卡片基类 `GlassWidget`：静态玻璃（竖向渐变 tint + 顶部 specular + 圆角裁剪），**不做实时高斯模糊**——常驻组件每帧抓桌面会推翻 v7 的 60fps
+- [x] **C3** 组件库窗口：分类 + 搜索 + 四态卡片 + 实时预览（**预览与桌面复用同一个 `draw()`**）
+- [x] **C4–C7** 四个新组件：系统监控 / 待办清单 / 日历 / 天气（model → layout → draw → widget 四层分离，前两层可单测）
+- [x] **C8** 组件设置：`FieldSpec` 声明式表单，右键菜单"有声明才出现"（不出灰项）
+- [x] **C9** 回归 + 门禁 + 出包 v8a
+
+- [ ] **v7.1**（延后）：组件商店（在线安装组件包，模块化组件生态）
 
 更远：整理模式原生能力补齐（F2 重命名 / Delete 回收站 / 剪贴板）、Ctrl+Z 撤销、多显示器。
 

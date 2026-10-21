@@ -229,6 +229,16 @@ def main(app):
           str([f.key for f in spec.settings] if spec else None))
 
     wa._http_json = orig_http
+
+    # 控件必须比 QApplication 先死——否则解释器退出时段错误 rc=139。
+    for _w in QApplication.topLevelWidgets():
+        try:
+            _w.close()
+            _w.deleteLater()
+        except RuntimeError:
+            pass
+    QApplication.instance().processEvents()
+
     for p_ in (STATE, CACHE):
         if p_.exists():
             p_.unlink()
