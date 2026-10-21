@@ -12,7 +12,9 @@
 反馈 1 的根因不是滑条本身，而是**每像素一次全桌面重建**：
 `_apply_icon_fit -> _refresh_grid -> refresh_grid()` 会销毁重建全部图标并
 重新挂载桌面带，GUI 线程被重建占满，Qt 的鼠标抓取被反复打断 -> "断触"。
-修法：写入立即做，重建走 90ms 防抖（S3/S4/S5 断言）。
+修法：写入立即做，重建走节流——60ms 纯防抖 + 220ms 上限等待
+（S4/S4b/S4c/S4d 锁防抖，S4e/S4f/S4g 锁上限逃逸：连续拖永不停顿，
+纯防抖会让"桌面半天没反应"）。
 
 反馈 2 的根因是 QSpinBox 的两件事：线框长得像输入框（用户想去打字），
 以及全局 QSS 把 up/down-button 清成透明 -> **所有**微调框都不画箭头。
@@ -177,6 +179,34 @@ def main(app):
     settle(app, 200)
     check("S4d 连续拖动合并成一次重建",
           len(calls) == before + 2, "calls=%d" % len(calls))
+
+    # ---------- S4e/S4f：连续拖过上限必须强制落地（2026-10-21 补漏） ----------
+    # 纯防抖的语义是"停顿才落地"——用户一直不停顿地拖，就永远等不到重建，
+    # 表现是"拖了半天桌面没反应"。所以除了 60ms 防抖还要有 220ms 上限等待。
+    # 这里每 40ms 触发一次（< 60ms 防抖：定时器只会被重启，不会自然到期），
+    # 于是**只有上限逃逸这一条路**能产生重建。
+    import time as _time
+    calls_m = []
+    win_m = SimpleNamespace(attached=False,
+                            refresh_grid=lambda: calls_m.append(1),
+                            rebuild=lambda: calls_m.append(2),
+                            update=lambda: None)
+    dlg_m = SettingsDialog(win_m, st, None)
+    dlg_m.sld_icon_fit.setEnabled(True)
+    base_m = len(calls_m)
+    t0 = _time.monotonic()
+    while (_time.monotonic() - t0) * 1000 < 160:
+        dlg_m._schedule_grid_refresh()
+        settle(app, 40)                     # 只泵事件，远短于防抖间隔
+    check("S4e 未到上限时不重建（纯防抖，不是每帧重建）",
+          len(calls_m) == base_m, "calls=%d" % len(calls_m))
+    while (_time.monotonic() - t0) * 1000 < 400:
+        dlg_m._schedule_grid_refresh()
+        settle(app, 40)
+    check("S4f 连续拖过 220ms 上限强制落地（不等停顿）",
+          len(calls_m) > base_m, "calls=%d base=%d" % (len(calls_m), base_m))
+    check("S4g 上限逃逸后计时归零（不会每帧都重建）",
+          len(calls_m) - base_m <= 2, "calls=%d" % (len(calls_m) - base_m))
 
     # ---------- S5：行列/原点步进同样走防抖 ----------
     calls5 = []
