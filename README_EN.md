@@ -10,7 +10,7 @@ English | [简体中文](README.md)
 
 ---
 
-A third-party desktop organizer / beautifier for Windows in the spirit of Tencent Desktop Manager, with a **phone-style UI and interaction model**: it mounts its own grid layer above the native desktop and replaces native icons with a fully controlled rendering layer — positions, animations, folders and widgets are all yours to define.
+A third-party desktop organizer and beautifier for Windows with a **phone-style UI and interaction model**: it mounts its own grid layer above the native desktop and replaces native icons with a fully controlled rendering layer — positions, animations, folders and widgets are all yours to define.
 
 Despite the name, this is **far past the prototype stage**: installer, tray residency, crash logging, single-instance guard, auto re-attach watchdog, **79 test files / ~1900 assertions**, plus a full dev log and handover guide ([DEVLOG.md](DEVLOG.md) / [HANDOVER.md](HANDOVER.md), both Chinese). `DesktopOrganizerDemo` is a legacy package name (install dir, single-instance key and registry entries hang off it) — renaming costs more than it buys.
 
