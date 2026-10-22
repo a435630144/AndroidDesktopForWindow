@@ -11,17 +11,16 @@
 """
 from __future__ import annotations
 
-import datetime
 import threading
 from typing import Dict, Optional, Tuple
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPen, QPolygonF
 
-from . import theme
-from .widget_style import DEFAULT_STYLE, Style
+from ... import theme
+from ...widget_style import DEFAULT_STYLE, Style
 from . import weather_api as wa
-from .widget_glass import PAD, GlassWidget
+from ...widget_glass import PAD, GlassWidget
 
 WIDE_RATIO = 1.6
 DAY_LABELS = ("明天", "后天", "第 3 天")
@@ -223,18 +222,6 @@ def draw(p: QPainter, rect, model: Optional[wa.WeatherModel], state: str = "live
                    Qt.AlignHCenter | Qt.AlignVCenter, wa.fmt_temp(d.tmin))
 
     p.restore()
-
-
-def draw_preview(p: QPainter, rect, dpr: float = 1.0) -> None:
-    """组件库预览：示例数据（不联网、不读缓存）。"""
-    today = datetime.date.today()
-    demo = wa.WeatherModel(
-        city="北京", temp=23.0, feels=22.0, humidity=55, wind=8.0, code=1,
-        daily=(wa.Daily(code=61, tmax=22.0, tmin=14.0),
-               wa.Daily(code=3, tmax=24.0, tmin=13.0),
-               wa.Daily(code=0, tmax=27.0, tmin=16.0)),
-        fetched_at=0.0)
-    draw(p, rect, demo, "live")
 
 
 # ---------------------------------------------------------------- 组件

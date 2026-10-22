@@ -73,7 +73,7 @@ PAYLOAD = {
 
 
 def main(app):
-    from src import weather_api as wa
+    from src.widgets.weather import weather_api as wa
 
     # ---------- X1：天气码 ----------
     t0, i0 = wa.describe(0)
@@ -160,7 +160,7 @@ def main(app):
         try:
             p = QPainter(img)
             p.setRenderHint(QPainter.Antialiasing)
-            wa_draw = __import__("src.widgets_weather", fromlist=["draw"]).draw
+            wa_draw = __import__("src.widgets.weather.weather", fromlist=["draw"]).draw
             wa_draw(p, QRectF(0, 0, 240, 284), model, state)
             p.end()
         except Exception as exc:      # noqa: BLE001
@@ -169,7 +169,7 @@ def main(app):
         check("X11 draw %s 不抛且非空" % label, ok and alpha_nonempty(img) > 150,
               str(alpha_nonempty(img)))
 
-    ww = __import__("src.widgets_weather", fromlist=["draw"])
+    ww = __import__("src.widgets.weather.weather", fromlist=["draw"])
     imgw = canvas(480, 284)
     p = QPainter(imgw)
     ww.draw(p, QRectF(0, 0, 480, 284), m, "live")
@@ -195,9 +195,9 @@ def main(app):
     grid_flow.set_grid(st, (1920, 1040))
     grid_flow.set_page(0)
 
-    import src.weather_api as wa2
+    from src.widgets.weather import weather_api as wa2
     wa2._http_json = lambda url, timeout=8.0: (time.sleep(0.4), PAYLOAD)[1]
-    ww_mod = __import__("src.widgets_weather", fromlist=["WeatherWidget"])
+    ww_mod = __import__("src.widgets.weather", fromlist=["WeatherWidget"])
     old_auto = ww_mod.WeatherWidget.AUTO_REFRESH_MS
     ww_mod.WeatherWidget.AUTO_REFRESH_MS = 0          # 测试自己控制节奏
     try:

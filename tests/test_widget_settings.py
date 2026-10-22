@@ -55,8 +55,7 @@ def make_state(widgets):
 def main(app):
     from src import widget_settings as ws
     from src import widget_registry as reg
-    from src import widgets_weather
-    from src.widgets import clock as widgets_clock
+    from src.widgets import clock as widgets_clock, weather as widgets_weather
 
     st = make_state([
         {"id": "clk", "type": "clock", "w": 240, "h": 284, "hidden": False,

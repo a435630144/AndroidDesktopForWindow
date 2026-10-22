@@ -25,7 +25,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from .paths import data_file
+from ...paths import data_file
 
 CACHE_TTL_S = 30 * 60          # 缓存新鲜期：30 分钟
 HTTP_TIMEOUT = 8.0             # 单次请求超时（秒）——主线程永不等待它

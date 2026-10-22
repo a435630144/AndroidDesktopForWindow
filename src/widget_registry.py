@@ -105,7 +105,7 @@ def _build_registry() -> Dict[str, WidgetSpec]:
     from .widgets.panel import DesktopPanel
     from .widgets.monitor import MonitorWidget, draw_preview as _preview_monitor
     from .widgets.calendar import CalendarWidget, draw_preview as _preview_calendar
-    from .widgets_weather import WeatherWidget, draw_preview as _preview_weather
+    from .widgets.weather import WeatherWidget, draw_preview as _preview_weather
     from .widgets_todo import TodoWidget, draw_preview as _preview_todo
 
     specs = [

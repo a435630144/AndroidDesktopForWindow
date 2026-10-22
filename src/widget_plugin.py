@@ -71,6 +71,10 @@ SDK_MODULES = ("theme", "widget_glass", "widget_style", "widget_base",
                "effects", "grid_flow", "storage", "weather_api",
                "widget_registry")
 
+# v10 C1：weather_api 搬进 src/widgets/weather/ 后，SDK 别名
+# `deskorg.weather_api` 的**真实路径**与名字不同——插件看到的名字不变。
+SDK_PATHS = {"weather_api": "widgets.weather.weather_api"}
+
 
 class PluginError(Exception):
     """插件格式/内容不合法（消息直接给用户看）。"""
@@ -202,7 +206,7 @@ def ensure_sdk() -> None:
         if key in sys.modules:
             continue
         try:
-            mod = importlib.import_module(pkg + "." + sub)
+            mod = importlib.import_module(pkg + "." + SDK_PATHS.get(sub, sub))
         except Exception:      # noqa: BLE001 —— 拿不到就不暴露，别拦住加载
             continue
         sys.modules[key] = mod
