@@ -152,7 +152,8 @@ class AppIcon(QWidget):
 
     def __init__(self, entry: dict, icon_size: int, in_folder: bool = False,
                  parent=None, chrome_scale: float = 1.0, layout=None,
-                 compact: bool = False, show_label: bool = True):
+                 compact: bool = False, show_label: bool = True,
+                 pad_x: int = None):
         super().__init__(parent)
         self.entry = entry
         self.in_folder = in_folder
@@ -178,17 +179,20 @@ class AppIcon(QWidget):
             # 2026-10-20 反馈 7 反转了"不显示文件名"的旧规格：成员要有名字。
             # 有标签时格高 = 图标 + 内边距 + 单行标签（标签单行 elide，
             # 两行会把格高撑到桌面图标那么大，失去文件夹的密度感）。
+            # pad_x（v10 A9 / 反馈 16）：**横向**内边距可单独给大——3×3
+            # 满页旧宽高比 0.78（竖长方形），加宽后接近正方形。不给时等于 pad。
             pad = max(2, int(round(4 * self._m)))
+            px = pad if pad_x is None else max(pad, int(pad_x))
             self.icon_size = int(icon_size)
-            self._box_x = pad
+            self._box_x = px
             self._compact = True
             self._label_font_px = max(10, int(round(11 * self._m)))
             if self._no_label:
                 self._label_h = 0
-                self.setFixedSize(icon_size + pad * 2, icon_size + pad * 2)
+                self.setFixedSize(icon_size + px * 2, icon_size + pad * 2)
             else:
                 self._label_h = max(12, int(round(self._label_font_px * 1.45)))
-                self.setFixedSize(icon_size + pad * 2,
+                self.setFixedSize(icon_size + px * 2,
                                   icon_size + pad * 2 + self._label_h)
         else:
             self.icon_size = icon_size
@@ -1365,7 +1369,12 @@ class AppIcon(QWidget):
         if long_press:
             host = self._host()
             if host is not None and hasattr(host, "enter_selection_mode"):
-                menu.addAction("选择", host.enter_selection_mode)
+                # v10 A3（反馈 7）：长按进多选时**自动勾选被长按的这个图标**。
+                # 以前直接绑 `host.enter_selection_mode`——QAction.triggered
+                # 会把 checked=False 传进 first_id，恒为空 → 进了多选态却一个
+                # 都没选中，用户还得再点一下（安卓 launcher 是长按即选中）。
+                menu.addAction("选择", lambda: host.enter_selection_mode(
+                    self.entry.get("id")))
                 menu.addSeparator()
         if self.in_folder:
             menu.addAction("打开", self._open)

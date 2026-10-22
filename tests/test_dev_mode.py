@@ -112,6 +112,24 @@ def main(app):
     check("D3 旧 state 无 dev_mode 键回退 False",
           st4.get_setting("dev_mode") is False)
 
+    # ---------- D9：v10 A2（反馈 3）安装后不默认开调试网格 ----------
+    # 场景：用户在旧版里手动开过 dev_mode，state.json 里留着 True；覆盖安装
+    # 不清 %APPDATA% 数据，于是新版"继承"了调试网格。首次加载一次性关掉。
+    st9 = make_state(dev=True)          # 落盘 dev_mode=True（旧版遗留形态）
+    st9b = Storage(path=str(STATE))     # 模拟新版首次启动
+    check("D9a 首次加载把遗留的 dev_mode 关掉",
+          st9b.get_setting("dev_mode") is False)
+    check("D9b 一次性标记已落 setting",
+          st9b.get_setting("dev_mode_v10_reset") is True)
+    st9b.save()
+    st9c = Storage(path=str(STATE))     # 第二次启动：标记在，不再动
+    check("D9c 二次启动不重复覆盖",
+          st9c.get_setting("dev_mode") is False)
+    st9c.set_setting("dev_mode", True)  # 用户仍可手动开
+    st9c.save()
+    check("D9d 手动开启仍然有效",
+          Storage(path=str(STATE)).get_setting("dev_mode") is True)
+
     # ---------- D4：dev_mode 开 -> 网格可视化可见 ----------
     st = make_state(dev=True, native=True)
     w = DesktopWindow(st)

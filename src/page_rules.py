@@ -83,10 +83,16 @@ def auto_pages(storage, total: int) -> set:
 
 
 def describe(storage, page: int) -> str:
-    """给设置页显示的一句话（"跟随全局（自动排列）"这种）。"""
+    """给设置页显示的一句话（v10 A1：只写规则名，不带括号补充）。
+
+    曾经这里返回「跟随全局（自动排列）」——括号里的内容与下拉框文本重复，
+    而全局实际结果在卡片顶部的「自动排列图标」开关上已经写着（用户 2026-10-22
+    反馈 1：「不需要括号里的注释」）。要解释"这一页实际怎么排"请看
+    `mode_for()`，它才是判定入口。
+    """
     r = rule_of(storage, page)
     if r == AUTO:
         return "自动排列"
     if r == FREE:
         return "自由摆放"
-    return "跟随全局（%s）" % ("自动排列" if global_auto(storage) else "自由摆放")
+    return "跟随全局"

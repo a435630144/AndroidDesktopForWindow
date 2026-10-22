@@ -48,6 +48,10 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务:"
 Name: "autostart"; Description: "开机自动启动"; GroupDescription: "附加任务:"; Flags: unchecked
+; v10 A2（反馈 3）：安装器只在卸载时清 %APPDATA%，覆盖安装会继承旧 state.json
+; —— 用户在旧版里开过「开发者调试网格」，新版就带着满屏网格启动。
+; 给一个装前清除的选项（默认不勾，避免误删用户布局）。
+Name: "cleardata"; Description: "清除旧版本的个人数据（布局与设置）"; GroupDescription: "附加任务:"; Flags: unchecked
 
 [Files]
 ; onedir 产物整体拷贝，保留子目录结构（与 build_portable.ps1 -OutName DesktopOrganizerDemo_v6g 对应）
@@ -77,10 +81,19 @@ Type: filesandordirs; Name: "{userappdata}\{#MyAppNameEn}"
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Wnd: HWND;
+  DataDir: String;
 begin
   Result := '';
   Wnd := FindWindowByClassName('Qt6103QWindowIcon');
   // 类名随 Qt 版本变化，仅作提示用途：找不到也不拦截
   if Wnd <> 0 then
     Result := '检测到桌面整理Demo可能正在运行，建议先退出再安装。';
+  // v10 A2（反馈 3）：勾选「清除旧版本个人数据」时，装前删掉旧数据目录，
+  // 让新版以默认设置启动（否则旧 state.json 的 dev_mode=True 会被继承）。
+  if WizardIsTaskSelected('cleardata') then
+  begin
+    DataDir := ExpandConstant('{userappdata}\{#MyAppNameEn}');
+    if DirExists(DataDir) then
+      DelTree(DataDir, True, True, True);
+  end;
 end;

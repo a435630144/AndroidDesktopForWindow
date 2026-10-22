@@ -66,6 +66,10 @@ from .iconwidget import AppIcon
 # 的成员挤满、留白被吃掉（"弹窗图标过大"）。现在完全由 cell 驱动：
 POPUP_ICON_MIN, POPUP_ICON_MAX = 40, 56
 POPUP_WIDTH_MAX = 520
+# v10 A9（反馈 16）：成员格的**横向**额外留白（乘 chrome_scale，**左右各一份**）。
+# 只加宽不加高：3×3 满页旧宽高比 0.78（竖长方形），加这个后约 0.96（接近方形）。
+# 12 而不是 24：留白是双侧生效的，24 会过了头变成横长方形（1.19）。
+MEMBER_PAD_X = 12
 
 
 def popup_metrics(cell_w: int, n_members: int = 0, avail_h: int = 0) -> dict:
@@ -490,12 +494,25 @@ class FolderPopup(QWidget):
         font_px = max(10, int(round(11 * m)))
         return max(12, int(round(font_px * 1.45)))
 
+    def _member_pad_x(self):
+        """成员格**横向**内边距（v10 A9 / 反馈 16）：比纵向多一块。
+
+        弹窗旧实现成员格是方的（宽=高），3×3 满页宽高比只有 0.78，用户原话
+        "展开是长方形，太窄了"。横向多留 `MEMBER_PAD_X`，高度不动——
+        标题条与页码条本来就占高，再压就把成员挤扁了。
+        **这个值必须与 AppIcon 紧凑格的 pad_x 同一个来源**，否则布局数学按
+        宽格算、控件按窄格画，内容块立刻不再居中（P7/P9c 会红）。
+        """
+        m = self.storage.icon_chrome_scale()
+        return max(2, int(round(4 * m))) + int(round(MEMBER_PAD_X * m))
+
     def _member_box(self):
         """单个成员占位方块 (宽, 高)：图标 + 内边距 + 单行文件名（反馈 7）。"""
         m = self.storage.icon_chrome_scale()
         pad = max(2, int(round(4 * m)))
         icon = self._member_icon_size()
-        return icon + pad * 2, icon + pad * 2 + self._member_label_h()
+        return (icon + self._member_pad_x() * 2,
+                icon + pad * 2 + self._member_label_h())
 
     def _grid_shape(self, n: int):
         """按文件夹尺寸上限 + 实际成员数算 (列, 行)（folder_layout 纯函数）。
@@ -641,7 +658,8 @@ class FolderPopup(QWidget):
             entry = {"id": member_payload, "type": "app", "app": app}
             icon = AppIcon(entry, self._member_icon_size(), in_folder=True,
                            parent=self, chrome_scale=m, compact=True,
-                           show_label=True)   # 反馈 7：成员必须有文件名
+                           show_label=True,   # 反馈 7：成员必须有文件名
+                           pad_x=self._member_pad_x())   # v10 A9：横向加宽
             icon.drag_payload = member_payload
             icon.dragStarted.connect(self._on_drag_start)
             icon.dragFinished.connect(self._on_drag_finish)

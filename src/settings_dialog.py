@@ -1082,7 +1082,7 @@ class SettingsDialog(QDialog):
         用户特意留作自由摆放的页会被这一次总开关顺手排掉。
         """
         self.storage.set_setting("auto_arrange", bool(checked))
-        self._rebuild_page_rules()      # "跟随全局"的说明文字变了解释
+        self._rebuild_page_rules()      # 下拉可用性随开关变（v10 A1 起不再有复述文字）
         if checked:
             tidy = getattr(self.window, "_tidy", None)
             if tidy is not None:
@@ -1132,10 +1132,9 @@ class SettingsDialog(QDialog):
                 lambda _i, p=page, c=cmb: self._apply_page_rule(p, c))
             cmb.setAccessibleName("第 %d 页排序规则" % (page + 1))
             h.addWidget(cmb, 1)
-            hint = QLabel(page_rules.describe(self.storage, page), row)
-            hint.setObjectName("rowHint")
-            h.addWidget(hint)
-            cmb.setProperty("hintLabel", True)
+            # v10 A1（反馈 1）：原来这里再挂一个 hint 标签复述下拉选中的文字
+            # （"跟随全局（自动排列）"），与 combo 完全重复——删掉，全局实际结果
+            # 看卡片顶部的「自动排列图标」开关。
             self._rules_lay.addWidget(row)
             self._rule_combos[page] = cmb
 

@@ -91,9 +91,14 @@ def main():
 
     # ---------- P7 describe ----------
     check("P7a free 页说明", pr.describe(again, 1) == "自由摆放", pr.describe(again, 1))
-    check("P7b 跟随全局页说明含实际结果",
-          "跟随全局" in pr.describe(again, 3) and "自动" in pr.describe(again, 3),
-          pr.describe(again, 3))
+    # v10 A1（反馈 1）：跟随全局不再带括号补充——它与下拉文本重复，
+    # 全局实际结果看卡片顶部的「自动排列图标」开关就够了。
+    check("P7b 跟随全局页说明不带括号",
+          pr.describe(again, 3) == "跟随全局", pr.describe(again, 3))
+    check("P7c 未写页也是跟随全局",
+          pr.describe(again, 0) == "跟随全局", pr.describe(again, 0))
+    pr.set_mode(again, 0, pr.AUTO)
+    check("P7d auto 页说明", pr.describe(again, 0) == "自动排列", pr.describe(again, 0))
 
     # ---------- P8 脏值 ----------
     again.set_setting("page_rules", {"0": "whatever", "3": None, "4": "AUTO"})

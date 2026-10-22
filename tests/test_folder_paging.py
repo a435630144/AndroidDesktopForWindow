@@ -259,6 +259,32 @@ def main(app):
         check("P7c 首行 3 个仍左起连续排布（不重排）",
               len(first) == 3, "n=%d" % len(first))
 
+    # ---------- P9：v10 A9（反馈 16）3×3 展开不要是竖长方形 ----------
+    # 用户原话：「文件夹展开之后宽度可以加大一些，现在 3*3 展开是长方形，太窄了」。
+    # 判据用宽高比：9 成员 3×3 满页时应在 [0.85, 1.15]（旧实现约 0.64）。
+    st9 = make_state(9)
+    w9 = DesktopWindow(st9)
+    w9.resize(scr_geo.size())
+    w9._update_grid_metrics()
+    w9.attached = True
+    w9.open_folder("f")
+    settle(app, 200)
+    pop9 = w9._popup
+    aspect9 = pop9.width() / max(1, pop9.height())
+    check("P9a 9 成员满页宽高比 ∈ [0.85, 1.15]",
+          0.85 <= aspect9 <= 1.15,
+          "w=%d h=%d aspect=%.3f" % (pop9.width(), pop9.height(), aspect9))
+    check("P9b 宽度确实比旧版（约 225px）大", pop9.width() > 260,
+          "w=%d" % pop9.width())
+    mems9 = members_of(pop9)
+    if len(mems9) == 9:
+        left = min(c.x() for c in mems9)
+        right = max(c.x() + c.width() for c in mems9)
+        check("P9c 内容块仍水平居中（左右留白差 ≤2px）",
+              abs(left - (pop9.width() - right)) <= 2,
+              "L=%d R=%d" % (left, pop9.width() - right))
+    w9.close()
+
     # ---------- P8：新成员跳到它所在的页 ----------
     st6 = make_state(10)                    # 第 2 页只有 1 个
     w6 = DesktopWindow(st6)

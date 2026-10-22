@@ -335,8 +335,35 @@ def main(app):
     check("I15c Windows 模式拖动不翻页", win2._page == 0, "%s" % win2._page)
     empty_release(win2, QPoint(x0.x() + 200, x0.y() + 10))
 
-    # ---------- I16：多选标记真的画出来 ----------
-    # 不拿 grab() 比像素：图标是桌面窗口的子控件（不透明背景），
+    # ---------- I17：长按菜单的「选择」自动勾选被长按的图标 ----------
+    # v10 A3（反馈 7）：以前菜单只调 host.enter_selection_mode()（QAction 的
+    # triggered 传 False 进去，first_id 恒为空），进了多选态却一个都没选中，
+    # 用户还得再点一下。现在必须把触发长按的那个图标带上。
+    st17 = make_state(mobile=True)
+    win17 = make_window(st17)
+    try:
+        icon17 = win17.icons["a2"]
+        silence(icon17)
+        click(icon17, ms=interaction.LONG_PRESS_MS + 150)
+        check("I17a 长按弹出菜单", icon17._long_menu is not None)
+        acts = icon17._long_menu.actions() if icon17._long_menu else []
+        check("I17b 首项是「选择」", bool(acts) and acts[0].text() == "选择",
+              "%s" % [a.text() for a in acts])
+        if acts:
+            acts[0].trigger()          # 走真实菜单路径，不直接调 host 方法
+        check("I17c 进入多选态", win17._selection_mode is True)
+        check("I17d 被长按的图标被自动勾选",
+              win17._selected == {"a2"}, "%s" % sorted(win17._selected))
+        check("I17e 该图标显示选中态（对钩）",
+              win17.icons["a2"].selected is True)
+        check("I17f 其它图标未被勾选",
+              all(not win17.icons[k].selected for k in ("a1", "a3")))
+        icon17._close_long_menu()
+    finally:
+        win17.close()
+    QTest.qWait(80)
+
+    # ---------- I16：多选标记真的画出来 ----------    # 不拿 grab() 比像素：图标是桌面窗口的子控件（不透明背景），
     # 抓出来整块都是 alpha=255，画没画圆看不出来。直接喂一张透明
     # QImage 给绘制函数，按 alpha 数像素——这也是"纯绘制可测"的用法。
     from PySide6.QtGui import QImage, QPainter

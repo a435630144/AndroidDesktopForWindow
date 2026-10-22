@@ -227,10 +227,13 @@ class DesktopWindow(QWidget):
         self.update()
 
     def _dev_mode(self) -> bool:
-        """开发者模式（2026-10-18）：桌面渲染网格可视化边框，排查布局问题用。
+        """开发者模式：桌面渲染网格可视化边框，排查布局问题用。
 
-        设置里可开关（SettingsDialog.chk_dev），开发期默认开启
-        （storage DEFAULT_SETTINGS["dev_mode"]=True）。
+        设置里可开关（SettingsDialog.chk_dev）。**默认关闭**：
+        DEFAULT_SETTINGS["dev_mode"] 自 2026-10-19 起就是 False，
+        且 storage._load() 会在新版首次启动时把旧 state 里遗留的 True
+        一次性关掉（v10 A2，反馈 3——覆盖安装不清 %APPDATA%，否则用户
+        一升级就看到满屏调试网格）。
         """
         return bool(self.storage.get_setting("dev_mode"))
 

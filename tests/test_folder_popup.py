@@ -360,8 +360,12 @@ def main(app):
                   "%s" % [getattr(c, "_no_label", None) for c in members])
             cw0, _ch0 = grid_flow.cell_size(st3)
             pw0, _ph0 = pop._member_pitch()
-            check("F11g 成员间距小于一个桌面格（紧凑）",
-                  pw0 < cw0, "pitch=%d cell_w=%d" % (pw0, cw0))
+            # v10 A9（反馈 16）**反向覆盖**旧契约：旧断言"间距必须小于一个
+            # 桌面格"锁死了弹窗宽度——3×3 满页宽高比只有 0.78，用户原话
+            # "展开是长方形，太窄了"。现在允许加宽到接近正方形，但仍设上限
+            # （≤ 1.3 倍桌面格）防止无限膨胀。
+            check("F11g 成员间距受控（≤ 桌面格 1.3 倍）",
+                  pw0 <= cw0 * 1.3, "pitch=%d cell_w=%d" % (pw0, cw0))
             if members:
                 ic0 = members[0]
                 bw0, bh0 = pop._member_box()

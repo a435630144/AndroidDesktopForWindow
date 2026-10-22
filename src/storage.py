@@ -126,6 +126,9 @@ DEFAULT_SETTINGS = {
     # （另一处是隐藏 DefView 连带壁纸，见 win32_layer）。排查布局时在
     # 右键菜单「查看 ▸ 显示网格调试信息」里临时打开即可。
     "dev_mode": False,
+    # v10 A2（反馈 3）："首次加载已把 dev_mode 关掉"的一次性标记。
+    # 覆盖安装不清 %APPDATA%，旧版遗留的 True 会被新版继承 → 开局一张调试网格。
+    "dev_mode_v10_reset": False,
 }
 
 DEFAULT_WIDGETS = [
@@ -219,6 +222,13 @@ class Storage:
             if (_s.get("widgets_only_prev_mode") == "grid"
                     and _s.get("layout_mode") == "free"):
                 _s["layout_mode"] = "grid"
+        # v10 A2（反馈 3）：**安装后不要默认开开发者调试网格**。默认值本来
+        # 就是 False，但安装器只在*卸载*时清 %APPDATA%，覆盖安装会继承旧
+        # state.json —— 用户在旧版里手动开过 dev_mode，新版就"带着网格启动"。
+        # 一次性标记保证只改这一次，之后用户的手动开关不被覆盖。
+        if not _s.get("dev_mode_v10_reset"):
+            _s["dev_mode"] = False
+            _s["dev_mode_v10_reset"] = True
         self._normalize_layout()
         # v7 §10.3：旧键 columns（整数 = 手动列数）一次性迁移进 grid_cols。
         # 判据用**文件里的原始 settings**（合并默认值后 grid_dims_mode 必然存在）。
