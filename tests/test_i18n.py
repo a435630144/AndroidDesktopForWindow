@@ -19,6 +19,7 @@
   I12 组件库卡片按钮在英文下是 "Add to desktop"
   I13 组件设置弹窗：标题带组件英文名，字段标签走英文
   I14 托盘菜单的组件名走 display_name
+  I15 桌面右键菜单文案与占位符替换（delete_selected 用 {n}）
 
 运行：python tests/test_i18n.py   （offscreen）
 """
@@ -229,6 +230,18 @@ def main(app):
           wdlg.windowTitle() == "Clock · Settings", wdlg.windowTitle())
     labels = [lb.text() for lb in wdlg.findChildren(QLabel)]
     check("I13b 字段标签走英文", "Show seconds" in labels, str(labels[:6]))
+
+    # ---------- I15：桌面右键菜单（占位符替换） ----------
+    check("I15a 菜单文案英文", i18n.T("menu.view") == "View",
+          i18n.T("menu.view"))
+    check("I15b 菜单占位符替换正确",
+          i18n.T("menu.delete_selected", n=3) == "Delete selected (3)",
+          i18n.T("menu.delete_selected", n=3))
+    i18n.set_language(i18n.ZH)
+    check("I15c 中文菜单占位符替换正确",
+          i18n.T("menu.delete_selected", n=3) == "删除选中（3）",
+          i18n.T("menu.delete_selected", n=3))
+    i18n.set_language(i18n.EN)      # 下面 I14 仍按英文断言
 
     # ---------- I14 ----------
     from src import tray

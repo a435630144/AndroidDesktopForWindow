@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QWidget
 from . import appsource
 from . import effects
 from . import grid_flow
+from . import i18n
 from . import interaction
 from . import page_rules
 from . import theme
@@ -3168,13 +3169,14 @@ class DesktopWindow(QWidget):
         menu.setStyleSheet(theme.MENU_QSS)
         if self._organize_mode():
             # 查看 ▸（图标大小 + 自动排列 + 网格调试）
-            view = menu.addMenu("查看")
+            view = menu.addMenu(i18n.T("menu.view"))
             # v7 §3.3：三档加勾选（勾选状态由 icon_fit 反查，自定义比例时三档全不勾）
-            size_menu = view.addMenu("图标大小")
+            size_menu = view.addMenu(i18n.T("menu.icon_size"))
             cur_tier = self._current_icon_tier()
             for label, tier in (("大图标", "large"), ("中图标", "medium"),
                                 ("小图标", "small")):
-                act = size_menu.addAction(label)
+                act = size_menu.addAction(
+                    i18n.TL("menu.icon_size." + tier, label))
                 act.setCheckable(True)
                 act.setChecked(cur_tier == tier)
                 act.triggered.connect(
@@ -3183,33 +3185,34 @@ class DesktopWindow(QWidget):
             # 2026-10-19 反馈 3：把"自动排列"做成**持久的开关**（与资源
             # 管理器「查看 ▸ 自动排列图标」同语义）——勾选即立刻整理，
             # 之后拖动始终递进生效；取消则自由摆放（允许空格）。
-            auto_act = view.addAction("自动排列图标")
+            auto_act = view.addAction(i18n.T("menu.auto_arrange"))
             auto_act.setCheckable(True)
             auto_act.setChecked(bool(self.storage.get_setting("auto_arrange")))
             auto_act.triggered.connect(self._toggle_auto_arrange)
-            view.addAction("立即整理（重新排列）", self._tidy)
+            view.addAction(i18n.T("menu.tidy_now"), self._tidy)
             # 2026-10-20 用户反馈 4：「显示网格调试信息」不属于日常操作，
             # 从桌面右键「查看」里移除——它在 设置 ▸ 高级 ▸ 开发者调试
             # 卡片里（settings_dialog.chk_dev），入口只有一个，避免两处
             # 状态各说各话。
 
             # 刷新 / 粘贴（与系统桌面同一位置）
-            menu.addAction("刷新", self.rescan_desktop)
-            paste = menu.addAction("粘贴", self._paste_files)
+            menu.addAction(i18n.T("menu.refresh"), self.rescan_desktop)
+            paste = menu.addAction(i18n.T("menu.paste"), self._paste_files)
             paste.setEnabled(self._clipboard_has_files())
 
             menu.addSeparator()
-            new_menu = menu.addMenu("新建")
+            new_menu = menu.addMenu(i18n.T("menu.new"))
             new_menu.setObjectName("ctxNewMenu")   # 测试/自动化定位用
             self._fill_new_menu(new_menu)
             menu.addSeparator()
 
             # 系统设置与常用入口
-            menu.addAction("显示设置", lambda: self._open_uri("ms-settings:display"))
-            menu.addAction("个性化（桌面背景）",
+            menu.addAction(i18n.T("menu.display_settings"),
+                           lambda: self._open_uri("ms-settings:display"))
+            menu.addAction(i18n.T("menu.personalize"),
                            lambda: self._open_uri("ms-settings:personalization-background"))
-            menu.addAction("在终端中打开", self._open_terminal)
-            menu.addAction("打开桌面文件夹", self._open_desktop_folder)
+            menu.addAction(i18n.T("menu.terminal"), self._open_terminal)
+            menu.addAction(i18n.T("menu.open_desktop"), self._open_desktop_folder)
             menu.addSeparator()
 
             # 本软件的布局能力
@@ -3217,20 +3220,23 @@ class DesktopWindow(QWidget):
             # 空白页都无从谈起（组件在无界态不翻页）。
             if not self._widgets_only():
                 free_now = grid_flow.free_mode(self.storage)
-                menu.addAction("切换到无界模式（自由摆布）" if not free_now
-                               else "切换到网格模式（对齐网格）",
+                menu.addAction(i18n.T("tray.to_free") if not free_now
+                               else i18n.T("tray.to_grid"),
                                self._toggle_layout_mode)
                 # 分页（反馈 17）：**两种模式都有**——旧实现把「添加空白页」
                 # 写在 `if free_now:` 里，网格模式下用户根本找不到分页入口。
-                menu.addAction("添加空白页", self._add_blank_page)
+                menu.addAction(i18n.T("menu.add_blank_page"),
+                               self._add_blank_page)
                 if self._page in grid_flow.extra_pages(self.storage):
-                    menu.addAction("删除当前空白页", self._remove_blank_page)
+                    menu.addAction(i18n.T("menu.remove_blank_page"),
+                                   self._remove_blank_page)
                 # v9 V4：交互方式也放在这里（与设置 ▸ 模式 是同一个值，
                 # 只是多一个就近入口；写值统一走 interaction.set_mode）
-                mode_menu = menu.addMenu("交互方式")
+                mode_menu = menu.addMenu(i18n.T("menu.interaction"))
                 cur_mode = interaction.mode(self.storage)
                 for key, text in interaction.MODES:
-                    act = mode_menu.addAction(text)
+                    act = mode_menu.addAction(
+                        i18n.TL("interaction." + key, text))
                     act.setCheckable(True)
                     act.setChecked(cur_mode == key)
                     act.triggered.connect(
@@ -3241,20 +3247,25 @@ class DesktopWindow(QWidget):
             menu.addSeparator()
 
         if self._selected:
-            menu.addAction("删除选中（%d）" % len(self._selected), self._remove_selected)
+            menu.addAction(
+                i18n.T("menu.delete_selected", n=len(self._selected)),
+                self._remove_selected)
         # 2026-10-21 反馈 9：右键的「小组件模式」开关移除——与设置页
         # 「显示桌面小组件」是同一个值的两个旋钮，必然互相打架；
         # 新增的「仅小组件模式」开关同样只在设置页，入口唯一。
         # 上一段（布局能力）已经收过分隔线，这里不再重复加，避免出现两条
-        menu.addAction("添加组件…", self.openWidgetCenterRequested.emit)
-        menu.addAction("设置…", self.openSettingsRequested.emit)
+        menu.addAction(i18n.T("menu.add_widget"),
+                       self.openWidgetCenterRequested.emit)
+        menu.addAction(i18n.T("menu.settings"),
+                       self.openSettingsRequested.emit)
         return menu
 
     def _fill_new_menu(self, new_menu):
         """「新建」子菜单：文件夹 + 系统注册的全部 ShellNew 模板（反馈 6）。"""
         from . import shell_new
         new_menu.addAction(
-            "文件夹", lambda: self._create_on_desktop("新建文件夹", True))
+            i18n.T("menu.new.folder"),
+            lambda: self._create_on_desktop(i18n.T("menu.new.folder_name"), True))
         templates = shell_new.shell_new_templates()
         if templates:
             new_menu.addSeparator()
