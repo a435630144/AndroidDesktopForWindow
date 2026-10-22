@@ -17,9 +17,9 @@ from typing import Optional
 from PySide6.QtCore import QDateTime, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFontMetricsF, QPainter
 
-from . import theme
-from .widget_glass import GlassWidget
-from .widget_style import DEFAULT_STYLE, Style
+from ... import theme
+from ...widget_glass import GlassWidget
+from ...widget_style import DEFAULT_STYLE, Style
 
 # 内边距：与 widget_glass.PAD 同一套语言（组件之间留白必须一致）
 PAD = 18
@@ -139,12 +139,3 @@ class ClockWidget(GlassWidget):
         """尺寸变化（span 切换 / DPI 变化）：字号是比例算的，重绘即可。"""
         if hasattr(self, "_model"):
             self.update()
-
-
-def draw_preview(painter: QPainter, rect, dpr: float = 1.0) -> None:
-    """组件库缩略图：固定 09:41，避免预览每秒闪一次。"""
-    from .widget_glass import paint_glass, PREVIEW_RADIUS
-    rect = QRectF(rect)
-    paint_glass(painter, rect, PREVIEW_RADIUS)
-    m = ClockModel(hhmm="09:41", ss="07", date="10月21日", weekday="星期三")
-    draw(painter, rect, m)

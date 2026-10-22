@@ -31,7 +31,7 @@ from PySide6.QtWidgets import QApplication, QMenu
 from src import grid_flow, widget_catalog
 from src.desktop_window import DesktopWindow
 from src.storage import Storage
-from src.widgets_clock import ClockWidget
+from src.widgets.clock import ClockWidget
 
 W, H = 1920, 1040  # 100% DPI 工作区（验收场景：19 列 8 行）
 STATE = Path(tempfile.gettempdir()) / "probe18_state.json"

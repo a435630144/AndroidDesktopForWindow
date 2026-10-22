@@ -149,7 +149,7 @@ def main():
              "x": 40, "y": 40, "w": 240, "h": 240, "settings": {}}
     st_obj.widgets.append(entry)
     st_obj.save()
-    from src import widgets_clock as ck
+    from src.widgets import clock as ck
     w = ck.ClockWidget(st_obj, entry)
     first = w.style.text.name().upper()
     entry["settings"]["text_color"] = "#FF0000"

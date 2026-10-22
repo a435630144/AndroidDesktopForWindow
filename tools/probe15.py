@@ -217,7 +217,7 @@ def main():
     from PySide6.QtWidgets import QWidget
     from src.widget_base import FloatingWidget
     from src.widget_layer import WidgetLayer
-    from src.widgets_clock import ClockWidget
+    from src.widgets.clock import ClockWidget
 
     def mk_mouse(widget, type_, local, btn=Qt.LeftButton):
         g = widget.mapToGlobal(local)

@@ -33,7 +33,7 @@ from PySide6.QtWidgets import QApplication
 
 from src import grid_flow
 from src import theme
-from src import widgets_clock
+from src.widgets import clock as widgets_clock
 from src import widgets_notes
 from src import widget_style
 from src.widget_glass import paint_glass
