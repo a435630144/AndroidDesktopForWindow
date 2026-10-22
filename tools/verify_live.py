@@ -32,7 +32,7 @@ from src.storage import Storage  # noqa: E402
 from src.widget_layer import WidgetLayer  # noqa: E402
 
 RESULTS = []
-STATE_PATH = Path(os.path.expandvars(r"%APPDATA%\DesktopOrganizerDemo\state.json"))
+STATE_PATH = Path(os.path.expandvars(r"%APPDATA%\PhoneDesktop\state.json"))
 STATE_BACKUP = None
 u32 = ctypes.windll.user32
 u32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]

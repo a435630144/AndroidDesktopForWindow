@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""配置与布局持久化：JSON 存放于 %APPDATA%/DesktopOrganizerDemo/state.json。
+"""配置与布局持久化：JSON 存放于 %APPDATA%/PhoneDesktop/state.json（v10 D1 改名）。
 
 layout 中每个条目：
   {"id": 唯一id, "type": "app" | "folder",

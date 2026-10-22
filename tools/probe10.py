@@ -32,7 +32,7 @@ from src import appsource, win32_layer  # noqa: E402
 from src.desktop_window import DesktopWindow  # noqa: E402
 from src.storage import Storage  # noqa: E402
 
-STATE_PATH = Path(os.path.expandvars(r"%APPDATA%\DesktopOrganizerDemo\state.json"))
+STATE_PATH = Path(os.path.expandvars(r"%APPDATA%\PhoneDesktop\state.json"))
 STATE_BACKUP = None
 
 u32 = ctypes.windll.user32

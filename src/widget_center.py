@@ -370,7 +370,7 @@ class WidgetCenterPage(QWidget):
         # v9 V3：导入外部组件（zip）+ 打开组件目录（自己放目录进去也行）
         self.btn_open_dir = QPushButton("组件目录…")
         self.btn_open_dir.setStyleSheet(_btn_qss())
-        self.btn_open_dir.setToolTip("打开 %APPDATA%\\DesktopOrganizerDemo\\widgets")
+        self.btn_open_dir.setToolTip("打开 %APPDATA%\\PhoneDesktop\\widgets")
         self.btn_open_dir.clicked.connect(self._open_plugin_dir)
         foot.addWidget(self.btn_open_dir)
 

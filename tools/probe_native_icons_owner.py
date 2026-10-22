@@ -73,6 +73,6 @@ if lv:
 else:
     print("!! 没找到 SysListView32")
 print()
-print("当前 DesktopOrganizerDemo 进程：")
+print("当前 PhoneDesktop 进程：")
 import subprocess
-subprocess.run(["tasklist", "/FI", "IMAGENAME eq DesktopOrganizerDemo.exe"])
+subprocess.run(["tasklist", "/FI", "IMAGENAME eq PhoneDesktop.exe"])

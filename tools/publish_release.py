@@ -7,8 +7,8 @@
     python tools/publish_release.py 4.0.0 \
         --name "v4.0.0 · 手机式桌面整理（内部版本 v9a）" \
         --notes docs/release_notes/4.0.0.md \
-        dist/DesktopOrganizerDemo_v9a_Portable.zip \
-        dist/DesktopOrganizerDemo_v9a_Setup.exe
+        dist/PhoneDesktop_v9a_Portable.zip \
+        dist/PhoneDesktop_v9a_Setup.exe
 
 说明：
 - 认证走 git 凭据管理器里 github.com 的 token（`git credential fill`），**不读环境变量、

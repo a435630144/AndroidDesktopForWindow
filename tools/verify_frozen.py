@@ -32,7 +32,7 @@ GW_HWNDNEXT, GW_CHILD = 2, 5
 # 可传 argv[1] 指定被测 exe（如验证 v2 新包）；默认测标准 dist 产物
 ROOT = Path(__file__).resolve().parent.parent
 EXE = sys.argv[1] if len(sys.argv) > 1 else \
-    str(ROOT / "dist" / "DesktopOrganizerDemo" / "DesktopOrganizerDemo.exe")
+    str(ROOT / "dist" / "PhoneDesktop" / "PhoneDesktop.exe")
 
 RESULTS = []
 

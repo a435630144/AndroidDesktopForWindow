@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-DesktopOrganizerDemo - 第三方桌面整理 / 美化软件（最小可用 Demo）
+PhoneDesktop - 第三方桌面整理 / 美化软件（安卓式桌面 + 小组件 + Dock）
 
 功能：
   - 类安卓桌面网格：桌面文件克隆（可选），图标可拖拽、双击启动
@@ -33,11 +33,14 @@ def _install_crash_logger():
     import datetime
 
     base = os.environ.get("APPDATA")
-    d = os.path.join(base, "DesktopOrganizerDemo") if base else tempfile.gettempdir()
+    # 必须走 `paths.ensure_app_dirs()`：它会先做一次性数据迁移再建目录。
+    # 这里若自己 makedirs，新目录先落地，迁移就会判定"新目录已存在"而跳过，
+    # 用户升级后布局全丢（v10 D1 的真实坑，tests/P10 锁住）。
     try:
-        os.makedirs(d, exist_ok=True)
+        from src.paths import ensure_app_dirs as _ensure
+        d = str(_ensure())
     except Exception:
-        d = tempfile.gettempdir()
+        d = os.path.join(base, "PhoneDesktop") if base else tempfile.gettempdir()
     log = os.path.join(d, "crash.log")
 
     def _hook(etype, exc, tb):
@@ -83,13 +86,15 @@ def main() -> int:
     ensure_app_dirs()
 
     app = QApplication(sys.argv)
-    app.setApplicationName("DesktopOrganizerDemo")
-    app.setApplicationDisplayName("桌面整理Demo")
+    app.setApplicationName("PhoneDesktop")
+    app.setApplicationDisplayName("PhoneDesktop")
     app.setQuitOnLastWindowClosed(False)  # 隐藏窗口不等于退出，常驻托盘
     app.setWindowIcon(QIcon(asset_path("app_icon.png")))
 
-    # 单实例守护：防止重复运行出现多个整理窗口
-    guard = SingleInstance("DesktopOrganizerDemo_SingleInstance")
+    # 单实例守护：防止重复运行出现多个整理窗口。旧键只读兼容——旧版 exe 还开着时
+    # 新版不许再起一个（两个进程同时接管桌面层会互相抢窗口）。
+    guard = SingleInstance("PhoneDesktop_SingleInstance",
+                           legacy_keys=("DesktopOrganizerDemo_SingleInstance",))
     if guard.is_running():
         return 0
 
@@ -156,7 +161,7 @@ def main() -> int:
         storage.set_setting("first_run", False)
         window.rebuild()
         tray.notify(
-            "桌面整理Demo",
+            "PhoneDesktop",
             "已就绪：系统桌面保持原生，可右键托盘「添加应用」把常用入口放到整理桌面；"
             "在「设置」里可开启桌面整理模式（隐藏原生图标、框选、自动克隆桌面文件）。"
             "拖一个图标到另一个上可建文件夹，从资源管理器拖文件进来即可添加。",

@@ -16,7 +16,7 @@ import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
-REAL_STATE = os.path.join(os.environ.get("APPDATA", ""), "DesktopOrganizerDemo", "state.json")
+REAL_STATE = os.path.join(os.environ.get("APPDATA", ""), "PhoneDesktop", "state.json")
 
 
 def _watchdog(sec=60):

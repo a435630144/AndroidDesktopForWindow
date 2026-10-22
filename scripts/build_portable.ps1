@@ -1,10 +1,10 @@
 ﻿# -*- coding: utf-8 -*-
 # 便携版打包：PyInstaller onedir + zip
-# 用法（pwsh 7）：& 'C:\Users\43563\AppData\Local\Microsoft\WindowsApps\pwsh.exe' -File 'scripts\build_portable.ps1' [-OutName DesktopOrganizerDemo_v2]
-#   -OutName 输出目录名（默认 DesktopOrganizerDemo）。旧 dist 目录若被安全层
+# 用法（pwsh 7）：& 'C:\Users\43563\AppData\Local\Microsoft\WindowsApps\pwsh.exe' -File 'scripts\build_portable.ps1' [-OutName PhoneDesktop_v10]
+#   -OutName 输出目录名（默认 PhoneDesktop）。必须传**绝对路径**调用本脚本（坑 #86）。旧 dist 目录若被安全层
 #     锁住（bulk-delete 拦截后路径写保护），传新名字即可绕开，旧包原样保留。
 param(
-    [string]$OutName = 'DesktopOrganizerDemo'
+    [string]$OutName = 'PhoneDesktop'
 )
 $ErrorActionPreference = 'Stop'
 
@@ -17,7 +17,7 @@ if (-not (Test-Path $py)) { throw "找不到 venv python: $py" }
 
 Write-Host "==> PyInstaller 版本:" (& $py -m PyInstaller --version)
 
-$dist = Join-Path $root "dist\$OutName\DesktopOrganizerDemo"
+$dist = Join-Path $root "dist\$OutName\PhoneDesktop"
 $work = Join-Path $root "build\$OutName"
 
 Write-Host "==> 开始打包 (onedir) -> $dist"
@@ -34,7 +34,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
 $prevEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 & $py -m PyInstaller --noconfirm --clean --windowed `
-    --name DesktopOrganizerDemo `
+    --name PhoneDesktop `
     --distpath (Join-Path $root "dist\$OutName") `
     --workpath $work `
     --icon assets\app_icon.ico `
@@ -50,11 +50,11 @@ if ($pycode -ne 0) {
 }
 
 if (-not (Test-Path $dist)) { throw "找不到输出目录: $dist（PyInstaller exit=$pycode）" }
-$exe = Join-Path $dist 'DesktopOrganizerDemo.exe'
+$exe = Join-Path $dist 'PhoneDesktop.exe'
 if (-not (Test-Path $exe)) { throw "找不到主程序: $exe（PyInstaller exit=$pycode）" }
 
-$zipName = if ($OutName -eq 'DesktopOrganizerDemo') {
-    'DesktopOrganizerDemo_Portable.zip'
+$zipName = if ($OutName -eq 'PhoneDesktop') {
+    'PhoneDesktop_Portable.zip'
 } else {
     "${OutName}_Portable.zip"
 }

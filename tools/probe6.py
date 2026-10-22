@@ -24,7 +24,7 @@ from src import win32_layer  # noqa: E402
 from src.storage import Storage  # noqa: E402
 from src.widget_layer import WidgetLayer  # noqa: E402
 
-STATE_PATH = Path(os.path.expandvars(r"%APPDATA%\DesktopOrganizerDemo\state.json"))
+STATE_PATH = Path(os.path.expandvars(r"%APPDATA%\PhoneDesktop\state.json"))
 STATE_BACKUP = None
 T0 = time.time()
 
