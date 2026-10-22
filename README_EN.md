@@ -194,45 +194,70 @@ pwsh -File scripts/build_portable.ps1
 
 > Development-process documents (dev log, iteration specs & plans, feedback triage) are kept locally only and are not committed to this repository.
 
-## 🗺️ Roadmap
+## 📜 Changelog
 
-**Delivered** (short version tag lives in `src/version.py`; the build timestamp is shown at the bottom of the right-click menu):
+> Ordered by **installer version**, newest first; the parenthesised tag is the internal build label (see `src/version.py`, also shown at the bottom of the right-click menu). More detail in [`docs/release_notes/`](docs/release_notes/).
 
-| Version | Highlights | Installer |
-|---|---|---|
-| v5 | Adaptive grid / iOS-style local reflow / widget span model / folder popup redesign / paging | 1.3.0 |
-| v6 → v6g | Two modes (organizer / native) / widgets in grid / desktop folder sync / wallpaper preserved / Win+D guardian, plus 14 field-reported fixes | 1.7.0 |
-| v7a | Two-layer sizing (`cell_from_native` + `solve_dims`) + manually placeable grid origin | 2.0.0 |
-| v7b | **All 17 field reports after v7a closed**: coexisting dual layouts / chained drag displacement / widget transparent-area hit-testing / solid combo popup / folder name + size + corner entries / single-icon sizing / takeover by default + widgets mode | 2.1.0 |
-| v7c | **The 4 follow-ups after v7b closed**: standalone folder forms for "add app / change color" (16 presets + auto + custom; recoloring no longer rebuilds members) / collision shape synced after manual widget resize (bidirectional corner stepping) / single-source default icon size / grid debug readout moved into settings | 2.1.1 |
-| v7d | **The 10 follow-ups after v7c closed**: slider dead-touch debounce / self-drawn row-column Stepper / folder full-page paging / two-level centering of the 3×3 popup / widget span collision / collision preview when dragging out of a folder / two-zone merge decision / edge-hover paging / widgets-only mode / auto-dissolve single-icon folders | 2.1.2 |
-| v7e | **The 8 follow-ups after v7d closed + the B5 visual batch**: dwell/push timings moved earlier (450/700→350/470 ms, edge flip 600→360 ms) / no bounce on release in free mode / widget context menu follows the mode / widget coords recomputed when switching back to grid / auto-arrange truly packs / popup icons 40–56 px with single-point drawing / round edit handles with ≥22 px hit area / widgets-only returns the desktop to the system / dirty-region repaint for a steady 60 fps (`frame_stats`) | 2.1.3 |
+### 5.0.0 (v10a) · Widget store · English UI · Bilingual installer · Renamed to PhoneDesktop → [notes](docs/release_notes/5.0.0.md)
 
-| v9a | **v9 first batch: appearance customisation + widget plugins + dual input modes**: one shared appearance layer for every widget (background / opacity / text / accent / radius, injected at registration so widgets need zero code) / clock and notes rewritten on the glass base class / per-page auto-arrange rules (cross-page drops no longer snap back) / widget library merged into the settings panel (the "covered and unclickable" bug disappears structurally) / a widget developer guide plus `widget_plugin` (manifest validation, zip-slip protection, namespace isolation), a preview debugger, a packaging script and one-click zip import / **phone-style interaction** (tap to launch, 450 ms long-press menu, slide-after-long-press becomes a drag, selection rings and check marks, batch merge-into-folder / move-to-page / delete, swipe on empty space to flip pages) / widget "hide" and "close" merged into a single "close" | 4.0.0 |
-| v8a | **v8 first batch: widget library + four new widgets**: widgets declared once via `WidgetSpec` (spans / category / form / settings / preview) / glass card base class (static glass, no live blur) / system monitor (CPU · memory · disk, pure Win32, no new dependency) / to-do list (multi-instance) / calendar (month view with remembered month) / weather (Open-Meteo, live → cache → empty fallback) / widget settings dialog driven by `FieldSpec` / dedicated widget library window | 3.0.0 |
-| v10a | **Widget store + English UI + bilingual installer + rename to PhoneDesktop**: widget store (gitee → github → jsDelivr fallback, sha256 verification, Local / Store tabs, first batch world clock & countdown) / UI language auto · 中文 · English (settings, tray, context menus, widget library & settings apply instantly) / bilingual installer wizard with 120% visuals / rename to PhoneDesktop with one-time automatic data migration / 9 field reports closed (widget interaction blind spots / Dock drag-in + its own settings page / new widgets default to grid mode / dual-mode rename / widget fill ratio / resize guide lines at card edge / desktop panel rework / Dock default corner radius shrunk to 12 px) | 5.0.0 |
+- **Widget store**: widgets are no longer bundled wholesale — download what you need, gitee first with github / jsDelivr fallback, every package sha256-verified; the widget library splits into **Local / Store** tabs; first batch ships **world clock** and **countdown**; the 8 built-in seed widgets keep working offline and the store never overwrites built-ins
+- **English UI**: Settings ▸ General ▸ Interface language (auto / 中文 / English), applied instantly; covers all six settings pages, tray menu & bubbles, desktop context menu, widget library, widget settings and the version string
+- **Bilingual installer**: Chinese wizard (self-maintained overlay) + English counterpart, 120% wizard scale, refreshed installer icon and product image
+- **Renamed to PhoneDesktop**: exe name, install directory and the `%APPDATA%` data directory all change together; existing data is **migrated automatically on first launch**
+- **9 field reports closed**: widget interaction blind spots / Dock drag-in + its own settings page (icon size / corner radius / opacity / hover magnification / drop indicator) / Dock position switch not taking effect / new widgets default to grid mode / dual-mode rename / removed the useless "Restore widgets" button / widget **fill ratio** (no longer fully filled by default) / resize guide lines moved to the card edge / desktop panel rework / **Dock default corner radius shrunk to 12 px** (0–26 adjustable, clamped to half the thickness)
 
-**v7 delivered**:
+### 4.0.0 (v9a) · Per-widget appearance · Widget plugin platform · Dual input modes → [notes](docs/release_notes/4.0.0.md)
 
-- [x] **B1** Sizing foundation: `cell_from_native` derives cells from the native icon size, tiers only change in-cell ratio (`icon_fit`), row count = pure cropping, grid origin is manually placeable
-- [x] **B2** Coexisting layouts: grid and free-floating each persist their own layout; switching never converts or clears (single sizing source, `icon_px` retired)
-- [x] **B3** Dragging: the chained result of preview displacement goes into the animation list (layout is the only truth), widget drop always reflows
-- [x] **B4** Hit-testing: the widget's rectangular territory no longer swallows clicks (`alpha=2` full-window fill + `WM_NCHITTEST`→`HTCLIENT`); per-pixel `AlphaMask` is **no longer needed**
-- [x] **B5** Folder & visual polish: popup icon ratio decoupled from the desktop tier (`popup_metrics`) / popup edge placement and two-level centering / edit handles rebuilt as round dots with enlarged hit areas (delivered in v7e)
-- [x] **B6** Popups & paging: solid combo popup (`ui_choice.ComboBox`), paging entry available in both modes
+- **Per-widget appearance**: background / opacity / text colour / accent / radius, injected at registration so widgets need zero changes; the library preview uses the very same `draw()` as the desktop
+- **Widget plugin platform**: drop in a folder or a zip ([widget plugin guide](docs/组件开发指南.md)); `widget_plugin` validates manifests, blocks zip-slip and isolates namespaces; preview debugger + packaging script + one-click import
+- **Widget library merged into the settings panel**: the standalone window's "covered and unclickable" bug disappears structurally; per-page auto-arrange rules, cross-page drops no longer snap back
+- **Phone-style interaction**: tap to launch / 450 ms long-press menu / slide-after-long-press becomes a drag / multi-select with batch actions / swipe on empty space to flip pages
+- Clock and notes rewritten on the glass base class; widget "hide" and "close" merged into a single "close"
 
-**v8 delivered**:
+### 3.0.0 (v8a) · Widget library + four new widgets
 
-- [x] **C1** Widget registry: every static fact declared once in `WidgetSpec`; `WIDGET_TYPES` / `WIDGET_NAMES` / `WIDGET_CATALOG` all became derived views (no call site changed)
-- [x] **C2** Glass card base class `GlassWidget`: static glass (vertical gradient tint + top specular + rounded clip), **no real-time blur** — grabbing the desktop every frame would break the 60 fps work done in v7
-- [x] **C3** Widget library window: categories + search + four-state cards + live preview reusing the desktop `draw()`
-- [x] **C4–C7** Four new widgets: system monitor / to-do list / calendar / weather (model → layout → draw → widget, the first two layers unit-testable)
-- [x] **C8** Widget settings: declarative forms from `FieldSpec`; the context-menu entry only appears when a widget declares settings
-- [x] **C9** Regression + docs gate + v8a package
+- Widget registry declared once via `WidgetSpec` (spans / category / form / settings / preview); glass card base class (static glass, no live blur)
+- **System monitor** (CPU · memory · disk) / **To-do list** (multi-instance) / **Calendar** (month view with remembered month) / **Weather** (Open-Meteo, live → cache → empty fallback)
+- Widget settings dialog driven by `FieldSpec`; dedicated widget library window (categories + search + four-state cards + live preview reusing the desktop `draw()`)
 
-- [x] **Widget store** (install widget packages online, modular ecosystem): delivered in v10a (5.0.0) — see the [widget plugin guide](docs/组件开发指南.md)
+### 2.1.3 (v7e) · 8 field reports + visual batch
 
-Further out: native capability parity (F2 rename / Delete to recycle bin / clipboard), Ctrl+Z undo, multi-monitor.
+- Dwell/push timings moved earlier (450/700→350/470 ms, edge flip 600→360 ms); no bounce on release in free mode; widget context menu follows the mode; widget coords recomputed when switching back to grid
+- Auto-arrange truly packs; popup icons 40–56 px with single-point drawing; round edit handles with ≥22 px hit area; widgets-only returns the desktop to the system; dirty-region repaint for a steady 60 fps
+
+### 2.1.2 (v7d) · 10 field reports
+
+- Slider dead-touch debounce / self-drawn row-column Stepper / folder full-page paging / two-level centering of the 3×3 popup / widget span collision / collision preview when dragging out of a folder / two-zone merge decision / edge-hover paging / widgets-only mode / auto-dissolve single-icon folders
+
+### 2.1.1 (v7c) · 4 field reports
+
+- Standalone folder forms for "add app / change colour" (16 presets + auto + custom) / collision shape synced after manual widget resize / single-source default icon size / grid debug readout moved into settings
+
+### 2.1.0 (v7b) · All 17 field reports after v7a closed
+
+- Coexisting dual layouts (grid and free-floating each persist their own; switching never converts or clears) / chained drag displacement into the animation list / the widget's rectangular territory no longer swallows clicks
+- Solid combo popup / folder name + size + corner entries / single-icon sizing / takeover by default + widgets mode
+
+### 2.0.0 (v7a) · Two-layer sizing
+
+- `cell_from_native` derives cells from the native icon size, `solve_dims` solves the rest; tiers only change the in-cell ratio (`icon_fit`); row count = pure cropping
+- Grid origin is manually placeable
+
+### 1.7.0 (v6g) · Field-reported fixes
+
+- Desktop vanishing after Win+D / preview stacking while dragging a widget / merge hint pushed away / folder popup running off-screen; plus the `app: null` crash and crash-logger ordering
+
+### 1.6.0 (v6c–v6f) · Five rounds of field reports
+
+- Desktop band layer system / registry reverse-reading diagram / eight-handle resize / the real cause of the glass background, 28 fixes in total
+
+### 1.4.0 (v6) · Dual modes & desktop sync
+
+- Dual modes (organizer / native) / widgets in the grid / popup coverage / arrow badge + settings consolidation / redesigned settings + automatic desktop folder sync / wallpaper preserved / Win+D and explorer-restart guardian
+
+### 1.3.0 (v5) · Adaptive grid
+
+- Adaptive GridMetrics / `reflow_moves` displacement list / widget span model / folder popup redesign / paging
 
 ## ⚠️ Known Limitations
 
