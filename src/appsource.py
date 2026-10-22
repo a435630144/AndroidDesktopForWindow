@@ -291,6 +291,12 @@ _ICON_PROVIDER = QFileIconProvider()
 _ICON_CACHE = {}
 _PIXMAP_CACHE = {}
 
+# `icon_path` 指向图片文件时直接加载（见 `_qicon_for`）。含 SVG 是因为
+# Windows 11 的 shell 能认，Qt 侧只有装了 imageformats 插件才认——认不了
+# 会退回下面的 shell 分支，不会崩。
+_IMAGE_SUFFIXES = (".png", ".ico", ".jpg", ".jpeg", ".bmp", ".gif", ".webp",
+                   ".svg")
+
 # ---------- 快捷方式徽标（v6 §7.1，反馈 10） ----------
 # 壳层把快捷方式箭头 overlay 直接烘焙进 .lnk 图标 pixmap：图标放大后
 # 箭头占到边长 ~35% 且带柔和阴影发虚（原生只是左下小角标，见 DEVLOG
@@ -396,10 +402,21 @@ def _qicon_for(app: dict) -> QIcon:
     v6 §7.1：快捷方式取**目标**的图标——壳层 .lnk 图标烘焙了超大软箭头
     overlay（见 is_shortcut 注释）；目标解析失败才用 .lnk 本身。
     v6e：`.url` 先看文件内的 IconFile（Steam 游戏图标在那里）。
+    v10：`icon_path` 指向**图片文件**时直接 `QIcon(path)` 加载（见下）。
     """
     path = _expand(app.get("icon_path") or app.get("target", ""))
     if not path:
         return QIcon()
+    # 图片文件本身就是图标。交给 QFileIconProvider 只会拿到"图片文件类型"
+    # 的图标（照片应用那个），图标内容全丢——所以必须自己 load。
+    # 用途：README 截图用导出好的第三方应用 PNG（tools/demo_apps.py）。
+    if path.lower().endswith(_IMAGE_SUFFIXES):
+        key = (path,)
+        if key not in _ICON_CACHE:
+            _ICON_CACHE[key] = QIcon(path)
+        if not _ICON_CACHE[key].isNull():
+            return _ICON_CACHE[key]
+        # 图坏了/文件不在：往下走 shell 分支，至少还能拿到文件类型图标
     if is_shortcut(app):
         if path.lower().endswith(".url"):
             spec = shortcut_icon_source(app)

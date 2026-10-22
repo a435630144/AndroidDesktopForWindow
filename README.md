@@ -39,7 +39,7 @@
 
 ## 📸 界面一览
 
-> 下面每一张都由 [`tools/shot_readme.py`](tools/shot_readme.py) 从**真实控件离屏渲染**生成——桌面网格、玻璃组件、右键菜单走的是产品里同一份绘制代码，不是设计稿；两段动图由 [`tools/make_readme_anim.py`](tools/make_readme_anim.py) 用同一批素材逐帧录制（HTML 时间轴 + headless 截图 + Pillow 合成）。
+> 下面每一张都由 [`tools/shot_readme.py`](tools/shot_readme.py) 从**真实控件离屏渲染**生成（桌面上的应用图标取自 [`assets/demo_icons/`](assets/demo_icons/)，是各应用的商标，仅用于展示效果，由 [`tools/make_demo_icons.py`](tools/make_demo_icons.py) 导出）——桌面网格、玻璃组件、右键菜单走的是产品里同一份绘制代码，不是设计稿；两段动图由 [`tools/make_readme_anim.py`](tools/make_readme_anim.py) 用同一批素材逐帧录制（HTML 时间轴 + headless 截图 + Pillow 合成）。
 
 **八种小组件**：时钟 / 便签 / 系统监控 / 待办清单 / 日历 / 天气 / 桌面面板 / 音乐，同一套玻璃材质与排版，尺寸跟着跨度自适应
 

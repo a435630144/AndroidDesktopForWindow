@@ -1,0 +1,103 @@
+{
+  "note": "由 tools/make_demo_icons.py 生成；图标为各应用商标，仅用于展示效果",
+  "apps": [
+    {
+      "slug": "weixin",
+      "name": "微信",
+      "file": "weixin.png",
+      "source": "D:/Program Files/Tencent/Weixin/Weixin.exe",
+      "px": 256
+    },
+    {
+      "slug": "qq",
+      "name": "QQ",
+      "file": "qq.png",
+      "source": "D:/Program Files/Tencent/QQNT/QQ.exe",
+      "px": 256
+    },
+    {
+      "slug": "cloudmusic",
+      "name": "网易云音乐",
+      "file": "cloudmusic.png",
+      "source": "D:/Program Files/NetEase/CloudMusic/cloudmusic.exe",
+      "px": 256
+    },
+    {
+      "slug": "edge",
+      "name": "Microsoft Edge",
+      "file": "edge.png",
+      "source": "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+      "px": 256
+    },
+    {
+      "slug": "jianying",
+      "name": "剪映",
+      "file": "jianying.png",
+      "source": "D:/JianyingPro/JianyingPro.exe",
+      "px": 256
+    },
+    {
+      "slug": "doubao",
+      "name": "豆包",
+      "file": "doubao.png",
+      "source": "D:/Program Files/Doubao/Doubao.exe",
+      "px": 256
+    },
+    {
+      "slug": "quark",
+      "name": "夸克网盘",
+      "file": "quark.png",
+      "source": "D:/Program Files (x86)/QuarkCloudDrive\\7.4.0.818\\quark_cloud_drive.exe",
+      "px": 256
+    },
+    {
+      "slug": "steam",
+      "name": "Steam",
+      "file": "steam.png",
+      "source": "D:/Program Files (x86)/Steam/steam.exe",
+      "px": 256
+    },
+    {
+      "slug": "excel",
+      "name": "Excel",
+      "file": "excel.png",
+      "source": "C:/Program Files/Microsoft Office/root/Office16/EXCEL.EXE",
+      "px": 256
+    },
+    {
+      "slug": "word",
+      "name": "Word",
+      "file": "word.png",
+      "source": "C:/Program Files/Microsoft Office/root/Office16/WINWORD.EXE",
+      "px": 256
+    },
+    {
+      "slug": "ppt",
+      "name": "PowerPoint",
+      "file": "ppt.png",
+      "source": "C:/Program Files/Microsoft Office/root/Office16/POWERPNT.EXE",
+      "px": 256
+    },
+    {
+      "slug": "pixpin",
+      "name": "PixPin",
+      "file": "pixpin.png",
+      "source": "C:/Users/43563/AppData/Local/Programs/PixPin/PixPin.exe",
+      "px": 256
+    },
+    {
+      "slug": "postman",
+      "name": "Postman",
+      "file": "postman.png",
+      "source": "C:/Users/43563/AppData/Local/Postman/Postman.exe",
+      "px": 256
+    },
+    {
+      "slug": "ima",
+      "name": "ima",
+      "file": "ima.png",
+      "source": "D:/Program Files/ima.copilot/ima.copilot.exe",
+      "px": 256
+    }
+  ]
+}

@@ -95,8 +95,10 @@ def build_wall():
 
 def build_folder_assets():
     """文件夹图标 + 展开后的弹窗，返回几何信息。"""
-    four = sm._folder_entry("anim_fd", "系统工具", sm._FOLDER_FULL[:4], "#39649F")
-    nine = sm._folder_entry("anim_fd9", "系统工具", sm._FOLDER_FULL, "#39649F")
+    # 4 个成员：演示"展开时成员错峰入场"；9 个：演示满页 3 × 3
+    four = sm._folder_entry("anim_fd", sm.demo_apps.FOLDER["name"],
+                            sm._FOLDER_FULL[:4], "#39649F")
+    nine = sm._folder_entry("anim_fd9", "全部应用", sm._POPUP_MEMBERS, "#39649F")
     st = sm._storage(layout=[four, nine])
 
     icon = sm._render_icon(four, 128)
@@ -225,11 +227,10 @@ def write_folder_html(geo, wall):
     pw, ph = geo["popup"]
 
     # 图标网格：2 列 × 3 行（第 2 列第 2 行留给文件夹）
-    cards = [
-        ("记事本", sm.DEMO_APPS[0][1]), ("计算器", sm.DEMO_APPS[1][1]),
-        ("命令提示符", sm.DEMO_APPS[2][1]), None,
-        ("放大镜", sm.DEMO_APPS[4][1]), ("屏幕键盘", sm.DEMO_APPS[5][1]),
-    ]
+    # 六格：品牌应用（脚标不是重点，图标好看才像真桌面）
+    cards = [(sm.DEMO_APPS[i][0], sm.DEMO_APPS[i][1]) for i in (0, 1, 2)]
+    cards.insert(3, None)                       # 第 2 列第 2 行留给文件夹
+    cards += [(sm.DEMO_APPS[i][0], sm.DEMO_APPS[i][1]) for i in (4, 5)]
     cell_w, cell_h = 110, 108
     x0, y0 = 26, 22
     small_w = int(iw * 0.58)

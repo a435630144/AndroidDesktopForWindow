@@ -37,18 +37,15 @@ OUT_DIR = ROOT / "docs" / "images"
 STATE = Path(tempfile.gettempdir()) / "shot_dock_state.json"
 
 DPR = 2
-W, H = 1200, 430          # 画布逻辑尺寸（局部特写，Dock 才看得清）
+W, H = 1200, 560          # 画布逻辑尺寸（局部特写，Dock 才看得清）
 
-# 演示条目：本机真实存在、图标好看的系统应用（取不到图标会自动退回字母块）
-ITEMS = [
-    {"name": "资源管理器", "target": "C:/Windows/explorer.exe"},
-    {"name": "记事本", "target": "C:/Windows/notepad.exe"},
-    {"name": "计算器", "target": "C:/Windows/System32/calc.exe"},
-    {"name": "画图", "target": "C:/Windows/System32/mspaint.exe"},
-    {"name": "命令提示符", "target": "C:/Windows/System32/cmd.exe"},
-    {"name": "任务管理器", "target": "C:/Windows/System32/Taskmgr.exe"},
-    {"name": "控制面板", "target": "C:/Windows/System32/control.exe"},
-]
+sys.path.insert(0, str(ROOT / "tools"))
+import demo_apps                                         # noqa: E402
+
+# 演示条目：7 个真实应用（图标是 `assets/demo_icons/` 里的导出版，
+# 清单见 `tools/demo_apps.py`）。挑形状差异大的——圆/圆角方/异形图标排一排，
+# hover 放大和间距才看得出效果；全用系统工具的话七个图标糊成一片蓝。
+ITEMS = demo_apps.entries(demo_apps.DOCK)
 
 WALL_TOP = QColor(38, 54, 96)
 WALL_BOTTOM = QColor(18, 24, 44)
@@ -121,17 +118,20 @@ def main() -> int:
 
     # ---------- 下半：顶部 / 左侧 / 右侧 ----------
     from src import theme
+    # 三个方向各放 5 个：`dock.MIN_SLOTS` 就是 5，条目少于 5 时条带仍按 5 槽
+    # 撑长——塞 3 个进去会看到"条带比图标长一截"的空槽，且竖向条带
+    # (5×40 + 间隙 + 内边距 ≈ 240) 装不进 150 高的盒子，直接被画布切掉。
     labels = (("top", "顶部"), ("left", "左侧"), ("right", "右侧"))
-    box_w, box_h = (W - 32 - 24) / 3.0, 150
+    box_w, box_h = (W - 32 - 24) / 3.0, 262
     for i, (pos, label) in enumerate(labels):
         x = 16 + i * (box_w + 12)
-        y = 268
+        y = 282
         rect = QRectF(x, y, box_w, box_h)
         p.save()
         p.setClipRect(rect)
         wallpaper(p, rect)
         p.restore()
-        small = make_dock(st, ITEMS[:3], pos, hover=None,
+        small = make_dock(st, ITEMS[:5], pos, hover=None,
                           width=int(box_w), height=int(box_h))
         p.drawPixmap(int(x), int(y), small)
         p.setPen(theme.TEXT_DIM)

@@ -22,6 +22,12 @@
   Q5 输出物理像素 = round(logical × dpr)，DPR 写回 pixmap
   Q6 缓存命中后不再重新选源（同参数两次调用返回同一对象）
 
+v10（2026-10-22）追加：README 截图改用第三方应用图标
+  Q7 `icon_path` 指向图片文件时**直接加载图片内容**——交给 QFileIconProvider
+     只会拿到"图片文件类型"那个图标（照片应用），图标内容全丢
+  Q8 演示图标包（`assets/demo_icons/`）每个文件都在、够大、不是全透明空图：
+     README 的封面图全靠它，少一张就会退回字母占位块而没人察觉
+
 运行：python tests/test_icon_quality.py
 """
 import os
@@ -88,6 +94,46 @@ def main():
     # ---------- Q6：缓存 ----------
     pm6 = appsource.icon_pixmap(app, 44, 1.25)
     check("Q6 同参数命中缓存（同一对象）", pm6 is pm5)
+
+    # ---------- Q7：图片文件直接当图标 ----------
+    from PySide6.QtGui import QColor, QImage
+    tmp = Path(os.environ.get("TEMP", "/tmp")) / "q7_icon_probe.png"
+    src = QImage(64, 64, QImage.Format_ARGB32)
+    src.fill(QColor(10, 200, 120))
+    src.save(str(tmp), "PNG")
+    appsource._ICON_CACHE.pop((str(tmp),), None)
+    ic7 = appsource._qicon_for({"name": "微信", "target": str(tmp),
+                                "icon_path": str(tmp)})
+    pm7 = ic7.pixmap(64, 64) if not ic7.isNull() else QPixmap()
+    ok7 = (not pm7.isNull()
+           and abs(pm7.toImage().pixelColor(32, 32).green() - 200) < 30)
+    check("Q7 icon_path 指向 PNG 时加载图片内容（不是文件类型图标）",
+          ok7, "null=%s color=%s" % (pm7.isNull(),
+                                     pm7.toImage().pixelColor(32, 32).name()
+                                     if not pm7.isNull() else "-"))
+
+    # ---------- Q8：演示图标包完整 ----------
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import demo_apps
+    bad, total = [], 0
+    for slug, name, _paths in demo_apps.APPS:
+        f = demo_apps.icon_file(slug)
+        if f is None:
+            bad.append("%s(缺文件)" % slug)
+            continue
+        im = QImage(str(f))
+        total += 1
+        if im.isNull() or im.width() < 128:
+            bad.append("%s(尺寸 %dx%d)" % (slug, im.width(), im.height()))
+            continue
+        # 全透明 = 导出失败但存了一张空图，出图时会是"看不见的图标"
+        opaque = any(im.pixelColor(x, y).alpha() > 8
+                     for x in range(0, im.width(), 8)
+                     for y in range(0, im.height(), 8))
+        if not opaque:
+            bad.append("%s(全透明)" % slug)
+    check("Q8 演示图标包 %d 张都存在且非空图" % len(demo_apps.APPS),
+          not bad, str(bad))
 
     print("-" * 56)
     if failures:

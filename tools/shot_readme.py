@@ -44,6 +44,8 @@ sys.path.insert(0, str(ROOT))
 from PySide6.QtCore import Qt                    # noqa: E402  (path 已就绪)
 from PySide6.QtWidgets import QApplication      # noqa: E402
 
+import demo_apps                                # noqa: E402  (tools/ 同级)
+
 OUT_DIR = ROOT / "docs" / "images"
 STATE = Path(tempfile.gettempdir()) / "shot_readme_state.json"
 
@@ -51,11 +53,15 @@ STATE = Path(tempfile.gettempdir()) / "shot_readme_state.json"
 W, H = 1440, 700
 DPR = 2
 
-# 演示用的桌面内容。路径用**本机真实存在**的可执行文件，图标才是真的；
-# 取不到的（用户没装的）自动退回字母占位块，不影响出图。
-# 必须用**绝对路径**：`QFileIconProvider.icon(QFileInfo("notepad.exe"))`
-# 找不到文件就退成"空白文档"通用图标（截图里一排蓝底白纸就是它）。
-_SYS = "C:/Windows/System32/"
+# 演示用的桌面内容。图标来自 `assets/demo_icons/`（`tools/make_demo_icons.py`
+# 从本机已装应用导出 256px PNG，清单见 `tools/demo_apps.py`）。
+#
+# 为什么不再直接写系统 exe：那样图里全是记事本 / 字符映射表 / DirectX 诊断，
+# 一眼看不出这是"谁的桌面"，也看不出这程序到底在摆什么。换成微信 / QQ /
+# 网易云音乐 / Steam 这些真实应用，封面图才立得住"像手机桌面一样摆应用"。
+# 用 PNG 而不是 exe 路径是关键：`QFileIconProvider` 找不到文件时会**静默**
+# 退回"空白文档"通用图标（旧版截图里一排蓝底白纸就是它），换台机器出图就废。
+_SYS = "C:/Windows/System32/"      # 只给文件夹里的系统成员用
 
 # 出图用的壁纸：Windows 自带的深色 Bloom（比自造渐变有层次，也更像真机）。
 # 顺序即优先级；一个都找不到时 `_blank()` 退回程序生成的渐变。
@@ -66,20 +72,8 @@ WALLPAPERS = [
 ]
 _WALLPAPER_CACHE = {}
 
-DEMO_APPS = [
-    ("记事本", _SYS + "notepad.exe"),
-    ("计算器", _SYS + "calc.exe"),
-    ("命令提示符", _SYS + "cmd.exe"),
-    ("任务管理器", _SYS + "taskmgr.exe"),
-    ("放大镜", _SYS + "magnify.exe"),
-    ("屏幕键盘", _SYS + "osk.exe"),
-    ("字符映射表", _SYS + "charmap.exe"),
-    ("磁盘清理", _SYS + "cleanmgr.exe"),
-    ("远程桌面", _SYS + "mstsc.exe"),
-    ("系统信息", _SYS + "msinfo32.exe"),
-    ("DirectX 诊断", _SYS + "dxdiag.exe"),
-    ("控制面板", _SYS + "control.exe"),
-]
+# `[(中文名, 图标路径)]`——`make_readme_anim.py` 按下标取用，保持元组形状
+DEMO_APPS = demo_apps.tuples(demo_apps.DESKTOP)
 
 
 # ---------------------------------------------------------------- 基础设施
@@ -338,27 +332,24 @@ def _close_all(*objs):
 # ---------------------------------------------------------------- 图 1：桌面总览
 
 def _demo_icons():
-    """演示图标条目：**必须写 `target`**（`appsource._qicon_for` 读的是
-    `icon_path` / `target`，写 `path` 会一路退回字母占位块）。"""
+    """演示图标条目：12 个应用铺满 3 行（4 列），左上角不留空。
+
+    `entries()` 给的每个字典同时带 `target`（真实 exe，供"双击启动"链路用）
+    和 `icon_path`（导出的 PNG，`appsource._qicon_for` 认图片文件直接加载）。
+    """
     out = []
-    for i, (name, exe) in enumerate(DEMO_APPS[:-1]):
+    for i, app in enumerate(demo_apps.entries(demo_apps.DESKTOP)):
         out.append({
-            "id": "app%d" % i, "type": "app", "col": 1 + i % 4, "row": i // 4,
-            "app": {"name": name, "target": exe, "kind": "app"},
+            "id": "app%d" % i, "type": "app",
+            "col": 1 + i % 4, "row": i // 4, "app": app,
         })
-    # 一个文件夹：整理能力最直观的证据（2×2 迷你图标 + 液玻弹窗都是自绘的）
-    # 注意 `apps` 里放的是**纯 app 字典**（无外层 {"id","type","app"} 包装）——
+    # 一个文件夹：整理能力最直观的证据（2×2 迷你图标 + 液玻弹窗都是自绘的）。
+    # `apps` 必须是**纯 app 字典**（无外层 {"id","type","app"} 包装）——
     # `_paint_folder` 与弹窗都直接把它当 app 用，包一层会让图标退成字母占位。
-    out.append({
-        "id": "folder1", "type": "folder", "name": "系统工具",
-        "col": 1, "row": 3, "app": {},
-        "apps": [
-            {"name": "记事本", "target": _SYS + "notepad.exe", "kind": "app"},
-            {"name": "计算器", "target": _SYS + "calc.exe", "kind": "app"},
-            {"name": "放大镜", "target": _SYS + "magnify.exe", "kind": "app"},
-            {"name": "字符映射表", "target": _SYS + "charmap.exe", "kind": "app"},
-        ],
-    })
+    folder = _folder_entry("folder1", demo_apps.FOLDER["name"],
+                           demo_apps.folder_members(), "#39649F")
+    folder.update({"col": 1, "row": 3})
+    out.append(folder)
     return out
 
 
@@ -802,23 +793,18 @@ def shot_mobile():
 
 # 成员数不同 -> 图标里的迷你缩略自动换排布（1 居中 / 2 并排 / 3 三角 / 4 田字）
 # (文件夹名, 说明, 成员, 色板)
+# 文件夹名按成员的真实用途起（社交 / 影音 / 办公 / 工具）——随便塞四个系统
+# 工具的话，一行"文档"里放着计算器就很怪，读者第一眼就会分心
 _FOLDER_SETS = [
-    ("文档", "1 个成员 · 居中", [("记事本", "notepad.exe")], "#39649F"),
-    ("开发", "2 个成员 · 并排",
-     [("计算器", "calc.exe"), ("命令提示符", "cmd.exe")], "#2C7E6B"),
-    ("工具", "3 个成员 · 三角",
-     [("任务管理器", "taskmgr.exe"), ("放大镜", "magnify.exe"),
-      ("屏幕键盘", "osk.exe")], "#7A55A0"),
-    ("系统", "4 个成员 · 田字",
-     [("字符映射表", "charmap.exe"), ("磁盘清理", "cleanmgr.exe"),
-      ("远程桌面", "mstsc.exe"), ("系统信息", "msinfo32.exe")], "#A96B2A"),
+    (name, note, demo_apps.tuples(slugs), tint)
+    for name, note, slugs, tint in demo_apps.FOLDER_SETS
 ]
 
-_FOLDER_FULL = [("记事本", "notepad.exe"), ("计算器", "calc.exe"),
-                ("命令提示符", "cmd.exe"), ("任务管理器", "taskmgr.exe"),
-                ("放大镜", "magnify.exe"), ("屏幕键盘", "osk.exe"),
-                ("字符映射表", "charmap.exe"), ("磁盘清理", "cleanmgr.exe"),
-                ("远程桌面", "mstsc.exe")]
+# 图 1 那个文件夹的完整成员（品牌应用 + 两个系统小工具）
+_FOLDER_FULL = demo_apps.folder_members()
+
+# 图 7 右下那个"满页"弹窗：9 个成员才排满 3 × 3
+_POPUP_MEMBERS = demo_apps.tuples(demo_apps.POPUP_SLUGS)
 
 
 def _folder_entry(fid, name, members, tint=None):
@@ -829,8 +815,8 @@ def _folder_entry(fid, name, members, tint=None):
     让缩略图全退成字母占位块。`app` 用空 dict 而非 None（坑 #39）。
     """
     e = {"id": fid, "type": "folder", "name": name, "app": {},
-         "apps": [{"name": n, "target": _SYS + exe, "kind": "app"}
-                  for n, exe in members]}
+         "apps": [{"name": n, "target": path, "kind": "app"}
+                  for n, path in members]}
     if tint:
         e["tint"] = tint
     return e
@@ -900,7 +886,7 @@ def shot_folder():
     entries = [_folder_entry("fd%d" % i, name, members, tint)
                for i, (name, _cap, members, tint) in enumerate(_FOLDER_SETS)]
     three = _folder_entry("fd_three", "常用", _FOLDER_FULL[:3], "#2C7E6B")
-    full = _folder_entry("fd_full", "系统工具", _FOLDER_FULL, "#39649F")
+    full = _folder_entry("fd_full", "全部应用", _POPUP_MEMBERS, "#39649F")
     st = _storage(layout=entries + [three, full])
 
     img = _blank(W, 706)
@@ -921,9 +907,13 @@ def shot_folder():
 
     # 下排：两个真实弹窗——3 成员收缩成 3×2、9 成员满页 3×3
     py = 318
+    # 文案里的数字**按成员真实数量算**：写死"9 个成员"的话，改一次成员表
+    # 就会出现"图里 4 个图标、标题写 9 个"的自相矛盾
     for i, (entry, cap) in enumerate((
-            (three, "3 个成员 → 3 × 2（按数量收缩，最小 2 × 2）"),
-            (full, "9 个成员 → 3 × 3 满页（再多就左右翻页）"))):
+            (three, "%d 个成员 → 3 × 2（按数量收缩，最小 2 × 2）"
+             % len(three["apps"])),
+            (full, "%d 个成员 → 3 × 3 满页（再多就左右翻页）"
+             % len(full["apps"])))):
         popup, pm = _render_popup(st, entry)
         px = 60 + i * 330
         p.drawPixmap(px, py, pm)
