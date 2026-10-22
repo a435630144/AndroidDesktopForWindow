@@ -1,25 +1,25 @@
 ﻿; -*- coding: utf-8 -*-
 ; PhoneDesktop - Inno Setup 安装包脚本
-; 用法（需先跑 scripts\build_portable.ps1 -OutName PhoneDesktop_v10）：
+; 用法（需先跑 scripts\build_portable.ps1 -OutName PhoneDesktop_v10a）：
 ;   "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" scripts\installer.iss
 ;
-; 产物：dist\PhoneDesktop_v10_Setup.exe
+; 产物：dist\PhoneDesktop_v10a_Setup.exe
 ; 特性：默认安装到 %LOCALAPPDATA%\Programs（免管理员权限）、
 ;       开始菜单 + 桌面快捷方式、可选开机自启、卸载时清理用户数据（可选）。
 
 #define MyAppName "PhoneDesktop"
 #define MyAppNameEn "PhoneDesktop"
-#define MyAppVersion "4.0.0"
+#define MyAppVersion "5.0.0"
 #define MyAppPublisher "随便玩玩ay"
 #define MyAppExe "PhoneDesktop.exe"
 
 ; 打包目录名 / 产物名参数化：运行中的旧实例会锁住 dist\<BuildDir>，
 ; 换名重打时用 ISCC /DBuildDir=xxx /DOutBase=xxx 覆盖即可，不必改脚本。
 #ifndef BuildDir
-  #define BuildDir "PhoneDesktop_v10"
+  #define BuildDir "PhoneDesktop_v10a"
 #endif
 #ifndef OutBase
-  #define OutBase "PhoneDesktop_v10_Setup"
+  #define OutBase "PhoneDesktop_v10a_Setup"
 #endif
 
 [Setup]
