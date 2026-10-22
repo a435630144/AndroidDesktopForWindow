@@ -268,4 +268,12 @@ pwsh -File scripts/build_portable.ps1
 
 ## 📄 License
 
-This project is open-sourced under the **[GPL-3.0](LICENSE)** license — same as DeskBox: any derivative work must also be released under GPL-3.0, preventing closed-source forks.
+This project is open-sourced under the **[GPL-3.0](LICENSE)** license: any derivative work must also be released under GPL-3.0, preventing closed-source forks.
+
+## ❤️ Sponsor the Author
+
+If this project helps you, consider buying the author a coffee via Alipay:
+
+<p align="center"><img src="docs/images/sponsor_alipay.jpg" width="320" alt="Alipay QR code"></p>
+
+<p align="center">Scan with Alipay · thank you for the support</p>

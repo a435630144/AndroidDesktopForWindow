@@ -269,4 +269,12 @@ pwsh -File scripts/build_portable.ps1
 
 ## 📄 许可证
 
-本项目基于 **[GPL-3.0](LICENSE)** 许可证开源——与 DeskBox 同款：任何基于本项目的衍生作品必须同样以 GPL-3.0 开源，防止闭源套壳。
+本项目基于 **[GPL-3.0](LICENSE)** 许可证开源：任何基于本项目的衍生作品必须同样以 GPL-3.0 开源，防止闭源套壳。
+
+## ❤️ 赞助作者
+
+如果这个项目对你有帮助，欢迎请作者喝杯奶茶～
+
+<p align="center"><img src="docs/images/sponsor_alipay.jpg" width="320" alt="支付宝收款码"></p>
+
+<p align="center">支付宝扫一扫 · 谢谢支持</p>
