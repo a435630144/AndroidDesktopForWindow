@@ -570,8 +570,15 @@ def set_grid(storage, screen_size, inset=None):
     2026-10-19（反馈 4）：settings["icon_match_native"] 开启时先把资源
     管理器**当前桌面图标边长**读出来传给 grid_metrics——网格与图标尺寸
     由此与原桌面一致（读不到则回退屏幕公式）。
+
+    v10 B3：**换网格 = 换参照系**，翻页瞬态（`_flip`）在这里作废。翻页
+    途中改了分辨率/Dock/窗口尺寸，本来就没有"同一帧画面"可言，落定才是
+    正确结果；顺带堵住"上一条翻页动画没跑完就换窗口，新窗口所有位置都
+    偏移半页"的跨窗泄漏（瞬态是模块级单例，与 `_current_page` 一样只服务
+    一个桌面窗口）。
     """
-    global _current_metrics
+    global _current_metrics, _flip
+    _flip = None
     from . import grid_metrics  # 延迟导入：grid_metrics 依赖本模块 cell_size
     native = None
     try:
@@ -639,6 +646,58 @@ def snap_point(storage, x: int, y: int, screen_size: Tuple[int, int]) -> Cell:
 # 换算（cell_pos/pos_cell/snap_point/_entry_pos/_cell_at/widget）随之
 # 整体偏移——当前页内容滑出屏、邻页内容滑入屏（iOS launcher 语言）。
 _current_page = 0
+
+# ---------- 轮播翻页状态（v10 B3，反馈 6） ----------
+# 一个**标量**驱动整页平移：(target_page, direction, progress)。
+# 翻页期间 `_current_page` 已经等于 target（语义/落盘立刻正确），位移由
+# `flip_delta()` 覆盖成浮点页数、再由 `flip_px()` 换成像素。
+#
+# **瞬移只给绘制帧用，不进逻辑几何**（坑 #113）：`page_offset` 恒为整数页差，
+# 所以 `cell_pos` / `pos_cell` / `cell_by_overlap` / 红框 / 让位预览在整段
+# 滑动期间都不动；图标与组件靠 `flip_px()` 逐帧位移，两边读同一份标量，
+# 因此同向、同速、同曲线地滑（单一真相源）。
+#
+# 旧实现（每图标各起一条弹簧 + 靠 anim.finished 隐藏）的三个病：
+# 没有接续感、280ms 太快、离页图标在过冲帧仍露一角（"最右图标残留"）。
+_flip = None        # [target, direction, progress] 或 None（不在翻页中）
+
+
+def begin_flip(target: int, direction: int):
+    """开始一段轮播翻页：target 页 + 方向（+1 下一页 / -1 上一页）。"""
+    global _flip
+    _flip = [max(0, int(target)), 1 if int(direction) >= 0 else -1, 0.0]
+
+
+def set_flip_progress(v: float):
+    """推进翻页进度（0 = 起点画面，1 = 终点画面）。"""
+    if _flip is not None:
+        _flip[2] = max(0.0, min(1.0, float(v)))
+
+
+def end_flip():
+    """结束翻页：位置派生回落到整数页差。"""
+    global _flip
+    _flip = None
+
+
+def flip_state():
+    """当前翻页状态 `(target, direction, progress)`；静止时为 None。"""
+    return (int(_flip[0]), int(_flip[1]), float(_flip[2])) if _flip else None
+
+
+def flip_delta(page: int) -> float:
+    """该页当前的页间位移（**浮点页单位**）。
+
+    静止态 = `page - current_page()`（整数，与旧实现逐值相等）；
+    翻页中 = `(page - target) + dir × (1 - progress)`：
+
+      滑入页（page == target）：dir → 0（从屏外滑进来）
+      滑出页（page == target-dir）：0 → -dir（滑出屏外）
+    """
+    if _flip is None:
+        return float(int(page) - _current_page)
+    target, direction, progress = int(_flip[0]), int(_flip[1]), float(_flip[2])
+    return (int(page) - target) + direction * (1.0 - progress)
 
 
 def rows_per_page() -> int:
@@ -831,15 +890,39 @@ def page_canvas_w(storage) -> int:
 def page_offset(storage, page: int) -> Cell:
     """页间滑行偏移（像素）：(dx, dy)。
 
-    vertical   -> (0, (page-current) * rows*ch)
-    horizontal -> ((page-current) * cols*cw, 0)
+    vertical   -> (0, delta * rows*ch)
+    horizontal -> (delta * 网格宽, 0)
+
+    v10 B3：`delta` 保持**整数页差**（落定几何）。翻页动画的瞬移不在这里，
+    走 `flip_px()`——逻辑几何（命中、落点、红框、让位预览）在整段滑动期间
+    必须是静止的，否则指针停在边缘翻页时落点会随动画帧跳列。
     """
-    delta = int(page) - current_page()
+    delta = int(page) - _current_page
     if delta == 0:
         return 0, 0
     if page_axis(storage) == PAGE_AXIS_VERTICAL:
-        return 0, delta * (rows_per_page() * cell_size(storage)[1])
-    return delta * page_canvas_w(storage), 0
+        return 0, int(round(delta * (rows_per_page() * cell_size(storage)[1])))
+    return int(round(delta * page_canvas_w(storage))), 0
+
+
+def flip_px(storage, page: int) -> Cell:
+    """翻页**视觉瞬移**（像素）：该页此刻相对落定位置多滑了多少。
+
+    只给动画帧用（`DesktopWindow._apply_flip_frame` / `WidgetLayer.apply_flip_frame`）。
+    为什么单独一个函数、不并进 `page_offset`：翻页是**视图**动画，而
+    `page_offset` 是**逻辑**几何（命中 / 落点 / 红框 / 让位预览都靠它）。
+    两者混在一起时，指针停在边缘翻页、动画没跑完就松手，落点会随帧
+    跳到别的列（`tests/test_edge_flip.py` F7c 抓到：目标第 3 列落成第 8 列）。
+    逻辑几何全程静止、图标与组件靠本函数逐帧位移，两边各自正确。
+
+    翻页中 = `flip_delta(page) - 整数页差`；静止态恒 (0, 0)。
+    """
+    d = flip_delta(page) - float(int(page) - _current_page)
+    if d == 0:
+        return 0, 0
+    if page_axis(storage) == PAGE_AXIS_VERTICAL:
+        return 0, int(round(d * (rows_per_page() * cell_size(storage)[1])))
+    return int(round(d * page_canvas_w(storage))), 0
 
 
 def page_count(storage, rpp: int = 0) -> int:

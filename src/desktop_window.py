@@ -6,11 +6,13 @@
 """
 import os
 
-from PySide6.QtCore import QPoint, QProcess, QRect, Qt, QTimer, Signal
+from PySide6.QtCore import (QPoint, QProcess, QRect, Qt, QTimer,
+                            QVariantAnimation, Signal)
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from . import appsource
+from . import effects
 from . import grid_flow
 from . import interaction
 from . import page_rules
@@ -19,9 +21,12 @@ from . import win32_layer
 from .band_guard import BandGuard
 from .folder_popup import FolderPopup, ScrimWindow
 from .iconwidget import DWELL_MERGE_MS, MIME_TYPE, AppIcon
-from .storage import Storage
 from .storage import Storage, entry_app
 from .win32_layer import attach_to_desktop
+
+# v10 B3（反馈 6「翻页太快」）：整页轮播时长。旧实现是每图标 280ms 弹簧；
+# 420ms 是"能看清内容在移动"的下限（400ms 以下会被感知成瞬切）。
+FLIP_MS = 420
 
 WM_NCHITTEST = 0x84
 HTTRANSPARENT, HTCLIENT = -1, 1
@@ -93,6 +98,9 @@ class DesktopWindow(QWidget):
         self._drag_entry_id = None  # 当前正在拖的条目（多选拖动时判成员）
         # v10 C3：Dock 栏（独立分层窗，由 main.py 注入；None = 未启用/测试）
         self._dock = None
+        # v10 B3：轮播翻页动画（一个标量驱动整页平移，见 goto_page）
+        self._flip_anim = None
+        self._flip_skip = None      # 拖拽中的条目：翻页帧不挪它的几何
         self._ole_active = False    # 外部文件 OLE 拖入进行中（拖放目标全窗口）
         self._band_start = None     # 橡皮筋起点（控件坐标）
         self._band_rect = None
@@ -1123,76 +1131,143 @@ class DesktopWindow(QWidget):
         self.update()
 
     def goto_page(self, page, animate=True, skip_id=None):
-        """翻到指定页：运行时页同步 + 持久化 + 全体弹簧滑到新页位置。
+        """翻到指定页：运行时页同步 + 持久化 + **整页轮播式平移**。
 
-        翻页动画 = M4 位移引擎复用：图标 animate_to 新位置（实例不变），
-        组件经 WidgetLayer.sync_page 同向滑动——当前页内容滑出屏、
-        邻页内容滑入屏（iOS launcher 语言）。animate=False 用于启动
-        夹紧等无仪式场景（直接 move，不播动画）。
+        v10 B3（反馈 6）：动画从"每个图标各起一条弹簧"改成**一个标量**
+        （`grid_flow._flip`）驱动整页刚体平移——`progress` 从 0 走到 1，
+        所有参与页的图标/组件读同一个 `flip_px`，于是当前页滑出、邻页
+        滑入是同一段时间轴上的同一段位移（iOS launcher 的接续感）。
+        `animate=False` 用于启动夹紧等无仪式场景（直接 move，不播动画）。
+        `reduced_motion()` 同样走直接到位。
 
-        skip_id（反馈 8）：翻页动画跳过该条目。拖拽中的图标由拖影代表
-        （不可见），不该被翻页动画拉走——且它落盘时是 move() 到新格，
-        飞行中的 pos 动画会把图标继续拖向旧目标（animate_to 只停自己的
-        旧动画，停不了 goto_page 起的这条）。
+        skip_id（反馈 8）：翻页帧跳过该条目。拖拽中的图标由拖影代表
+        （不可见），几何不该被翻页帧拉走。
 
         v6 §4 分页禁半截：桌面窗口 = 工作区大小，网格四边等距铺满，
         上下边距（约半格）放不下一整格图标——邻页图标静止态会从屏底/
-        屏顶露半截（子控件只被裁到窗口边缘，裁不到网格带）。因此：
-        滑入页图标先显示（隐藏窗口的动画不可见），滑出页图标动画结束
-        后隐藏（_hide_if_offpage 以**当前页**复核，防连翻中页号已变）。
+        屏顶露半截（子控件只被裁到窗口边缘，裁不到网格带）。因此翻页
+        期间可见集合被**收编成恰好两页**（`_show_flip_pages`，在动画
+        开始前就生效，不依赖 `finished`——旧实现靠 finished 隐藏离页
+        图标，弹簧过冲的最后一帧仍露一角，就是"最右图标残留"）。
         """
-        page = max(0, int(page))
-        page = min(page, grid_flow.page_count(self.storage) - 1)
+        page = max(0, min(int(page), grid_flow.page_count(self.storage) - 1))
         if page == self._page:
             return
+        old = self._page
+        direction = 1 if page > old else -1
+        # 连翻（上一段还没滑完就再翻）：先按**此刻的进度**把位置落定，
+        # 再从这一帧接着滑——否则会跳回起点，看起来"抖一下再滑"。
+        if self._flip_anim is not None:
+            self._flip_anim.stop()
+            self._apply_flip_frame()
+            grid_flow.end_flip()
+            self._flip_anim = None
         self._page = page
         grid_flow.set_page(page)
         self.storage.set_setting("current_page", page)
-        hide_after = []
+        self._flip_skip = skip_id
+
+        playing = animate and not effects.reduced_motion()
+        if playing:
+            # v10 B3：**一个标量驱动整页平移**。帧位置 = 落定格点 + `flip_px`，
+            # 图标与组件读同一份 → 同向同速同曲线，这就是反馈 6 要的接续感。
+            grid_flow.begin_flip(page, direction)
+            self._show_flip_pages((old, page))
+            anim = QVariantAnimation(self)
+            anim.setStartValue(0.0)
+            anim.setEndValue(1.0)
+            anim.setDuration(effects.dur(FLIP_MS))
+            anim.setEasingCurve(effects.spring_curve(1.0, FLIP_MS))
+            anim.valueChanged.connect(self._on_flip_step)
+            anim.finished.connect(self._on_flip_done)
+            self._flip_anim = anim
+            anim.start()
+            # 立刻画一帧起点（新页图标在屏外、旧页在原位），避免"先跳一格再滑"
+            self._apply_flip_frame()
+        else:
+            grid_flow.end_flip()
+            self._settle_flip()
+        if self._widget_layer is not None:
+            if playing:
+                self._widget_layer.apply_flip_frame()
+            else:
+                self._widget_layer.settle_flip()
+        self.update()
+
+    # ---------- 轮播翻页帧（v10 B3） ----------
+    def _apply_flip_frame(self):
+        """按当前 `flip_progress` 把可见图标摆到帧位置（只 move，不播动画）。
+
+        位置 = 落定格点（`_entry_pos`，逻辑几何全程静止）+ `flip_px`
+        （纯视觉瞬移）。所有可见图标读同一份标量，所以整页同向同速滑动。
+        """
+        skip = self._flip_skip
         for eid, icon in self.icons.items():
-            if eid == skip_id:
-                continue          # 反馈 8：拖拽中的条目不参与翻页动画
+            if eid == skip:
+                continue          # 拖拽中的条目由拖影代表，几何不参与翻页
+            entry = self.storage.find_entry(eid)
+            if entry is None or icon.isHidden():
+                continue
+            x, y = self._entry_pos(entry)
+            dx, dy = grid_flow.flip_px(
+                self.storage, grid_flow.entry_page(self.storage, entry))
+            icon.move(x + dx, y + dy)
+
+    def _on_flip_step(self, value):
+        grid_flow.set_flip_progress(value)
+        self._apply_flip_frame()
+        if self._widget_layer is not None:
+            self._widget_layer.apply_flip_frame()
+        self.update()
+
+    def _on_flip_done(self):
+        grid_flow.end_flip()
+        self._flip_anim = None
+        self._flip_skip = None
+        self._settle_flip()
+        if self._widget_layer is not None:
+            self._widget_layer.settle_flip()
+        self.update()
+
+    def _show_flip_pages(self, pages):
+        """只让这几页的图标可见（其余隐藏）——翻页期间恰好是旧页 + 新页。
+
+        「无第三页残留」在这里落地：动画还没开始就先按页收编，不再依赖
+        `anim.finished`（旧实现在弹簧过冲的最后一帧仍露一角，就是反馈 6
+        的"第一页最右图标残留"）。
+        """
+        keep = set(int(p) for p in pages)
+        for eid, icon in self.icons.items():
             entry = self.storage.find_entry(eid)
             if entry is None:
                 continue
-            # v7 B2：页归属走 entry_page（无界读 fpage，网格读 row），
-            # 与 entry_pos 的定位来源保持同一套语义。
-            on_page = grid_flow.entry_page(self.storage, entry) == self._page
-            if animate:
-                if on_page and icon.isHidden():
-                    icon.show()          # 滑入前先显示（否则滑入不可见）
-                anim = icon.animate_to(*self._entry_pos(entry))
-                if not on_page and not icon.isHidden():
-                    if anim is not None:
-                        hide_after.append((icon, entry, anim))
-                    else:
-                        icon.hide()      # 无动画（已在位/reduced-motion）
-            else:
+            want = grid_flow.entry_page(self.storage, entry) in keep
+            if want and icon.isHidden():
+                icon.show()
+            elif not want and not icon.isHidden():
+                icon.hide()
+
+    def _settle_flip(self):
+        """翻页结束/无动画跳页：图标落到最终格点 + 只留当前页可见。"""
+        page = self._page
+        for eid, icon in self.icons.items():
+            entry = self.storage.find_entry(eid)
+            if entry is None:
+                continue
+            if grid_flow.entry_page(self.storage, entry) == page:
                 icon.move(*self._entry_pos(entry))
-                icon.setVisible(on_page)
-        for icon, entry, anim in hide_after:
-            anim.finished.connect(lambda icon=icon, entry=entry:
-                                  self._hide_if_offpage(icon, entry))
-        if self._widget_layer is not None:
-            self._widget_layer.sync_page(page)
-        self.update()
-
-    def _hide_if_offpage(self, icon, entry):
-        """翻页滑行结束：该图标若仍不在当前页则隐藏（v6 §4）。
-
-        连翻（滑行中再次翻页）时页号可能已变——以当前页为准复核，
-        避免把新页图标误隐藏。
-        """
-        if grid_flow.entry_page(self.storage, entry) != grid_flow.current_page():
-            icon.hide()
+                if icon.isHidden():
+                    icon.show()
+            elif not icon.isHidden():
+                icon.hide()
 
     def _cull_page_icons(self):
         """v6 §4 分页禁半截：只显示当前页图标，其余页隐藏。
 
         桌面窗口 = 工作区大小，网格四边等距铺满后上下边距（约半格）
         放不下一整格图标——邻页首/末行图标静止态会从屏底/屏顶露半截。
-        rebuild / 新增 / rescan / DPI 变化后复核；翻页滑行期间可见
-        （动画语言），滑停由 goto_page/_hide_if_offpage 收编。
+        rebuild / 新增 / rescan / DPI 变化后复核；翻页滑行期间可见集合
+        由 `_show_flip_pages` 收编成两页，滑停由 `_settle_flip` 收口。
         """
         rpp = grid_flow.rows_per_page()
         page = grid_flow.current_page()
@@ -3415,6 +3490,17 @@ class DesktopWindow(QWidget):
 
     def closeEvent(self, e):
         self._band_guard.untrack(self)
+        # 关窗必须收干净自己的计时器：边缘翻页 / 推让都是"还会改全局页号
+        # 与布局"的异步动作，窗口已经退场还让它跑，会把另一个窗口的页翻掉
+        # （tests/test_edge_flip.py F7 的落点列随机漂移就是这么来的）。
+        self._cancel_edge_flip()
+        self._cancel_push()
+        # 翻页瞬态是 grid_flow 的模块级单例：窗口先走一步时必须把它清掉，
+        # 否则下一次（重开/新窗口）所有格点坐标都会偏移半页。
+        if self._flip_anim is not None:
+            self._flip_anim.stop()
+            self._flip_anim = None
+        grid_flow.end_flip()
         if self.storage.get_setting("minimize_to_tray"):
             e.ignore()
             self.hide_desktop()

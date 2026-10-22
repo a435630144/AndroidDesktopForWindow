@@ -220,6 +220,47 @@ class WidgetLayer(QObject):
         if grid_flow.entry_page(self.storage, w.entry) != grid_flow.current_page():
             w.hide()
 
+    # ---------- 轮播翻页（v10 B3） ----------
+    def apply_flip_frame(self):
+        """轮播翻页的**单帧**：只 move，不播动画。
+
+        整页平移的唯一驱动源是 `grid_flow` 的 flip 标量（图标与组件读同一份
+        `flip_delta`），所以这里只做"把锚定组件摆到当前帧位置 + 只显示参与
+        的两页"。旧实现每个组件各起一条 `animate_to` 弹簧——与图标不同曲线、
+        不同起始状态，就是反馈 6「没有接续感」的一部分。
+        """
+        state = grid_flow.flip_state()
+        if state is None:
+            return
+        target, direction, _progress = state
+        pages = (target, target - direction)
+        for w in self.widgets.values():
+            if not getattr(w, "anchored", False):
+                continue          # 悬浮组件靠屏幕角落定位，不参与翻页
+            page = grid_flow.entry_page(self.storage, w.entry)
+            if page in pages:
+                if w.isHidden():
+                    w.show()      # 隐藏窗口不动画/不显示，先亮出来
+                x, y = grid_flow.widget_pos(self.storage, w.entry)
+                dx, dy = grid_flow.flip_px(self.storage, page)
+                w.move(int(x) + dx, int(y) + dy)
+            elif not w.isHidden():
+                w.hide()
+
+    def settle_flip(self):
+        """翻页结束：只留当前页组件，位置按最终几何落定（不播动画）。"""
+        page = grid_flow.current_page()
+        for w in self.widgets.values():
+            if not getattr(w, "anchored", False):
+                continue
+            if grid_flow.entry_page(self.storage, w.entry) == page:
+                if w.isHidden():
+                    w.show()
+                x, y = grid_flow.widget_pos(self.storage, w.entry)
+                w.move(int(x), int(y))
+            elif not w.isHidden():
+                w.hide()
+
     def set_anchored(self, entry_id: str, on: bool):
         """切换小组件的锚定（非悬浮）形态：改 entry 后重建该组件。"""
         entry = next((e for e in self.storage.widgets if e.get("id") == entry_id), None)

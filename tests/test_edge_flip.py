@@ -33,8 +33,9 @@ from PySide6.QtGui import QDragLeaveEvent
 from PySide6.QtWidgets import QApplication, QWidget
 
 from src import grid_flow
-from src.desktop_window import (EDGE_FLIP_BAND, EDGE_FLIP_DWELL_MS,
+from src.desktop_window import (EDGE_FLIP_BAND, EDGE_FLIP_DWELL_MS, FLIP_MS,
                                 PUSH_DWELL_MS, DesktopWindow)
+FLIP_SETTLE_MS = EDGE_FLIP_DWELL_MS + FLIP_MS + 150   # 翻页动画真的跑完
 from src.iconwidget import MIME_TYPE
 from src.storage import Storage
 
@@ -273,10 +274,15 @@ def main(app):
         check("F7-pre _exec_drag 置上拖动态（payload 提供者链路）",
               w._drag_active and w._drag_entry_id == "e0")
         # 1) 拖到右边缘 -> 翻到第 2 页
+        # 这里必须等**整段翻页动画跑完**：v10 B3 起翻页是 420ms 的整页滑行
+        # （旧实现每图标 280ms），「翻页后松手」的语义是落定之后——动画
+        # 中途就落点会踩到"帧位置 vs 落点几何"的边界，测试随机红。
         drag_to(src, QPoint(W - 4, H // 2))
-        settle(app, EDGE_FLIP_DWELL_MS + 150)
+        settle(app, FLIP_SETTLE_MS)
         check("F7a 悬停翻到第 2 页", grid_flow.current_page() == 2,
               "page=%s" % grid_flow.current_page())
+        check("F7a2 翻页已落定（无残余瞬移）",
+              grid_flow.flip_state() is None, str(grid_flow.flip_state()))
         # 2) 把拖影放到新页第 3 列第 20 行（全局行）的空格上
         cw, ch = grid_flow.cell_size(st)
         cx, cy = grid_flow.cell_pos(st, 3, 20)
