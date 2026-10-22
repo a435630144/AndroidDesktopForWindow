@@ -110,7 +110,7 @@ def main(argv):
         _label(p, title, rect.left(), rect.bottom() + 8)
 
     # ---------- 第二行：其余四个组件跟着换文字色 ----------
-    from src import widgets_todo
+    from src.widgets import todo as widgets_todo
     from src.widgets import weather as widgets_weather
     from src.widgets import calendar as widgets_calendar
     from src.widgets import monitor as widget_monitor

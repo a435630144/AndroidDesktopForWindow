@@ -60,7 +60,7 @@ def alpha_nonempty(img, step=2):
 
 
 def main(app):
-    from src import widgets_todo as wt
+    from src.widgets import todo as wt
 
     # ---------- T1：容错 ----------
     check("T1 load(None) -> []", wt.load_items(None) == [])

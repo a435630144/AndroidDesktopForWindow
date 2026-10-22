@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""待办清单组件（v8 C5，指导文档_v8.md §4.2）。
+"""待办清单组件（v8 C5，指导文档_v8.md §4.2；v10 C1 原样搬入 widgets/todo 包）。
 
 三层分离：
     load_items / add_item / toggle_item / remove_item / serialize  纯数据
@@ -24,9 +24,9 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPen
 from PySide6.QtWidgets import QLineEdit
 
-from . import theme
-from .widget_style import DEFAULT_STYLE, Style
-from .widget_glass import GAP, PAD, GlassWidget
+from ... import theme
+from ...widget_style import DEFAULT_STYLE, Style
+from ...widget_glass import GAP, PAD, GlassWidget
 
 MAX_ITEMS = 200
 ROW_H = 30
@@ -217,17 +217,6 @@ def draw(p: QPainter, rect, items, scroll: int = 0, hover: int = -1,
             p.drawLine(QPointF(c.x() - d, c.y() - d), QPointF(c.x() + d, c.y() + d))
             p.drawLine(QPointF(c.x() + d, c.y() - d), QPointF(c.x() - d, c.y() + d))
     p.restore()
-
-
-DEMO_ITEMS = [
-    {"id": "d1", "text": "写周报", "done": False},
-    {"id": "d2", "text": "交房租", "done": True},
-    {"id": "d3", "text": "买牛奶", "done": False},
-]
-
-
-def draw_preview(p: QPainter, rect, dpr: float = 1.0) -> None:
-    draw(p, rect, DEMO_ITEMS)
 
 
 # ---------------------------------------------------------------- 组件
