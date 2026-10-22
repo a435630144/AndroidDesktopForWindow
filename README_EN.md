@@ -136,7 +136,7 @@ PhoneDesktopForWindow/
 │   ├── UI parts
 │   │   ├── folder_popup.py / folder_tint.py    # Folder popup & icon tint
 │   │   ├── widget_base.py / widget_layer.py    # Widget base & registry
-│   │   └── widgets_clock.py / widgets_notes.py / widgets_panel.py
+│   │   └── widgets/           # Built-in widgets, one directory per widget (clock/notes/panel/monitor/todo/calendar/weather)
 │   └── Infrastructure
 │       ├── storage.py / paths.py / version.py
 │       ├── appsource.py / desktop_watch.py / shell_new.py
@@ -147,7 +147,7 @@ PhoneDesktopForWindow/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip (needs pwsh 7)
 │   ├── installer.iss        # Inno Setup 6 installer (must be UTF-8 BOM)
 │   └── check_docs.py        # Docs consistency check (dead links / duplicate sections / doc-vs-code drift)
-├── tests/                   # 55 standalone scripts (no pytest); judge by exit code
+├── tests/                   # 80 standalone scripts (no pytest); judge by exit code
 │   ├── smoke_test.py        # Headless logic regression (storage/clone/layout)
 │   └── test_*.py            # One per contract: reflow, dual mode, hit-testing, popup, widgets…
 └── tools/                   # Runtime probes probe*.py + packaged-build verification verify_*.py
