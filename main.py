@@ -77,6 +77,7 @@ from src.paths import asset_path, ensure_app_dirs  # noqa: E402
 from src.settings_dialog import SettingsDialog, open_settings   # noqa: E402
 from src import widget_plugin                     # noqa: E402
 from src.single_instance import SingleInstance     # noqa: E402
+from src import i18n                               # noqa: E402
 from src.storage import Storage                    # noqa: E402
 from src.tray import SystemTray                    # noqa: E402
 from src.widget_layer import WidgetLayer           # noqa: E402
@@ -104,6 +105,9 @@ def main() -> int:
     atexit.register(win32_layer.restore_native_icons)
 
     storage = Storage()
+    # v10 D3（反馈 15-a）：语言必须在**任何界面对象之前**定下来——托盘/设置/
+    # 组件库的文案都是建对象时写进去的，晚一步设就会留下半中半英的窗口。
+    i18n.set_language(storage)
     # v9 V3：先加载用户导入的组件（外部 zip），再建组件层——否则已在布局里
     # 的插件组件会因为注册表还没有它而静默消失。
     widget_plugin.load_all()

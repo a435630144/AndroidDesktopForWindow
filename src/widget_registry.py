@@ -91,10 +91,27 @@ class WidgetSpec:
     preview: Optional[Callable] = None   # (painter, rect, dpr) -> None，缺省走兜底卡
     plugin: bool = False             # True = 外部导入（可卸载、来源是用户目录）
     version: str = ""                # 插件自己的版本号（内置留空）
+    # v10 D3（反馈 15-a）：内置组件的名字/说明走 i18n key；插件没有 key，
+    # 直接用 `name`/`summary`（用户自己写的中文，不该被翻译）。
+    name_key: str = ""
+    summary_key: str = ""
 
     @property
     def default_span(self) -> Span:
         return self.spans[0]
+
+    def display_name(self) -> str:
+        """界面显示名（跟随当前语言）。"""
+        if not self.name_key:
+            return self.name
+        from . import i18n
+        return i18n.T(self.name_key)
+
+    def display_summary(self) -> str:
+        if not self.summary_key:
+            return self.summary
+        from . import i18n
+        return i18n.T(self.summary_key)
 
 
 def _build_registry() -> Dict[str, WidgetSpec]:
@@ -114,6 +131,8 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             type="clock",
             name="时钟",
             summary="时间与日期，随格子大小自动缩放字号",
+            name_key="widget.clock",
+            summary_key="widget.clock.summary",
             factory=ClockWidget,
             spans=((2, 2),),
             category="时间",
@@ -128,6 +147,8 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             type="notes",
             name="便签",
             summary="随手记，输入即自动保存",
+            name_key="widget.notes",
+            summary_key="widget.notes.summary",
             factory=NotesWidget,
             spans=((2, 2),),
             category="效率",
@@ -140,6 +161,8 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             type="panel",
             name="桌面面板",
             summary="常用应用与文件夹的集合面板",
+            name_key="widget.panel",
+            summary_key="widget.panel.summary",
             factory=DesktopPanel,
             spans=((3, 4),),
             category="效率",
@@ -149,6 +172,8 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             type="monitor",
             name="系统监控",
             summary="CPU / 内存 / 磁盘实时占用，纯本地不联网",
+            name_key="widget.monitor",
+            summary_key="widget.monitor.summary",
             factory=MonitorWidget,
             spans=((2, 2), (4, 2)),
             category="系统",
@@ -159,6 +184,8 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             type="todo",
             name="待办清单",
             summary="勾选式待办，回车即加，自动保存",
+            name_key="widget.todo",
+            summary_key="widget.todo.summary",
             factory=TodoWidget,
             spans=((2, 2), (2, 4)),
             category="效率",
@@ -171,6 +198,8 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             type="calendar",
             name="日历",
             summary="月视图，左右翻月，点标题回到今天",
+            name_key="widget.calendar",
+            summary_key="widget.calendar.summary",
             factory=CalendarWidget,
             spans=((2, 2), (3, 3)),
             category="时间",
@@ -185,6 +214,8 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             type="weather",
             name="天气",
             summary="当前天气与未来三天，断网看缓存",
+            name_key="widget.weather",
+            summary_key="widget.weather.summary",
             factory=WeatherWidget,
             spans=((2, 2), (4, 2)),
             category="信息",
@@ -202,6 +233,8 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             type="music",
             name="音乐",
             summary="控制本机正在播放的音乐，不挑播放器",
+            name_key="widget.music",
+            summary_key="widget.music.summary",
             factory=MusicWidget,
             spans=((3, 2), (4, 2)),
             category="媒体",

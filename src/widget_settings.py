@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (QCheckBox, QColorDialog, QDialog, QFormLayout,
                                QHBoxLayout, QLabel, QLineEdit, QPushButton,
                                QSlider, QSpinBox, QVBoxLayout, QWidget)
 
+from . import i18n
 from . import theme
 from .ui_choice import ComboBox
 from .widget_registry import FieldSpec, WidgetSpec
@@ -41,6 +42,19 @@ DLG_QSS = (
     "QLabel#group{color: %s; font-size: 12px; font-weight: 600;}"
 ) % (theme.rgba(theme.SURFACE_POPUP), theme.rgba(theme.TEXT),
      theme.rgba(theme.TEXT_FAINT), theme.rgba(theme.TEXT_DIM))
+
+
+def field_label(f) -> str:
+    """字段标签（`field.<key>.label` 覆盖，缺省用声明里的中文）。"""
+    return i18n.TL("field.%s.label" % f.key, f.label)
+
+
+def field_hint(f) -> str:
+    return i18n.TL("field.%s.hint" % f.key, f.hint)
+
+
+def field_group(group: str) -> str:
+    return i18n.TL("field.group." + group, group)
 
 
 def current_values(spec: WidgetSpec, settings: Optional[Dict]) -> Dict:
@@ -94,7 +108,7 @@ class ColorField(QWidget):
         self.btn.setFixedHeight(26)
         self.btn.clicked.connect(self._pick)
         lay.addWidget(self.btn, 1)
-        self.clear_btn = QPushButton("清除")
+        self.clear_btn = QPushButton(i18n.T("button.clear"))
         self.clear_btn.setCursor(Qt.PointingHandCursor)
         self.clear_btn.setFixedHeight(26)
         self.clear_btn.setFixedWidth(52)
@@ -114,7 +128,7 @@ class ColorField(QWidget):
     def _pick(self):
         from PySide6.QtGui import QColor
         start = QColor(self._value) if self._value else QColor(theme.ACCENT)
-        c = QColorDialog.getColor(start, self, "选择颜色")
+        c = QColorDialog.getColor(start, self, i18n.T("button.choose_color"))
         if c.isValid():
             self.set_value(c.name().upper())
 
@@ -130,7 +144,7 @@ class ColorField(QWidget):
                 "QPushButton{background: %s; color: %s; border: 1px solid rgba(255,255,255,40);"
                 " border-radius: 6px; font-size: 12px;}" % (c.name(), fg))
         else:
-            self.btn.setText("跟随主题")
+            self.btn.setText(i18n.T("button.follow_theme"))
             self.btn.setStyleSheet(theme.BUTTON_QSS)
         self.clear_btn.setVisible(bool(self._value))
 
@@ -205,7 +219,8 @@ class WidgetSettingsDialog(QDialog):
         # 打开时的快照：「取消」要把预览撤回去。深拷贝——settings 是嵌套 dict。
         self._snapshot = deepcopy(entry.get("settings") or {})
         self._controls: Dict[str, QWidget] = {}
-        self.setWindowTitle("%s · 设置" % spec.name)
+        self.setWindowTitle(i18n.T("widget.settings_title",
+                                   name=spec.display_name()))
         self.setStyleSheet(DLG_QSS)
         self.setMinimumWidth(400)
 
@@ -213,14 +228,15 @@ class WidgetSettingsDialog(QDialog):
         root.setContentsMargins(20, 18, 20, 16)
         root.setSpacing(12)
 
-        title = QLabel("%s · 设置" % spec.name)
+        title = QLabel(i18n.T("widget.settings_title",
+                              name=spec.display_name()))
         title.setStyleSheet("color: %s; font-size: 15px; font-weight: 600;"
                             % theme.rgba(theme.TEXT))
         root.addWidget(title)
 
         vals = current_values(spec, entry.get("settings"))
         for group, fields in groups_of(spec).items():
-            head = QLabel(group)
+            head = QLabel(field_group(group))
             head.setObjectName("group")
             root.addWidget(head)
             root.addLayout(self._build_form(fields, vals))
@@ -229,15 +245,15 @@ class WidgetSettingsDialog(QDialog):
         self._connect_live()
 
         btns = QHBoxLayout()
-        btn_reset = QPushButton("恢复默认")
+        btn_reset = QPushButton(i18n.T("button.reset_default"))
         btn_reset.setStyleSheet(theme.BUTTON_QSS)
         btn_reset.clicked.connect(self._on_reset)
         btns.addWidget(btn_reset)
         btns.addStretch(1)
-        btn_cancel = QPushButton("取消")
+        btn_cancel = QPushButton(i18n.T("button.cancel"))
         btn_cancel.setStyleSheet(theme.BUTTON_QSS)
         btn_cancel.clicked.connect(self.reject)
-        btn_ok = QPushButton("应用")
+        btn_ok = QPushButton(i18n.T("button.apply"))
         btn_ok.setStyleSheet(theme.BUTTON_QSS)
         btn_ok.setDefault(True)
         btn_ok.clicked.connect(self._on_apply)
@@ -258,12 +274,13 @@ class WidgetSettingsDialog(QDialog):
             box.setContentsMargins(0, 0, 0, 0)
             box.setSpacing(2)
             box.addWidget(ctl)
-            if f.hint:
-                hint = QLabel(f.hint)
+            hint_text = field_hint(f)
+            if hint_text:
+                hint = QLabel(hint_text)
                 hint.setObjectName("hint")
                 hint.setWordWrap(True)
                 box.addWidget(hint)
-            lab = QLabel(f.label)
+            lab = QLabel(field_label(f))
             lab.setFixedWidth(LABEL_W)
             form.addRow(lab, holder)
         return form
@@ -278,7 +295,7 @@ class WidgetSettingsDialog(QDialog):
         if f.kind == "combo":
             w = ComboBox()
             for v, label in f.choices:
-                w.addItem(label, v)
+                w.addItem(i18n.TL("field.%s.%s" % (f.key, v), label), v)
             idx = 0
             for i, (v, _label) in enumerate(f.choices):
                 if v == value:
@@ -302,7 +319,8 @@ class WidgetSettingsDialog(QDialog):
             return FloatField(value)
         w = QLineEdit()
         w.setText("" if value is None else str(value))
-        w.setPlaceholderText(f.placeholder)
+        w.setPlaceholderText(
+            i18n.TL("field.%s.placeholder" % f.key, f.placeholder))
         w.setStyleSheet(theme.INPUT_QSS)
         return w
 

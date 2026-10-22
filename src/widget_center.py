@@ -31,11 +31,15 @@ from PySide6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel
                                QLineEdit, QPushButton,
                                QScrollArea, QVBoxLayout, QWidget)
 
+from . import i18n
 from . import theme
 from . import widget_registry
 from .widget_glass import draw_preview as _fallback_preview
 from .widget_registry import WidgetSpec
 
+# 内部标识（筛选状态、计数键）永远用中文常量：显示名可以翻译，落进
+# `storage` 里的值不能（v10 D3 的硬规矩）。
+ALL = "全部"
 CARD_W = 320
 CARD_H = 212
 
@@ -73,7 +77,7 @@ class CategoryBar(QWidget):
         self.scroll.setWidget(holder)
         lay.addWidget(self.scroll)
         self._chips: List[QPushButton] = []
-        self._current = "全部"
+        self._current = ALL
 
     # ---------- 内部 ----------
     def _chip_qss(self, active: bool) -> str:
@@ -111,7 +115,7 @@ class CategoryBar(QWidget):
             c.deleteLater()
         self._chips = []
         for name, count in items:
-            c = QPushButton("%s  %d" % (name, count))
+            c = QPushButton("%s  %d" % (i18n.category_label(name), count))
             c.setProperty("cat", name)
             c.setCursor(Qt.PointingHandCursor)
             c.setStyleSheet(self._chip_qss(name == keep))
@@ -119,7 +123,7 @@ class CategoryBar(QWidget):
             self.row.insertWidget(len(self._chips), c)
             self._chips.append(c)
         names = [n for n, _c in items]
-        self._current = keep if keep in names else (names[0] if names else "全部")
+        self._current = keep if keep in names else (names[0] if names else ALL)
         for c in self._chips:
             c.setStyleSheet(self._chip_qss(c.property("cat") == self._current))
 PREVIEW_H = 118
@@ -168,9 +172,11 @@ class PreviewArea(QWidget):
             if callable(self.spec.preview):
                 self.spec.preview(p, inner)
             else:
-                _fallback_preview(p, inner, self.spec.name, self.spec.summary)
+                _fallback_preview(p, inner, self.spec.display_name(),
+                                  self.spec.display_summary())
         except Exception:      # noqa: BLE001  —— 一个组件画挂不该让整个库白屏
-            _fallback_preview(p, inner, self.spec.name, "预览不可用")
+            _fallback_preview(p, inner, self.spec.display_name(),
+                              i18n.T("widget.preview_unavailable"))
         p.restore()
         p.setBrush(Qt.NoBrush)
         p.setPen(QColor(255, 255, 255, 20))
@@ -197,12 +203,12 @@ class WidgetCard(QFrame):
         self.preview = PreviewArea(spec, self)
         root.addWidget(self.preview)
 
-        name = QLabel(spec.name)
+        name = QLabel(spec.display_name())
         name.setStyleSheet("color: %s; font-size: 14px; font-weight: 600;"
                            " background: transparent;" % theme.rgba(theme.TEXT))
         root.addWidget(name)
 
-        sub = QLabel(spec.summary)
+        sub = QLabel(spec.display_summary())
         sub.setWordWrap(True)
         sub.setStyleSheet("color: %s; font-size: 11px; background: transparent;"
                           % theme.rgba(theme.TEXT_DIM))
@@ -210,13 +216,13 @@ class WidgetCard(QFrame):
 
         row = QHBoxLayout()
         row.setSpacing(6)
-        self.button = QPushButton("添加到桌面")
+        self.button = QPushButton(i18n.T("widget_center.add"))
         self.button.setCursor(Qt.PointingHandCursor)
         self.button.setStyleSheet(_btn_qss())
         self.button.clicked.connect(self._on_primary)
         row.addWidget(self.button, 1)
 
-        self.remove_btn = QPushButton("移除")
+        self.remove_btn = QPushButton(i18n.T("widget_center.remove"))
         self.remove_btn.setCursor(Qt.PointingHandCursor)
         self.remove_btn.setFixedWidth(56)
         self.remove_btn.setStyleSheet(_btn_qss())
@@ -225,11 +231,11 @@ class WidgetCard(QFrame):
 
         # v9 V3：外部组件可卸载（= 删目录 + 移出注册表）；内置组件不给这个按钮，
         # 因为"删掉时钟"没有语义——它是程序的一部分。
-        self.uninstall_btn = QPushButton("卸载")
+        self.uninstall_btn = QPushButton(i18n.T("widget_center.uninstall"))
         self.uninstall_btn.setCursor(Qt.PointingHandCursor)
         self.uninstall_btn.setFixedWidth(52)
         self.uninstall_btn.setStyleSheet(_btn_qss())
-        self.uninstall_btn.setToolTip("从本机删除这个外部组件（桌面上的实例一并移除）")
+        self.uninstall_btn.setToolTip(i18n.T("widget_center.uninstall_tip"))
         self.uninstall_btn.clicked.connect(self._on_uninstall)
         self.uninstall_btn.setVisible(bool(spec.plugin))
         row.addWidget(self.uninstall_btn)
@@ -245,19 +251,19 @@ class WidgetCard(QFrame):
         entries = self.entries()
         hidden = [e for e in entries if e.get("hidden")]
         if not entries:
-            self.button.setText("添加到桌面")
+            self.button.setText(i18n.T("widget_center.add"))
             self.button.setEnabled(True)
             self.remove_btn.setVisible(False)
         elif hidden:
-            self.button.setText("显示")
+            self.button.setText(i18n.T("widget_center.show"))
             self.button.setEnabled(True)
             self.remove_btn.setVisible(True)
         elif self.spec.multi_instance:
-            self.button.setText("添加到桌面")
+            self.button.setText(i18n.T("widget_center.add"))
             self.button.setEnabled(True)
             self.remove_btn.setVisible(True)
         else:
-            self.button.setText("已在桌面")
+            self.button.setText(i18n.T("widget_center.present"))
             self.button.setEnabled(False)
             self.remove_btn.setVisible(True)
 
@@ -280,9 +286,9 @@ class WidgetCard(QFrame):
     def _on_uninstall(self):
         from PySide6.QtWidgets import QMessageBox
         ok = QMessageBox.question(
-            self, "卸载组件",
-            "确定卸载「%s」？\n\n本机上的组件文件会被删除，桌面上它的实例也会被移除。"
-            % self.spec.name,
+            self, i18n.T("widget_center.uninstall_dialog"),
+            i18n.T("widget_center.uninstall_confirm",
+                   name=self.spec.display_name()),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if ok != QMessageBox.Yes:
             return
@@ -314,13 +320,13 @@ class WidgetCenterPage(QWidget):
 
         # 顶部：标题 + 搜索
         head = QHBoxLayout()
-        title = QLabel("组件库")
+        title = QLabel(i18n.T("widget_center.title"))
         title.setStyleSheet("color: %s; font-size: 17px; font-weight: 600;"
                             % theme.rgba(theme.TEXT))
         head.addWidget(title)
         head.addStretch(1)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("搜索组件…")
+        self.search.setPlaceholderText(i18n.T("widget_center.search"))
         self.search.setFixedWidth(220)
         self.search.setStyleSheet(theme.INPUT_QSS)
         self.search.textChanged.connect(lambda _t: self.refresh())
@@ -349,7 +355,7 @@ class WidgetCenterPage(QWidget):
         self.grid.setHorizontalSpacing(12)
         self.grid.setVerticalSpacing(12)
         self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self.empty_tip = QLabel("没有匹配的组件")
+        self.empty_tip = QLabel(i18n.T("widget_center.empty"))
         self.empty_tip.setAlignment(Qt.AlignCenter)
         self.empty_tip.setStyleSheet("color: %s; font-size: 13px; padding: 40px 0;"
                                      % theme.rgba(theme.TEXT_FAINT))
@@ -368,24 +374,24 @@ class WidgetCenterPage(QWidget):
         foot.addStretch(1)
 
         # v9 V3：导入外部组件（zip）+ 打开组件目录（自己放目录进去也行）
-        self.btn_open_dir = QPushButton("组件目录…")
+        self.btn_open_dir = QPushButton(i18n.T("button.open_dir"))
         self.btn_open_dir.setStyleSheet(_btn_qss())
-        self.btn_open_dir.setToolTip("打开 %APPDATA%\\PhoneDesktop\\widgets")
+        self.btn_open_dir.setToolTip(i18n.T("widget_center.open_dir_tip"))
         self.btn_open_dir.clicked.connect(self._open_plugin_dir)
         foot.addWidget(self.btn_open_dir)
 
-        self.btn_import = QPushButton("导入组件…")
+        self.btn_import = QPushButton(i18n.T("button.import"))
         self.btn_import.setStyleSheet(_btn_qss())
-        self.btn_import.setToolTip("导入开发者打包好的组件 zip（见 docs/组件开发指南.md）")
+        self.btn_import.setToolTip(i18n.T("widget_center.import_tip"))
         self.btn_import.clicked.connect(self.import_zip_dialog)
         foot.addWidget(self.btn_import)
 
         # v10 A7-2（反馈 13）：组件库里给一个「关闭所有组件」——桌面只要图标时
         # 一个个点「移除」太累。**必须二次确认**：这是"桌面清空"级操作，
         # 误触一次用户就得去设置 ▸ 通用 ▸ 恢复组件 一个个加回来。
-        self.btn_hide_all = QPushButton("关闭所有组件")
+        self.btn_hide_all = QPushButton(i18n.T("button.hide_all"))
         self.btn_hide_all.setStyleSheet(_btn_qss())
-        self.btn_hide_all.setToolTip("关闭桌面上全部组件（可在设置 ▸ 通用 一键恢复）")
+        self.btn_hide_all.setToolTip(i18n.T("widget_center.hide_all_tip"))
         self.btn_hide_all.clicked.connect(self._hide_all_widgets)
         foot.addWidget(self.btn_hide_all)
         root.addLayout(foot)
@@ -404,7 +410,7 @@ class WidgetCenterPage(QWidget):
 
     def _build_categories(self):
         counts = self.category_counts()
-        self.cats.rebuild([("全部", counts.get("全部", 0))]
+        self.cats.rebuild([(ALL, counts.get(ALL, 0))]
                           + [(n, counts.get(n, 0))
                              for n in widget_registry.categories()])
 
@@ -412,7 +418,7 @@ class WidgetCenterPage(QWidget):
         counts: Dict[str, int] = {}
         for spec in widget_registry.all_specs():
             counts[spec.category] = counts.get(spec.category, 0) + 1
-        counts["全部"] = len(widget_registry.all_specs())
+        counts[ALL] = len(widget_registry.all_specs())
         return counts
 
     # ---------- 过滤 / 刷新 ----------
@@ -423,12 +429,16 @@ class WidgetCenterPage(QWidget):
         self.cats.select(name)
 
     def _matches(self, spec: WidgetSpec, cat: str, query: str) -> bool:
-        if cat != "全部" and spec.category != cat:
+        if cat != ALL and spec.category != cat:
             return False
         if not query:
             return True
         q = query.strip().lower()
-        return q in spec.name.lower() or q in spec.summary.lower()
+        # 显示名与声明原文都算命中：中文系统里搜「天气」也命中，
+        # 英文系统里搜 "weather" 同样命中（v10 D3）。
+        pool = (spec.display_name(), spec.display_summary(),
+                spec.name, spec.summary)
+        return any(q in text.lower() for text in pool)
 
     def reload_specs(self):
         """注册表变了（导入/卸载插件）后重建卡片与分类。
@@ -449,21 +459,24 @@ class WidgetCenterPage(QWidget):
         from PySide6.QtWidgets import QFileDialog, QMessageBox
         from . import widget_plugin
         path, _f = QFileDialog.getOpenFileName(
-            self, "导入组件", str(widget_plugin.plugin_root().parent),
-            "组件包 (*.zip)")
+            self, i18n.T("widget_center.import_dialog"),
+            str(widget_plugin.plugin_root().parent),
+            i18n.T("widget_center.import_filter"))
         if not path:
             return None
         try:
             spec = widget_plugin.import_zip(path)
         except widget_plugin.PluginError as exc:
-            QMessageBox.warning(self, "导入失败", str(exc))
+            QMessageBox.warning(self, i18n.T("widget_center.import_failed"),
+                                str(exc))
             return None
         except Exception as exc:      # noqa: BLE001 —— 任何异常都要给出可读反馈
-            QMessageBox.warning(self, "导入失败", "%s: %s" % (type(exc).__name__, exc))
+            QMessageBox.warning(self, i18n.T("widget_center.import_failed"),
+                                "%s: %s" % (type(exc).__name__, exc))
             return None
         self.reload_specs()
-        self.select_category("全部")
-        self.search.setText(spec.name)      # 导入后直接定位到它，省得找
+        self.select_category(ALL)
+        self.search.setText(spec.display_name())   # 导入后直接定位到它
         return spec
 
     def _open_plugin_dir(self):
@@ -480,14 +493,13 @@ class WidgetCenterPage(QWidget):
         """关闭所有组件（v10 A7-2 / 反馈 13）。二次确认后走 layer.hide_all()。"""
         from PySide6.QtWidgets import QMessageBox
         box = QMessageBox(self)
-        box.setWindowTitle("关闭所有组件")
-        box.setText("确定要关闭桌面上全部组件吗？")
-        box.setInformativeText("桌面将只保留图标。之后可在 设置 ▸ 通用 ▸ 恢复组件 "
-                               "里一次性全部恢复。")
+        box.setWindowTitle(i18n.T("widget_center.hide_all_title"))
+        box.setText(i18n.T("widget_center.hide_all_text"))
+        box.setInformativeText(i18n.T("widget_center.hide_all_info"))
         box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         box.setDefaultButton(QMessageBox.No)
-        box.button(QMessageBox.Yes).setText("关闭全部")
-        box.button(QMessageBox.No).setText("取消")
+        box.button(QMessageBox.Yes).setText(i18n.T("button.close_all"))
+        box.button(QMessageBox.No).setText(i18n.T("button.cancel"))
         if box.exec() != QMessageBox.Yes:
             return
         try:
@@ -501,7 +513,7 @@ class WidgetCenterPage(QWidget):
         query = self.search.text() if hasattr(self, "search") else ""
         # 分类角标随数据刷新（数量是静态的，但保持一处计算）
         counts = self.category_counts()
-        self.cats.rebuild([("全部", counts.get("全部", 0))]
+        self.cats.rebuild([(ALL, counts.get(ALL, 0))]
                           + [(n, counts.get(n, 0))
                              for n in widget_registry.categories()])
 
@@ -524,7 +536,8 @@ class WidgetCenterPage(QWidget):
             self.grid.addWidget(self.empty_tip, 0, 0, 1, COLS)
 
         self._visible_types = [c.spec.type for c in shown]
-        self.count_label.setText("已添加 %d 个组件" % len(self.layer.storage.widgets))
+        self.count_label.setText(
+            i18n.T("widget_center.count", n=len(self.layer.storage.widgets)))
 
     def visible_cards(self) -> List[WidgetCard]:
         return [c for c in self.cards if c.isVisible()]

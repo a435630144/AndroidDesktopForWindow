@@ -61,4 +61,10 @@ def label() -> str:
     两个标识都要出现——语义版本回答"这是哪个正式版本"，
     包标识回答"我装的是这一版的第几个候选包"（2026-10-19 跑错包事故）。
     """
-    return "版本 %s（v%s） · 构建 %s" % (SEMVER, VERSION, build_time())
+    raw = "版本 %s（v%s） · 构建 %s" % (SEMVER, VERSION, build_time())
+    try:
+        from . import i18n
+        return i18n.TL("version.label", raw, semver=SEMVER,
+                       pkg=VERSION, build=build_time())
+    except Exception:      # noqa: BLE001 —— 版本串取不到不该让界面崩
+        return raw

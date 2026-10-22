@@ -4,15 +4,15 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: current version **v9a** (installer 4.0.0, first package of the v9 line) with **85 test files / ~2000 assertions green**; all 39 v7 field reports and the whole v8 widget center are closed. v9's first batch adds **per-widget appearance settings** (background / opacity / text / accent colour), a **widget plugin platform** (drop in a folder or a zip — see [docs/组件开发指南.md](docs/组件开发指南.md)), the **widget library merged into the settings panel**, **per-page auto-arrange rules**, and a **phone-style input mode** (single tap launches / long-press menu / multi-select with batch actions / swipe to flip pages). Bug reports and ideas are welcome via Issues — current spec: [docs/指导文档_v9.md](docs/指导文档_v9.md), plan: [docs/实施计划_v9.md](docs/实施计划_v9.md) (both Chinese).
+> 🚧 **Under active development**: current version **v9a** (installer 4.0.0, first package of the v9 line) with **86 test files / ~2000 assertions green**; all 39 v7 field reports and the whole v8 widget center are closed. v9's first batch adds **per-widget appearance settings** (background / opacity / text / accent colour), a **widget plugin platform** (drop in a folder or a zip — see [docs/组件开发指南.md](docs/组件开发指南.md)), the **widget library merged into the settings panel**, **per-page auto-arrange rules**, and a **phone-style input mode** (single tap launches / long-press menu / multi-select with batch actions / swipe to flip pages). Bug reports and ideas are welcome via Issues — current spec: [docs/指导文档_v9.md](docs/指导文档_v9.md), plan: [docs/实施计划_v9.md](docs/实施计划_v9.md) (both Chinese).
 
-[![release](https://img.shields.io/badge/release-v4.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-79%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v4.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-86%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
 A third-party desktop organizer and beautifier for Windows with a **phone-style UI and interaction model**: it mounts its own grid layer above the native desktop and replaces native icons with a fully controlled rendering layer — positions, animations, folders and widgets are all yours to define.
 
-Despite the name, this is **far past the prototype stage**: installer, tray residency, crash logging, single-instance guard, auto re-attach watchdog, **85 test files / ~2000 assertions**, plus a full dev log and handover guide ([DEVLOG.md](DEVLOG.md) / [HANDOVER.md](HANDOVER.md), both Chinese). Since v10 the product is called **PhoneDesktop** everywhere (exe name, install dir and the `%APPDATA%` data dir); existing users' data is **migrated automatically on first launch**, so layouts and settings survive the rename.
+Despite the name, this is **far past the prototype stage**: installer, tray residency, crash logging, single-instance guard, auto re-attach watchdog, **86 test files / ~2000 assertions**, plus a full dev log and handover guide ([DEVLOG.md](DEVLOG.md) / [HANDOVER.md](HANDOVER.md), both Chinese). Since v10 the product is called **PhoneDesktop** everywhere (exe name, install dir and the `%APPDATA%` data dir); existing users' data is **migrated automatically on first launch**, so layouts and settings survive the rename.
 
 <p align="center"><img src="docs/images/01-desktop.png" width="900" alt="The desktop: Android-style icon grid with anchored widgets"></p>
 
@@ -149,7 +149,7 @@ PhoneDesktopForWindow/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip (needs pwsh 7)
 │   ├── installer.iss        # Inno Setup 6 installer (must be UTF-8 BOM)
 │   └── check_docs.py        # Docs consistency check (dead links / duplicate sections / doc-vs-code drift)
-├── tests/                   # 85 standalone scripts (no pytest); judge by exit code
+├── tests/                   # 86 standalone scripts (no pytest); judge by exit code
 │   ├── smoke_test.py        # Headless logic regression (storage/clone/layout)
 │   └── test_*.py            # One per contract: reflow, dual mode, hit-testing, popup, widgets…
 └── tools/                   # Runtime probes probe*.py + packaged-build verification verify_*.py
@@ -161,7 +161,7 @@ PhoneDesktopForWindow/
 # Headless logic regression
 python tests/smoke_test.py
 
-# Full suite: 85 standalone scripts, no pytest; judge by exit code only
+# Full suite: 86 standalone scripts, no pytest; judge by exit code only
 Get-ChildItem tests/test_*.py | ForEach-Object {
     python $_.FullName
     if ($LASTEXITCODE -ne 0) { "FAILED: $($_.Name)" }

@@ -243,9 +243,7 @@ TEST_REF_RX = re.compile(r"tests/(test_[A-Za-z0-9_]+\.py)")
 # 2026-10-22 清理：A3/A7/A8 三张卡的测试已分别落在 test_interaction.py（I17）、
 # test_widget_center.py（W15）、test_opacity_setting.py，计划文档引用点已同步，
 # 白名单条目随之删除（B/C/D 批的 7 个仍在）。
-PLANNED_TESTS = {
-    "test_i18n.py": "D3 英文适配",
-}
+PLANNED_TESTS: dict[str, str] = {}      # 2026-10-22：test_i18n.py 已落地，白名单清空
 
 
 def check_test_refs() -> None:
@@ -300,10 +298,54 @@ def check_version() -> None:
     print(f"[7] 源码 VERSION={ver} / SEMVER={ms.group(1) if ms else '?'} / 安装包 {iss_ver or '?'}")
 
 
-def selftest() -> int:
-    """自检：在临时目录里造正例/反例，确认本脚本真的能抓到问题。
+# ---------------------------------------------------------------- 检查 8：双语词表
 
-    没有这一步，脚本某天静默失效（永远 PASS）也没人知道——那它比没有更危险。
+I18N_LANGS = ("zh_CN", "en")
+
+
+def check_i18n() -> None:
+    """[8] 两种语言的 key 集合必须完全相同，且没有空译文。
+
+    v10 D3 的整个翻译方案就靠这一条撑着：界面文案全部走 `i18n.T(key)`，
+    漏一个 key 不是"少翻一句"，而是英文界面里蹦出一个 `settings.nav.layout`。
+    所以这里把"key 集合相等"和"值非空"都判成 ERROR，而不是 WARN。
+
+    临时根目录（自检 / DOCS_LINT_ROOT）里没有词表时**跳过**，不报错——
+    否则 check_docs 的 --selftest 反例会被这条检查污染。
+    """
+    import json
+
+    base = os.path.join(ROOT, "src", "i18n")
+    if not os.path.isdir(base):
+        print("[8] 跳过（没有 src/i18n 目录）")
+        return
+    tables: dict[str, dict] = {}
+    for lang in I18N_LANGS:
+        path = os.path.join(base, "%s.json" % lang)
+        if not os.path.exists(path):
+            err(f"[8] 缺少词表 src/i18n/{lang}.json")
+            return
+        try:
+            with open(path, encoding="utf-8") as fh:
+                tables[lang] = json.load(fh)
+        except Exception as exc:      # noqa: BLE001
+            err(f"[8] src/i18n/{lang}.json 解析失败：{exc}")
+            return
+
+    zh, en = set(tables["zh_CN"]), set(tables["en"])
+    for key in sorted(zh - en):
+        err(f"[8] key 只在 zh_CN 有（英文漏译）：{key}")
+    for key in sorted(en - zh):
+        err(f"[8] key 只在 en 有（中文漏译）：{key}")
+    for lang in I18N_LANGS:
+        for key, value in sorted(tables[lang].items()):
+            if not str(value).strip():
+                err(f"[8] {lang} 的 {key} 是空译文")
+    print(f"[8] 词表 zh_CN {len(zh)} / en {len(en)}，差异 {len(zh ^ en)}")
+
+
+def selftest() -> int:
+    """自检：在临时目录里造正例/反例，确认本脚本真的能抓到问题。    没有这一步，脚本某天静默失效（永远 PASS）也没人知道——那它比没有更危险。
     跑法：python scripts/check_docs.py --selftest   （期望 rc==0）
     """
     import shutil
@@ -386,6 +428,7 @@ def main() -> int:
     check_abs_paths()
     check_test_refs()
     check_version()
+    check_i18n()
     print("-" * 58)
     for w in warns:
         print(f"WARN  {w}")

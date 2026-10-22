@@ -56,6 +56,9 @@ DEFAULT_SETTINGS = {
     "schema_version": 2,     # 状态结构版本：2 = 路线A（全量接管）。旧版(1)state
                             # 首次加载时一次性升级，见 Storage._migrate
     "first_run": True,         # 是否首次运行（用于一次性气泡提示）
+    # v10 D3（反馈 15-a）：界面语言。"auto" = 安装器选的语言 -> 系统语言；
+    # 也可显式写 "zh_CN" / "en"。解析唯一入口 `i18n.resolve()`。
+    "language": "auto",
     "autostart": False,        # 开机自启动
     "icon_size": 72,           # 图标边长基准（像素，100% 缩放下的逻辑值）
     "icon_scale": 1.0,         # 用户自定义图标缩放（在 DPI 感知之上再乘，0.6~2.0）
