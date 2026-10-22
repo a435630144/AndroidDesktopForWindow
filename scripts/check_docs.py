@@ -240,16 +240,16 @@ TEST_REF_RX = re.compile(r"tests/(test_[A-Za-z0-9_]+\.py)")
 # v10 实施计划里**已规划但尚未落地**的测试文件（A/B/C/D 四批逐张卡建）。
 # 落在计划里不是"写错"，所以白名单放行；**文件一建出来就从这个集合里删掉**，
 # 否则真漏建会被这条检查永久掩盖。
+# 2026-10-22 清理：A3/A7/A8 三张卡的测试已分别落在 test_interaction.py（I17）、
+# test_widget_center.py（W15）、test_opacity_setting.py，计划文档引用点已同步，
+# 白名单条目随之删除（B/C/D 批的 7 个仍在）。
 PLANNED_TESTS = {
     "test_dock.py": "C3 Dock 栏",
     "test_dpi_scale.py": "B2 DPI 单一旋钮",
     "test_i18n.py": "D3 英文适配",
-    "test_longpress_select.py": "A3 长按自动勾选",
-    "test_opacity_setting.py": "A8 悬浮不透明度",
     "test_page_flip.py": "B3 轮播式翻页",
     "test_select_badge.py": "B4 长按徽标尺寸",
     "test_storage_paths.py": "D1 改名数据目录",
-    "test_widget_bulk.py": "A7 批量显隐入口",
     "test_widget_music.py": "C2 音乐组件",
 }
 

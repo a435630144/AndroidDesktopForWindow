@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QPushButton, QVBoxLayout, QWidget
 
 from src import grid_flow
 from src.storage import Storage
@@ -206,6 +206,61 @@ def main(app):
     host.close()
     host.deleteLater()
     QTest.qWait(40)
+
+    # ---------- W14：v10 A6（反馈 12）分类条顶部横向 ----------
+    from src.widget_center import CategoryBar
+    bar = CategoryBar()
+    bar.rebuild([("全部", 8), ("时间", 2), ("效率", 3), ("系统", 1), ("信息", 1)])
+    chips = bar.findChildren(QPushButton)
+    check("W14a 胶囊一字排开（不换行：所有 chip 同一行）",
+          len(chips) == 5 and len({c.y() for c in chips}) == 1,
+          "n=%d ys=%s" % (len(chips), sorted({c.y() for c in chips})))
+    check("W14b 横向条（宽 > 高）", bar.width() > bar.height(),
+          "%dx%d" % (bar.width(), bar.height()))
+    check("W14c 默认选中第一项", bar.current() == "全部", bar.current())
+    bar.select("效率")
+    check("W14d select 后切换当前分类", bar.current() == "效率", bar.current())
+    fired = []
+    bar.changed.connect(lambda: fired.append(bar.current()))
+    bar.select("系统")
+    check("W14e 切换发出 changed 信号", fired == ["系统"], str(fired))
+    bar.rebuild([("全部", 8), ("时间", 2)])      # 当前分类被卸载 -> 回落第一项
+    check("W14f 重建后当前分类失效则回落", bar.current() == "全部", bar.current())
+    bar.deleteLater()
+
+    # ---------- W15：v10 A7（反馈 13）批量显隐 ----------
+    st15 = make_state([
+        {"id": "w_on", "type": "clock", "w": 240, "h": 284, "hidden": False,
+         "anchored": True, "col": 6, "row": 10, "colspan": 2, "rowspan": 2},
+        {"id": "w_off", "type": "todo", "w": 240, "h": 284, "hidden": True,
+         "anchored": False, "x": 60, "y": 60, "items": []},
+    ])
+    grid_flow.set_grid(st15, (1920, 1040))
+    grid_flow.set_page(0)
+    layer15 = WidgetLayer(st15)
+    QTest.qWait(120)
+    hidden = {e["id"]: e.get("hidden") for e in st15.widgets}
+    check("W15a 夹具一显一隐", hidden == {"w_on": False, "w_off": True}, str(hidden))
+    n = layer15.hide_all()
+    check("W15b hide_all 关掉可见的那个并返回 1",
+          n == 1 and all(e.get("hidden") for e in st15.widgets),
+          "n=%d %s" % (n, [e.get("hidden") for e in st15.widgets]))
+    n2 = layer15.hide_all()
+    check("W15c 再次 hide_all 是幂等的（返回 0）", n2 == 0, str(n2))
+    n3 = layer15.show_all()
+    check("W15d show_all 全部恢复并返回 2",
+          n3 == 2 and not any(e.get("hidden") for e in st15.widgets),
+          "n=%d %s" % (n3, [e.get("hidden") for e in st15.widgets]))
+    n4 = layer15.show_all()
+    check("W15e 再次 show_all 返回 0（不重复）", n4 == 0, str(n4))
+    check("W15f 组件库页面有关闭所有按钮",
+          hasattr(center, "btn_hide_all"))
+    for w in list(layer15.widgets.values()):
+        try:
+            w.close()
+        except Exception:      # noqa: BLE001
+            pass
+    QTest.qWait(60)
 
     for w in list(layer.widgets.values()):
         try:

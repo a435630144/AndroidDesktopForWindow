@@ -174,6 +174,21 @@ def main(app):
     check("U6 自动同步在「模式」页", id(dlg.chk_autosync) in inside)
     check("U6 布局模式下拉在「模式」页", id(dlg.cmb_layout_mode) in inside)
 
+    # ---------- U8 v10 A8（反馈 14）：悬浮不透明度在挂载态不适用 ----------
+    # 根因：整理层挂载后是分层窗口，`setWindowOpacity` 对内容无效，
+    # `_show_current_mode()` 在挂载分支还一律置 1.0——用户怎么拖都没反应。
+    # 修法：挂载态把滑条置灰 + hint 说明，不再让用户拖一个无效的滑条。
+    check("U8a 挂载态下滑条置灰", not dlg.sld_opacity.isEnabled())
+    fw.attached = False
+    dlg2 = SettingsDialog(fw, st, None)
+    check("U8b 悬浮态下滑条可用", dlg2.sld_opacity.isEnabled())
+    dlg2.sld_opacity.setValue(72)
+    app.processEvents()
+    check("U8c 拖动后 setting 落 0.72",
+          abs(st.get_setting("opacity") - 0.72) < 1e-9,
+          "%s" % st.get_setting("opacity"))
+    fw.attached = True
+
     # ---------- U7 布局模式下拉 ----------
     check("U7 下拉初值 = storage 的 grid",
           dlg.cmb_layout_mode.currentData() == "grid")

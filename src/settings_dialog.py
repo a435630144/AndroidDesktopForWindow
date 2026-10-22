@@ -308,7 +308,7 @@ class SettingsDialog(QDialog):
         """组件库分页（v9 V2：原独立窗口）。"""
         if self.layer is None:
             from PySide6.QtWidgets import QLabel as _QL
-            tip = _QL("组件库需要桌面已就绪（当前没有可用的组件层）")
+            tip = _QL("组件库需要桌面已就绪，当前没有可用的组件层")
             tip.setObjectName("rowHint")
             return tip
         from . import widget_center
@@ -330,22 +330,23 @@ class SettingsDialog(QDialog):
         self.chk_autostart.setChecked(autostart.is_enabled())
         self.chk_autostart.toggled.connect(self._apply_autostart)
         self._row(c, card, "开机自动启动",
-                  self.chk_autostart, "写入当前用户 Run 项，无需管理员权限")
+                  self.chk_autostart, "写入用户 Run 项，无需管理员权限")
 
         self.chk_tray = Switch()
         self.chk_tray.setChecked(bool(self.storage.get_setting("minimize_to_tray")))
         self.chk_tray.toggled.connect(
             lambda v: self.storage.set_setting("minimize_to_tray", bool(v)))
         self._row(c, card, "关闭窗口时隐藏到托盘",
-                  self.chk_tray, "关闭后仍在后台运行，可从托盘重新唤出")
+                  self.chk_tray, "仍在后台运行，可从托盘唤出")
         lay.addWidget(card)
 
         card, c = self._card(body, "桌面")
         self.chk_widgets = Switch()
         self.chk_widgets.setChecked(bool(self.storage.get_setting("show_widgets")))
         self.chk_widgets.toggled.connect(self._apply_widgets)
-        self._row(c, card, "显示桌面小组件",
-                  self.chk_widgets, "时钟 / 便签 / 桌面面板")
+        # v10 A4（反馈 10 规则 3）：原 hint「时钟 / 便签 / 桌面面板」是组件
+        # 清单的复读，且随新组件增加必然过时——清单归组件库页，这里不再列。
+        self._row(c, card, "显示桌面小组件", self.chk_widgets)
 
         # v7 反馈 9：仅小组件模式——只留小组件（组件切无界、图标全隐藏）。
         # 入口唯一：托盘 / 桌面右键里的模式开关已移除。
@@ -355,14 +356,33 @@ class SettingsDialog(QDialog):
         self.chk_widgets_only.toggled.connect(self._apply_widgets_only)
         self._row(c, card, "仅小组件模式",
                   self.chk_widgets_only,
-                  "只显示小组件：全部组件无界摆放、隐藏桌面图标")
+                  "只留小组件：组件无界摆放、隐藏桌面图标")
 
         # v8 C3：组件库入口（第三处：托盘 / 桌面右键 / 这里）
         btn_center = QPushButton("组件库…")
         btn_center.setStyleSheet(theme.BUTTON_QSS)
         btn_center.clicked.connect(self._open_widget_center)
-        self._row(c, card, "组件库", btn_center, "浏览、预览并添加桌面组件")
+        self._row(c, card, "组件库", btn_center, "浏览并添加桌面组件")
+
+        # v10 A7-1（反馈 13）：「显示桌面小组件」上面那个总开关之外，再给一个
+        # **一键救回**的按钮——用户一个个把组件关了（或用了组件库的「关闭所有」），
+        # 想全回来时不必去组件库里逐个点「显示」。
+        btn_show_all = QPushButton("显示全部组件")
+        btn_show_all.setStyleSheet(theme.BUTTON_QSS)
+        btn_show_all.setToolTip("把被隐藏的组件全部恢复显示")
+        btn_show_all.clicked.connect(self._show_all_widgets)
+        # v10 A4（反馈 10 规则 3）：hint 原是按钮名的同义复读，删。
+        self._row(c, card, "恢复组件", btn_show_all)
         lay.addWidget(card)
+
+    def _show_all_widgets(self):
+        """一键恢复全部被隐藏的组件（v10 A7-1）。没有 layer（测试/异常）时静默跳过。"""
+        if self.layer is None:
+            return
+        try:
+            self.layer.show_all()
+        except Exception:      # noqa: BLE001 —— 别让一个按钮把设置窗搞崩
+            pass
 
     def _open_widget_center(self):
         """跳到组件库分页（v9 V2：不再新开窗口）。
@@ -375,7 +395,10 @@ class SettingsDialog(QDialog):
     def _page_appearance(self, body, lay):
         card, c = self._card(body, "图标")
         self.cmb_tier = ComboBox()
-        for label, tier in (("小", "small"), ("中（= 原生）", "medium"),
+        # v10 A4（反馈 10 规则 2）：「中（= 原生）」是行为解释进控件标签，
+        # 去掉；原生等价关系由右侧「图标 Npx」读数与下面
+        # 「按系统桌面图标尺寸计算」一行自证。
+        for label, tier in (("小", "small"), ("中", "medium"),
                             ("大", "large"), ("自定义", "custom")):
             self.cmb_tier.addItem(label, tier)
         cur_tier = self.storage.icon_tier()
@@ -390,7 +413,7 @@ class SettingsDialog(QDialog):
         tb.addWidget(self.lbl_icon_px)
         tb.addWidget(self.cmb_tier)
         self._row(c, card, "图标大小",
-                  tier_box, "只改变图标在格子里的占比，网格行列数不变")
+                  tier_box, "只改变图标在格子里的占比，行列数不变")
 
         # v7 B2（反馈 9）：第四档「自定义」才启用滑条。三档是预设，
         # 滑条跟着值显示但不可拖——旧实现滑条常驻可拖，用户拖完档位
@@ -408,8 +431,9 @@ class SettingsDialog(QDialog):
         fb.setSpacing(8)
         fb.addWidget(self.sld_icon_fit)
         fb.addWidget(self.lbl_icon_fit)
+        # 括号保留：30%~90% 是取值域（规则 1 唯一放行的一种括号）。
         self._row(c, card, "自定义比例",
-                  fit_box, "选「自定义」后可拖动（30%~90%）；三档预设下只读")
+                  fit_box, "选「自定义」后可拖动（30%~90%）")
         lay.addWidget(card)
         self._refresh_icon_labels()
 
@@ -436,14 +460,26 @@ class SettingsDialog(QDialog):
         self.lbl_opacity.setObjectName("rowHint")
         self.lbl_opacity.setFixedWidth(46)
         self.sld_opacity.valueChanged.connect(self._apply_opacity)
+        # v10 A8（反馈 14）：**挂载桌面层时这个设置不生效**——整理层是分层
+        # 窗口，`setWindowOpacity` 对内容无效（`_show_current_mode()` 在挂载
+        # 分支一律置 1.0），且分层窗的全局 alpha 会连带命中测试一起变
+        # （透明区穿透的教训）。所以挂载态直接把滑条置灰并说明原因，
+        # 不再让用户拖一个看不出变化的滑条。
+        self._opacity_attached = bool(getattr(self.window, "attached", False))
+        self.sld_opacity.setEnabled(not self._opacity_attached)
         op_box = QWidget()
         ob = QHBoxLayout(op_box)
         ob.setContentsMargins(0, 0, 0, 0)
         ob.setSpacing(8)
         ob.addWidget(self.sld_opacity)
         ob.addWidget(self.lbl_opacity)
+        # v10 A4（反馈 10 规则 3）：标签已写「悬浮模式」，hint 不再复读
+        # 「当前为悬浮模式」；只留挂载态这一条真正新增的信息。
         self._row(c, card, "悬浮模式不透明度",
-                  op_box, "仅在挂载桌面层失败、作为普通窗口运行时生效")
+                  op_box,
+                  "挂载桌面层时不生效"
+                  if self._opacity_attached else
+                  "拖动立即生效；挂载后不适用")
         lay.addWidget(card)
 
     def _page_layout(self, body, lay):
@@ -455,7 +491,7 @@ class SettingsDialog(QDialog):
         self.chk_match_native.toggled.connect(self._apply_match_native)
         self._row(c, card, "按系统桌面图标尺寸计算",
                   self.chk_match_native,
-                  "读取资源管理器的桌面图标大小，格子按它反推；换屏换缩放自动跟随")
+                  "读取资源管理器的图标大小，格子按它反推，换屏自动跟随")
 
         # ② 自动 / 手动行列（v7 §3.2：列数改格子，行数只裁剪）
         self.chk_auto_cols = Switch()
@@ -464,8 +500,7 @@ class SettingsDialog(QDialog):
         self.chk_auto_cols.setChecked(dims_auto)
         self.chk_auto_cols.toggled.connect(self._apply_auto_columns)
         self._row(c, card, "自动计算行列数",
-                  self.chk_auto_cols,
-                  "关闭后可手动指定列数 / 行数（列数是唯一改变格子大小的旋钮）")
+                  self.chk_auto_cols, "关闭后可手动指定列数与行数")
 
         self.spin_cols = Stepper()
         self.spin_cols.setRange(1, 24)
@@ -474,7 +509,7 @@ class SettingsDialog(QDialog):
         self.spin_cols.setEnabled(not dims_auto)
         self.spin_cols.valueChanged.connect(self._apply_columns)
         self._row(c, card, "列数", self.spin_cols,
-                  "列数越少格子越大，图标同步变大（不会小于系统桌面图标）")
+                  "列数越少格子越大，图标同步变大")
 
         self.spin_rows = Stepper()
         self.spin_rows.setRange(1, 12)
@@ -483,12 +518,13 @@ class SettingsDialog(QDialog):
         self.spin_rows.setEnabled(not dims_auto)
         self.spin_rows.valueChanged.connect(self._apply_rows)
         self._row(c, card, "行数", self.spin_rows,
-                  "只决定网格用几行，格子大小与图标尺寸都不变")
+                  "只决定网格用几行，不改格子大小")
 
         self.lbl_grid_dims = QLabel()
         self.lbl_grid_dims.setObjectName("rowHint")
-        self._row(c, card, "当前网格", self.lbl_grid_dims,
-                  "列数越少格子越大；行数只裁剪，不改格子")
+        # v10 A4（反馈 10 规则 3）：原 hint 与同卡片的「列数 / 行数」两行
+        # 完全同义，删；本行是只读读数，不需要说明。
+        self._row(c, card, "当前网格", self.lbl_grid_dims)
 
         # ③ 网格原点不在这里：v7 §3.4 把它定为**开发者选项**，控件在
         #    「高级」页的「调试」卡片里，且 dev_mode 关闭时不可配置
@@ -519,8 +555,8 @@ class SettingsDialog(QDialog):
         fh.addWidget(self.sp_folder_cols)
         fh.addWidget(self.sp_folder_rows)
         self._row(c, card, "默认展开大小", fbox,
-                  "默认 3×3；成员不足时按数量收缩（2 个 = 2×2），"
-                  "单个文件夹可在其右键菜单里单独设置")
+                  "默认 3×3；成员不足时按数量收缩；"
+                  "单个文件夹可在右键菜单里单独设置")
         lay.addWidget(card)
 
         card, c = self._card(body, "翻页与排列")
@@ -531,14 +567,13 @@ class SettingsDialog(QDialog):
             max(0, self.cmb_page_axis.findData(grid_flow.page_axis(self.storage))))
         self.cmb_page_axis.currentIndexChanged.connect(self._apply_page_axis)
         self._row(c, card, "翻页方向", self.cmb_page_axis,
-                  "左右 = 页面横向滑入滑出（默认）；上下 = 竖向")
+                  "左右为横向滑入滑出，上下为竖向")
 
         self.chk_auto_arrange = Switch()
         self.chk_auto_arrange.setChecked(bool(self.storage.get_setting("auto_arrange")))
         self.chk_auto_arrange.toggled.connect(self._apply_auto_arrange)
         self._row(c, card, "自动排列图标",
-                  self.chk_auto_arrange,
-                  "开启后拖动始终按阅读序递进（不保留空格）；关闭则自由摆放")
+                  self.chk_auto_arrange, "开启后按阅读序递进；关闭则自由摆放")
         lay.addWidget(card)
 
         # ---------- v9 V2：每页排序规则 ----------
@@ -548,8 +583,7 @@ class SettingsDialog(QDialog):
         self.chk_page_rules.toggled.connect(self._apply_page_rules_custom)
         self._row(c, card, "每页单独设置",
                   self.chk_page_rules,
-                  "关闭时所有分页都跟随上面的「自动排列图标」；"
-                  "开启后可逐页指定（默认仍是跟随全局）")
+                  "关闭时所有分页跟随「自动排列图标」；开启后可逐页指定")
         self._rules_holder = QWidget(card)
         self._rules_lay = QVBoxLayout(self._rules_holder)
         self._rules_lay.setContentsMargins(0, 6, 0, 2)
@@ -570,7 +604,7 @@ class SettingsDialog(QDialog):
             max(0, self.cmb_interaction.findData(interaction.mode(self.storage))))
         self.cmb_interaction.currentIndexChanged.connect(self._apply_interaction)
         self._row(c, card, "操作逻辑", self.cmb_interaction,
-                  "切换后立即生效，不需要重启")
+                  "切换后立即生效")
         self.lbl_interaction = QLabel(interaction.describe(interaction.mode(self.storage)))
         self.lbl_interaction.setObjectName("rowHint")
         self.lbl_interaction.setWordWrap(True)
@@ -581,16 +615,16 @@ class SettingsDialog(QDialog):
         # 反馈 16：**启动即接管**——「接管系统桌面」开关冗余，已删除。
         # 想回到原生桌面就退出程序；只想用小组件就把「通用 → 显示桌面
         # 小组件」打开、图标仍由本程序接管（两者互不牵连）。
-        note = QLabel("程序启动即接管系统桌面（原生图标隐藏）。"
-                      "不需要时从这里退出程序即可恢复原生桌面；"
-                      "小组件有独立的开关，见「通用」页。")
+        # v10 A4（反馈 10 规则 1）：括号只留给单位/取值域，行为解释不进括号。
+        note = QLabel("程序启动即接管系统桌面，原生图标随之隐藏；"
+                      "不需要时退出程序即可恢复。小组件有独立开关，见「通用」页。")
         note.setObjectName("rowHint")
         note.setWordWrap(True)
         c.addWidget(note)
 
         self.cmb_layout_mode = ComboBox()
-        self.cmb_layout_mode.addItem("网格模式（自动对齐）", "grid")
-        self.cmb_layout_mode.addItem("无界模式（自由摆布）", "free")
+        self.cmb_layout_mode.addItem("网格模式", "grid")
+        self.cmb_layout_mode.addItem("无界模式", "free")
         self.cmb_layout_mode.setCurrentIndex(
             max(0, self.cmb_layout_mode.findData(grid_flow.layout_mode(self.storage))))
         self.cmb_layout_mode.currentIndexChanged.connect(self._apply_layout_mode)
@@ -599,8 +633,8 @@ class SettingsDialog(QDialog):
         widgets_only = bool(self.storage.get_setting("widgets_only"))
         self.cmb_layout_mode.setEnabled(not widgets_only)
         self._row(c, card, "布局", self.cmb_layout_mode,
-                  "无界模式可自由重叠摆放，并支持添加空白页" if not widgets_only
-                  else "仅小组件模式下组件始终无界，退出该模式后可切换")
+                  "无界模式可自由重叠摆放，可添加空白页" if not widgets_only
+                  else "仅小组件模式下组件始终无界，退出后可切换")
         lay.addWidget(card)
 
         card, c = self._card(body, "桌面文件")
@@ -614,7 +648,7 @@ class SettingsDialog(QDialog):
         self.chk_autosync.setChecked(bool(self.storage.get_setting("auto_sync_desktop")))
         self.chk_autosync.toggled.connect(self._apply_auto_sync)
         self._row(c, card, "自动同步桌面变动",
-                  self.chk_autosync, "新增 / 删除 / 重命名在 1 秒内生效，不重排已有位置")
+                  self.chk_autosync, "新增、删除、重命名 1 秒内生效，不重排已有位置")
         lay.addWidget(card)
 
     def _page_advanced(self, body, lay):
@@ -629,7 +663,7 @@ class SettingsDialog(QDialog):
         self.btn_reset.clicked.connect(self._reset_layout)
         bh.addWidget(self.btn_rescan)
         bh.addWidget(self.btn_reset)
-        self._row(c, card, "桌面文件", btns, "重新扫描只增删差异，不会重排已摆好的位置")
+        self._row(c, card, "桌面文件", btns, "重新扫描只增删差异，不重排已摆好的位置")
         lay.addWidget(card)
 
         card, c = self._card(body, "开发者调试")
@@ -637,7 +671,7 @@ class SettingsDialog(QDialog):
         self.chk_dev.setChecked(bool(self.storage.get_setting("dev_mode")))
         self.chk_dev.toggled.connect(self._apply_dev_mode)
         self._row(c, card, "显示网格调试信息",
-                  self.chk_dev, "网格线 / 原点 / 当前 cell 尺寸直接画在桌面上")
+                  self.chk_dev, "网格线、原点与 cell 尺寸画在桌面上")
 
         # 网格原点定位（v7 §3.4 / 反馈 21）：**开发者功能**，只有上面的
         # 开发者开关打开后才可配置（2026-10-20 用户反馈 5：不要放桌面右键）。
@@ -647,7 +681,7 @@ class SettingsDialog(QDialog):
         self.chk_origin.toggled.connect(self._apply_origin_mode)
         self._row(c, card, "手动定位网格原点",
                   self.chk_origin,
-                  "关闭 = 四边等距居中；开启后用下面两个数值精确调位置")
+                  "关闭时四边等距居中；开启后用下面两个数值精调")
 
         self.sp_ox = Stepper()
         self.sp_ox.setRange(0, 9999)
@@ -657,7 +691,7 @@ class SettingsDialog(QDialog):
         self.sp_ox.setEnabled(origin_manual)
         self.sp_ox.valueChanged.connect(self._apply_origin_spin)
         self._row(c, card, "原点 X", self.sp_ox,
-                  "网格左上角的横坐标；超出屏幕会被夹回屏内")
+                  "网格左上角的横坐标，超出屏幕会夹回屏内")
 
         self.sp_oy = Stepper()
         self.sp_oy.setRange(0, 9999)
@@ -667,13 +701,13 @@ class SettingsDialog(QDialog):
         self.sp_oy.setEnabled(origin_manual)
         self.sp_oy.valueChanged.connect(self._apply_origin_spin)
         self._row(c, card, "原点 Y", self.sp_oy,
-                  "网格左上角的纵坐标；与 X 一起决定整张网格的位置")
+                  "网格左上角的纵坐标，与 X 共同决定网格位置")
 
         self.btn_reset_origin = QPushButton("重置网格位置")
         self.btn_reset_origin.setEnabled(origin_manual)
         self.btn_reset_origin.clicked.connect(self._reset_grid_origin)
         self._row(c, card, "网格位置", self.btn_reset_origin,
-                  "回到四边等距居中（注意：居中值不等于边距，格子越大越靠里）")
+                  "回到四边等距居中，格子越大越靠里")
 
         # 桌面取点：从右键挪进来的入口（反馈 5）。点它先关设置窗，
         # 用户在桌面空白处点一下即为网格左上角。
@@ -681,7 +715,7 @@ class SettingsDialog(QDialog):
         self.btn_pick_origin.setEnabled(origin_manual)
         self.btn_pick_origin.clicked.connect(self._pick_origin_on_desktop)
         self._row(c, card, "点选位置", self.btn_pick_origin,
-                  "点一下后在桌面空白处点选，即为网格左上角（需先开上面的开关）")
+                  "在桌面空白处点选，即为网格左上角")
         lay.addWidget(card)
         self._sync_origin_controls()
 
@@ -692,7 +726,7 @@ class SettingsDialog(QDialog):
         self.lbl_about_version = QLabel(version.label())
         self.lbl_about_version.setObjectName("rowHint")
         self._row(c, card, "当前版本", self.lbl_about_version,
-                  "构建时刻取自程序文件自身，可用来确认跑的是不是最新包")
+                  "构建时刻取自程序文件，可确认跑的是否最新包")
         lay.addWidget(card)
 
     # ---------- 实时生效 ----------
@@ -1153,7 +1187,9 @@ class SettingsDialog(QDialog):
     def _apply_opacity(self, value):
         self.lbl_opacity.setText("%d%%" % value)
         self.storage.set_setting("opacity", value / 100.0)
-        if self.window.attached:
+        # v10 A8（反馈 14）：挂载态下半透明对分层窗口无效，还会连带命中测试
+        # 一起变（透明区穿透的教训）——保持 1.0，滑条本就在挂载态被置灰。
+        if getattr(self.window, "attached", False):
             self.window.setWindowOpacity(1.0)
         else:
             self.window.setWindowOpacity(value / 100.0)
@@ -1232,7 +1268,7 @@ class SettingsDialog(QDialog):
 
     def _reset_layout(self):
         ret = QMessageBox.question(self, "重置布局",
-                                   "确定要重置整理布局吗？将重新克隆当前桌面文件（不会删除任何文件）。")
+                                   "确定要重置整理布局吗？将重新克隆当前桌面文件，不会删除任何文件。")
         if ret == QMessageBox.Yes:
             self.storage.seed_desktop_clone(replace=True)
             self._call_window('rebuild')

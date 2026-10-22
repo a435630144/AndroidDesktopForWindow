@@ -17,6 +17,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -115,6 +116,33 @@ def main(app):
           repr(st.widgets[1]["settings"].get("online")))
     check("S5b 已落盘", "广州" in STATE.read_text(encoding="utf-8"))
     dlg2.close()
+
+    # ---------- S10：v10 A5（反馈 11）实时预览 + 取消回滚 ----------
+    # 旧行为：只有点「应用」才写 entry —— 用户拖滑条看不到任何变化。
+    # 新行为：控件一改就推到组件（不落盘）；「应用」才 save；「取消」回滚到
+    # 打开时的快照。
+    calls = []
+    fake_widget = SimpleNamespace(
+        entry=st.widgets[1],
+        on_settings_changed=lambda: calls.append(1),
+    )
+    dlg4 = ws.WidgetSettingsDialog(spec, st.widgets[1], st, widget=fake_widget)
+    disk_before = STATE.read_text(encoding="utf-8")
+    dlg4._controls["city"].setText("深圳")
+    check("S10a 改控件即写 entry（实时预览）",
+          st.widgets[1]["settings"]["city"] == "深圳",
+          repr(st.widgets[1]["settings"].get("city")))
+    check("S10b 改控件即通知组件刷新", len(calls) == 1, str(calls))
+    check("S10c 实时预览不落盘", STATE.read_text(encoding="utf-8") == disk_before)
+    dlg4.reject()                       # 取消
+    check("S10d 取消回滚到打开时的值",
+          st.widgets[1]["settings"]["city"] == "广州",
+          repr(st.widgets[1]["settings"].get("city")))
+    check("S10e 取消后也通知组件刷新（把预览撤回去）", len(calls) == 2, str(calls))
+    dlg4._controls["city"].setText("杭州")
+    dlg4.apply()                        # 应用
+    check("S10f 应用后落盘新值", "杭州" in STATE.read_text(encoding="utf-8"))
+    dlg4.close()
 
     # ---------- S7：combo ----------
     cal_spec = reg.get("calendar")

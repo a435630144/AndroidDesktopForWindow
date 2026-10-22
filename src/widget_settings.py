@@ -19,8 +19,9 @@ v9 起按 `FieldSpec.group` 分组：组件自己的字段归「组件设置」�
 from __future__ import annotations
 
 from typing import Dict, List, Optional
+from copy import deepcopy
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QDialog, QFormLayout,
                                QHBoxLayout, QLabel, QLineEdit, QPushButton,
                                QSlider, QSpinBox, QVBoxLayout, QWidget)
@@ -77,6 +78,10 @@ def groups_of(spec: WidgetSpec) -> Dict[str, List[FieldSpec]]:
 
 class ColorField(QWidget):
     """颜色选择：色块按钮 + 「清除」。空值 = 跟随主题。"""
+
+    # v10 A5（反馈 11）：实时预览需要"值变了"的信号。旧实现只有
+    # `set_value()`，对话框没法知道用户选了新颜色。
+    changed = Signal(str)
 
     def __init__(self, value="", parent=None):
         super().__init__(parent)
@@ -135,6 +140,7 @@ class ColorField(QWidget):
     def set_value(self, value):
         self._value = self._norm(value)
         self._sync()
+        self.changed.emit(self._value)
 
     # 兼容"控件里能读出字符串"的通用读法
     def text(self) -> str:
@@ -143,6 +149,9 @@ class ColorField(QWidget):
 
 class FloatField(QWidget):
     """0~1 浮点：滑条 + 百分比文字（透明度用它）。"""
+
+    # v10 A5（反馈 11）：见 ColorField.changed 的说明。
+    changed = Signal(float)
 
     def __init__(self, value=1.0, lo=MIN_ALPHA, hi=MAX_ALPHA, parent=None):
         super().__init__(parent)
@@ -177,16 +186,24 @@ class FloatField(QWidget):
             v = self._hi
         self.slider.setValue(int(round(max(self._lo, min(self._hi, v)) * 100)))
         self._sync_label()
+        self.changed.emit(self.value())
 
 
 class WidgetSettingsDialog(QDialog):
     """按 FieldSpec 生成的通用设置对话框（按 group 分段）。"""
 
-    def __init__(self, spec: WidgetSpec, entry: dict, storage, parent=None):
+    def __init__(self, spec: WidgetSpec, entry: dict, storage, parent=None,
+                 widget=None):
         super().__init__(parent)
         self.spec = spec
         self.entry = entry
         self.storage = storage
+        # v10 A5（反馈 11）：实时预览要推到**桌面上的那个组件**。调用方
+        # （widget_base._open_settings）把 self 传进来；测试 / 无组件场景
+        # 传 None，此时只写 entry 不通知组件。
+        self._widget = widget
+        # 打开时的快照：「取消」要把预览撤回去。深拷贝——settings 是嵌套 dict。
+        self._snapshot = deepcopy(entry.get("settings") or {})
         self._controls: Dict[str, QWidget] = {}
         self.setWindowTitle("%s · 设置" % spec.name)
         self.setStyleSheet(DLG_QSS)
@@ -207,6 +224,9 @@ class WidgetSettingsDialog(QDialog):
             head.setObjectName("group")
             root.addWidget(head)
             root.addLayout(self._build_form(fields, vals))
+        # v10 A5：控件一改就实时预览（不落盘）。必须在表单建完之后连，
+        # 否则 _build_control 里的 setChecked/setValue 会把初值当成"用户改动"。
+        self._connect_live()
 
         btns = QHBoxLayout()
         btn_reset = QPushButton("恢复默认")
@@ -302,6 +322,55 @@ class WidgetSettingsDialog(QDialog):
                 out[f.key] = c.text().strip()
         return out
 
+    # ---------- v10 A5（反馈 11）：实时预览 ----------
+    def _connect_live(self) -> None:
+        """把每个控件的"值变了"信号接到实时预览。
+
+        注意 ColorField / FloatField 旧实现只有 `set_value()` 没有信号，
+        本版给它们补了 `changed`；Qt 内置控件（QCheckBox/QComboBox/
+        QSpinBox/QLineEdit）各有各的信号名，逐一对应。
+        """
+        for f in self.spec.settings:
+            c = self._controls[f.key]
+            if f.kind == "bool":
+                c.toggled.connect(lambda _v: self._live_apply())
+            elif f.kind == "combo":
+                c.currentIndexChanged.connect(lambda _i: self._live_apply())
+            elif f.kind == "int":
+                c.valueChanged.connect(lambda _v: self._live_apply())
+            elif f.kind == "color":
+                c.changed.connect(lambda _v: self._live_apply())
+            elif f.kind == "float":
+                c.changed.connect(lambda _v: self._live_apply())
+            else:
+                c.textChanged.connect(lambda _t: self._live_apply())
+
+    def _live_apply(self) -> None:
+        """控件改动 → 立即推到组件（**不落盘**，点「应用」才 save）。"""
+        self._push(save=False)
+
+    def _push(self, save: bool) -> None:
+        """把当前控件值写进 entry 并通知组件刷新。"""
+        merged = dict(self.entry.get("settings") or {})
+        merged.update(self.read_values())
+        self.entry["settings"] = merged
+        cb = getattr(self._widget, "on_settings_changed", None)
+        if callable(cb):
+            cb()
+        if save:
+            try:
+                self.storage.save()
+            except Exception:      # noqa: BLE001
+                pass
+
+    def reject(self) -> None:      # noqa: N802  （Qt 命名）
+        """取消：把打开时的快照写回去，预览当场撤掉。"""
+        self.entry["settings"] = deepcopy(self._snapshot)
+        cb = getattr(self._widget, "on_settings_changed", None)
+        if callable(cb):
+            cb()
+        super().reject()
+
     # ---------- 动作 ----------
     def _on_reset(self):
         """恢复默认：把每个控件还原成 FieldSpec.default（不落盘，仍需「应用」）。"""
@@ -326,6 +395,6 @@ class WidgetSettingsDialog(QDialog):
         self.accept()
 
     def apply(self) -> bool:
-        """写盘（拆出来便于测试：不弹窗也能验）。"""
-        apply_values(self.entry, self.read_values(), self.storage)
+        """写盘（拆出来便于测试：不弹窗也能验）。v10 A5 起同时推给组件。"""
+        self._push(save=True)
         return True

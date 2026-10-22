@@ -28,7 +28,7 @@ from typing import Dict, List, Optional
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PySide6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
-                               QLineEdit, QListWidget, QListWidgetItem, QPushButton,
+                               QLineEdit, QPushButton,
                                QScrollArea, QVBoxLayout, QWidget)
 
 from . import theme
@@ -38,6 +38,90 @@ from .widget_registry import WidgetSpec
 
 CARD_W = 320
 CARD_H = 212
+
+
+class CategoryBar(QWidget):
+    """组件库分类条：**顶部横向**一排胶囊（v10 A6 / 反馈 12）。
+
+    v9 时分类在左侧竖排列表（150px 固定宽），把卡片区挤窄。改为顶部横排后
+    卡片拿满宽度；分类多的时候**横向滚动**而不是换行——换行会白吃掉两行
+    卡片高度。选中态用强调色描边，计数角标跟在名字后面。
+
+    对外只暴露三个方法（`current` / `select` / `rebuild`）与一个 `changed`
+    信号——内部用 QPushButton 还是 QListWidget 是实现细节，调用方不该依赖。
+    """
+
+    changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setFixedHeight(34)
+        self.scroll.setStyleSheet("QScrollArea{background: transparent;}")
+        holder = QWidget()
+        self.row = QHBoxLayout(holder)
+        self.row.setContentsMargins(0, 0, 0, 0)
+        self.row.setSpacing(8)
+        self.row.addStretch(1)          # 分类少时左对齐，不拉伸铺满
+        self.scroll.setWidget(holder)
+        lay.addWidget(self.scroll)
+        self._chips: List[QPushButton] = []
+        self._current = "全部"
+
+    # ---------- 内部 ----------
+    def _chip_qss(self, active: bool) -> str:
+        edge = theme.ACCENT if active else "rgba(255,255,255,26)"
+        fg = theme.rgba(theme.TEXT) if active else theme.rgba(theme.TEXT_DIM)
+        bg = "rgba(76,194,255,26)" if active else "transparent"
+        return ("QPushButton{background: %s; color: %s; border: 1px solid %s;"
+                " border-radius: 15px; padding: 4px 12px; font-size: 12px;}"
+                % (bg, fg, edge))
+
+    def _on_clicked(self, name: str) -> None:
+        if name == self._current:
+            return
+        self._current = name
+        for c in self._chips:
+            c.setStyleSheet(self._chip_qss(c.property("cat") == name))
+        self.changed.emit()
+
+    # ---------- 对外 ----------
+    def current(self) -> str:
+        return self._current
+
+    def select(self, name: str) -> None:
+        for c in self._chips:
+            if c.property("cat") == name:
+                if name != self._current:
+                    self._on_clicked(name)
+                return
+
+    def rebuild(self, items: List[tuple]) -> None:
+        """重建整排胶囊。`items` = [(分类名, 数量), …]，第一项默认选中。"""
+        keep = self._current
+        for c in self._chips:
+            self.row.removeWidget(c)
+            c.deleteLater()
+        self._chips = []
+        for name, count in items:
+            c = QPushButton("%s  %d" % (name, count))
+            c.setProperty("cat", name)
+            c.setCursor(Qt.PointingHandCursor)
+            c.setStyleSheet(self._chip_qss(name == keep))
+            c.clicked.connect(lambda _c=False, n=name: self._on_clicked(n))
+            self.row.insertWidget(len(self._chips), c)
+            self._chips.append(c)
+        names = [n for n, _c in items]
+        self._current = keep if keep in names else (names[0] if names else "全部")
+        for c in self._chips:
+            c.setStyleSheet(self._chip_qss(c.property("cat") == self._current))
 PREVIEW_H = 118
 COLS = 2
 # 预览区的宽高比（320×118 ≈ 2.7:1）比组件的默认跨度（≈ 1.6:1）扁得多。
@@ -244,14 +328,14 @@ class WidgetCenterPage(QWidget):
         root.addLayout(head)
 
         body = QHBoxLayout()
-        body.setSpacing(14)
+        body.setSpacing(0)
 
-        # 左：分类
-        self.cats = QListWidget()
-        self.cats.setFixedWidth(150)
-        self.cats.setStyleSheet(theme.LIST_QSS)
-        self.cats.currentItemChanged.connect(lambda *_: self.refresh())
-        body.addWidget(self.cats)
+        # v10 A6（反馈 12）：分类从左侧竖排改成**顶部横向**胶囊排。
+        # 竖排那 150px 固定宽把卡片区挤窄，横排后卡片拿满宽度。
+        self.cats = CategoryBar(self)
+        self.cats.changed.connect(lambda: self.refresh())
+        root.addWidget(self.cats)
+        root.addSpacing(10)
 
         # 右：卡片滚动区
         self.scroll = QScrollArea()
@@ -295,6 +379,15 @@ class WidgetCenterPage(QWidget):
         self.btn_import.setToolTip("导入开发者打包好的组件 zip（见 docs/组件开发指南.md）")
         self.btn_import.clicked.connect(self.import_zip_dialog)
         foot.addWidget(self.btn_import)
+
+        # v10 A7-2（反馈 13）：组件库里给一个「关闭所有组件」——桌面只要图标时
+        # 一个个点「移除」太累。**必须二次确认**：这是"桌面清空"级操作，
+        # 误触一次用户就得去设置 ▸ 通用 ▸ 恢复组件 一个个加回来。
+        self.btn_hide_all = QPushButton("关闭所有组件")
+        self.btn_hide_all.setStyleSheet(_btn_qss())
+        self.btn_hide_all.setToolTip("关闭桌面上全部组件（可在设置 ▸ 通用 一键恢复）")
+        self.btn_hide_all.clicked.connect(self._hide_all_widgets)
+        foot.addWidget(self.btn_hide_all)
         root.addLayout(foot)
 
         self._build_cards()
@@ -310,14 +403,10 @@ class WidgetCenterPage(QWidget):
             self.cards.append(card)
 
     def _build_categories(self):
-        self.cats.clear()
-        for name in ["全部"] + widget_registry.categories():
-            counts = self.category_counts().get(name, 0)
-            item = QListWidgetItem("%s  %d" % (name, counts))
-            item.setData(Qt.UserRole, name)
-            self.cats.addItem(item)
-        if self.cats.count():
-            self.cats.setCurrentRow(0)
+        counts = self.category_counts()
+        self.cats.rebuild([("全部", counts.get("全部", 0))]
+                          + [(n, counts.get(n, 0))
+                             for n in widget_registry.categories()])
 
     def category_counts(self) -> Dict[str, int]:
         counts: Dict[str, int] = {}
@@ -328,14 +417,10 @@ class WidgetCenterPage(QWidget):
 
     # ---------- 过滤 / 刷新 ----------
     def current_category(self) -> str:
-        item = self.cats.currentItem()
-        return (item.data(Qt.UserRole) if item is not None else "全部") or "全部"
+        return self.cats.current()
 
     def select_category(self, name: str):
-        for i in range(self.cats.count()):
-            if self.cats.item(i).data(Qt.UserRole) == name:
-                self.cats.setCurrentRow(i)
-                return
+        self.cats.select(name)
 
     def _matches(self, spec: WidgetSpec, cat: str, query: str) -> bool:
         if cat != "全部" and spec.category != cat:
@@ -391,15 +476,34 @@ class WidgetCenterPage(QWidget):
         except Exception:                # noqa: BLE001
             pass
 
+    def _hide_all_widgets(self):
+        """关闭所有组件（v10 A7-2 / 反馈 13）。二次确认后走 layer.hide_all()。"""
+        from PySide6.QtWidgets import QMessageBox
+        box = QMessageBox(self)
+        box.setWindowTitle("关闭所有组件")
+        box.setText("确定要关闭桌面上全部组件吗？")
+        box.setInformativeText("桌面将只保留图标。之后可在 设置 ▸ 通用 ▸ 恢复组件 "
+                               "里一次性全部恢复。")
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        box.button(QMessageBox.Yes).setText("关闭全部")
+        box.button(QMessageBox.No).setText("取消")
+        if box.exec() != QMessageBox.Yes:
+            return
+        try:
+            self.layer.hide_all()
+        except Exception:                # noqa: BLE001
+            return
+        self.refresh()
+
     def refresh(self):
         cat = self.current_category()
         query = self.search.text() if hasattr(self, "search") else ""
         # 分类角标随数据刷新（数量是静态的，但保持一处计算）
         counts = self.category_counts()
-        for i in range(self.cats.count()):
-            item = self.cats.item(i)
-            name = item.data(Qt.UserRole)
-            item.setText("%s  %d" % (name, counts.get(name, 0)))
+        self.cats.rebuild([("全部", counts.get("全部", 0))]
+                          + [(n, counts.get(n, 0))
+                             for n in widget_registry.categories()])
 
         shown = []
         for card in self.cards:

@@ -56,17 +56,19 @@ class FieldSpec:
 # 定义放在注册表里而不是 `widget_style` —— 否则 widget_style 需要
 # widget_registry.FieldSpec，而注册表构造时又要 STYLE_FIELDS，成环。
 # `widget_style` 反向从这里 import（单向）。
+# v10 A4（反馈 10）：hint 只留"留空会怎样"这一句新增信息；
+# 「选色后换成该色 / 次文字派生 / 强调色用在哪」都是标签自明或实现细节。
 STYLE_FIELDS = (
     FieldSpec("bg_color", "背景颜色", "color", "",
-              hint="留空 = 跟随主题玻璃；选色后玻璃 tint 换成该色", group="外观"),
+              hint="留空 = 跟随主题玻璃", group="外观"),
     FieldSpec("bg_alpha", "背景不透明度", "float", 1.0,
               hint="20%~100%，越低越透出壁纸", group="外观"),
     FieldSpec("text_color", "文字颜色", "color", "",
-              hint="留空 = 主题主文字；次文字按同色降透明度自动派生", group="外观"),
+              hint="留空 = 跟随主题主文字", group="外观"),
     FieldSpec("accent_color", "强调色", "color", "",
-              hint="留空 = 主题蓝（进度环 / 今天高亮 / 选中态）", group="外观"),
+              hint="留空 = 跟随主题蓝", group="外观"),
     FieldSpec("radius", "圆角", "int", 0,
-              hint="0 = 跟随主题（20）；范围 0~40", group="外观"),
+              hint="0 = 跟随主题；范围 0~40", group="外观"),
 )
 
 STYLE_KEYS = tuple(f.key for f in STYLE_FIELDS)
@@ -145,7 +147,7 @@ def _build_registry() -> Dict[str, WidgetSpec]:
         WidgetSpec(
             type="monitor",
             name="系统监控",
-            summary="CPU / 内存 / 磁盘实时占用（纯本地，不联网）",
+            summary="CPU / 内存 / 磁盘实时占用，纯本地不联网",
             factory=MonitorWidget,
             spans=((2, 2), (4, 2)),
             category="系统",
@@ -191,7 +193,7 @@ def _build_registry() -> Dict[str, WidgetSpec]:
                 FieldSpec("city", "城市", "text", "",
                           placeholder="例如：北京"),
                 FieldSpec("online", "允许联网", "bool", True,
-                          hint="关闭后只显示上次缓存，不再发起任何请求"),
+                          hint="关闭后只显示上次缓存"),
             ),
             preview=_preview_weather,
         ),

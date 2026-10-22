@@ -881,7 +881,10 @@ class FloatingWidget(QWidget):
         if spec is None or not spec.settings:
             return
         from . import widget_settings
-        dlg = widget_settings.WidgetSettingsDialog(spec, self.entry, self.storage)
+        # v10 A5（反馈 11）：把组件自己传进去——调参时实时推到桌面上的这个
+        # 实例，不必先点「应用」才知道效果。取消时对话框回滚快照。
+        dlg = widget_settings.WidgetSettingsDialog(spec, self.entry, self.storage,
+                                                  widget=self)
         if dlg.exec():
             self.on_settings_changed()
 

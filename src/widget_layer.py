@@ -251,6 +251,33 @@ class WidgetLayer(QObject):
             self._band_guard.untrack(w)
             w.close()
 
+    # ---------- v10 A7（反馈 13）：批量显隐 ----------
+    def show_all(self) -> int:
+        """一键恢复全部被隐藏的组件（设置 ▸ 通用「显示桌面小组件」）。
+
+        返回恢复的个数——调用方要能告诉用户"恢复了 3 个"还是"没有可恢复的"。
+        语义走 `toggle_entry`（显隐的唯一入口），不自己写第二套。
+        """
+        n = 0
+        for entry in list(self.storage.widgets):
+            if entry.get("hidden"):
+                self.toggle_entry(entry.get("id"), True)
+                n += 1
+        return n
+
+    def hide_all(self) -> int:
+        """一键关闭全部组件（组件库「关闭所有组件」，桌面只剩图标）。
+
+        与 `show_all` 对称；**调用方必须先弹二次确认**——这是"桌面清空"级
+        操作，误触一次用户就要一个个加回来。
+        """
+        n = 0
+        for entry in list(self.storage.widgets):
+            if not entry.get("hidden"):
+                self.toggle_entry(entry.get("id"), False)
+                n += 1
+        return n
+
     # ---------- 增删（v8 C1：唯一入口） ----------
     def entries_of(self, wtype: str) -> list:
         """该类型在存储里的全部条目（按存储顺序）。"""
