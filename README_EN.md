@@ -147,7 +147,7 @@ PhoneDesktopForWindow/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip (needs pwsh 7)
 │   ├── installer.iss        # Inno Setup 6 installer (must be UTF-8 BOM)
 │   └── check_docs.py        # Docs consistency check (dead links / duplicate sections / doc-vs-code drift)
-├── tests/                   # 80 standalone scripts (no pytest); judge by exit code
+├── tests/                   # 81 standalone scripts (no pytest); judge by exit code
 │   ├── smoke_test.py        # Headless logic regression (storage/clone/layout)
 │   └── test_*.py            # One per contract: reflow, dual mode, hit-testing, popup, widgets…
 └── tools/                   # Runtime probes probe*.py + packaged-build verification verify_*.py
@@ -159,7 +159,7 @@ PhoneDesktopForWindow/
 # Headless logic regression
 python tests/smoke_test.py
 
-# Full suite: 49 standalone scripts, no pytest; judge by exit code only
+# Full suite: 81 standalone scripts, no pytest; judge by exit code only
 Get-ChildItem tests/test_*.py | ForEach-Object {
     python $_.FullName
     if ($LASTEXITCODE -ne 0) { "FAILED: $($_.Name)" }

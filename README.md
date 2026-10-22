@@ -147,7 +147,7 @@ PhoneDesktopForWindow/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip（需 pwsh 7）
 │   ├── installer.iss        # Inno Setup 6 安装包（必须 UTF-8 BOM）
 │   └── check_docs.py        # 文档一致性自检（死链/重复章节/文档与代码数值漂移）
-├── tests/                   # 80 个独立可跑脚本（无 pytest），判据看退出码
+├── tests/                   # 81 个独立可跑脚本（无 pytest），判据看退出码
 │   ├── smoke_test.py        # 无头逻辑回归（存储/克隆/布局）
 │   └── test_*.py            # 每条契约一份：让位引擎、双模式、命中、弹窗、组件…
 └── tools/                   # 运行态探针 probe*.py + 打包验证 verify_*.py
