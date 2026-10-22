@@ -613,7 +613,7 @@ def cell_size(storage) -> Cell:
     if m is not None:
         return m.cw, m.ch
     s = int(storage.icon_metric())
-    m = float(storage.icon_chrome_scale())
+    m = float(storage.ui_scale())
     return s + int(round(24 * m)), s + int(round(40 * m)) + 2
 
 

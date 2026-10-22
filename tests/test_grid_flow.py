@@ -161,7 +161,7 @@ def main():
         def icon_metric(self):
             return int(self._s["icon_size"] * 1.25)
 
-        def icon_chrome_scale(self):
+        def ui_scale(self):
             return 1.25
 
     st = _St()
@@ -393,7 +393,7 @@ def main():
         def icon_metric(self):
             return self._metric
 
-        def icon_chrome_scale(self):
+        def ui_scale(self):
             return self._chrome
 
     st2 = _St2()

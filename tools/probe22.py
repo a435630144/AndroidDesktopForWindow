@@ -61,7 +61,7 @@ def main():
         print("settings.icon_size:", repr(st.get_setting("icon_size")),
               "icon_scale:", repr(st.get_setting("icon_scale")))
         print("icon_metric       :", st.icon_metric())
-        print("icon_chrome_scale :", st.icon_chrome_scale())
+        print("ui_scale          :", st.ui_scale())
         print("cell_size (cw,ch) :", cell_size(st))
 
         W, H = ag.width(), ag.height()

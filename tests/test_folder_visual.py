@@ -75,7 +75,7 @@ class FakeStore:
     def icon_metric(self):
         return int(self._s.get("icon_metric", 96))
 
-    def icon_chrome_scale(self):
+    def ui_scale(self):
         return float(self._s.get("chrome", 1.0))
 
     def save(self):
@@ -207,14 +207,14 @@ def main(app):
     layer = WidgetLayer(st2)
     w = layer.widgets.get("note1")
     check("H0 组件已创建", w is not None)
-    orig_chrome = st2.icon_chrome_scale
+    orig_chrome = st2.ui_scale
     if w is not None:
         w._edit_mode = True
         ok_all = True
         detail = ""
         for span in ((1, 1), (2, 2), (3, 3)):
             for chrome in (1.0, 1.25, 1.5, 2.0):
-                st2.icon_chrome_scale = (lambda c=chrome: c)
+                st2.ui_scale = (lambda c=chrome: c)
                 w.resize(span[0] * 160, span[1] * 180)
                 rects = w._handle_rects()
                 if len(rects) != 8:
@@ -228,7 +228,7 @@ def main(app):
                                   % (chrome, span, k, r, w.rect()))
         check("H1 八点完整落在部件内（12 种组合不裁切）", ok_all, detail)
 
-        st2.icon_chrome_scale = (lambda: 1.25)
+        st2.ui_scale = (lambda: 1.25)
         w.resize(320, 360)
         s = w._handle_size()
         line = w._edit_line()
@@ -258,7 +258,7 @@ def main(app):
         check("H5b 无界模式返回 {}", w._handle_rects() == {})
         st2.set_setting("layout_mode", "grid")
         w._edit_mode = False
-    st2.icon_chrome_scale = orig_chrome
+    st2.ui_scale = orig_chrome
     for x in list(layer.widgets.values()):
         x.close()
 

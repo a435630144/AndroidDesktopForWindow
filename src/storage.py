@@ -362,16 +362,22 @@ class Storage:
         s["hide_native_icons"] = bool(value)
         self.save()
 
-    # ---------- 图标尺寸（DPI × 用户缩放双感知） ----------
+    # ---------- 尺寸缩放（用户缩放单一旋钮；dpr 由 Qt 用一次） ----------
+    #
+    # v10 B2 / 反馈 2 的定量结论（B1 四格实测，docs/实施计划_v10.md §B1）：
+    # Qt6 的高 DPI 缩放**已经生效**——125% 下 primaryScreen().geometry()
+    # 是 1536×864（1920/1.25），即「逻辑值 × dpr = 物理值」Qt 已经做过一次。
+    # 所以这里再乘 screen_dpr() 就是把系统缩放算两遍：徽标 17 逻辑
+    # → 21 逻辑 → 26 物理（×1.5625），而 cell 只有一次（84 → 105）。
+    # 病根不是「dpr 太大」，而是**乘了两次**；修法是让 dpr 只存在一次。
     def icon_metric(self) -> int:
-        """实际图标边长（逻辑 px）= 基准 × 屏幕 DPI × 用户缩放。
+        """图标绘制边长（**逻辑 px**）= 基准 × 用户缩放（dpr 不进来）。
 
-        Windows 125% 缩放下基准 72 -> 90px，图标随系统缩放同比变大
-        （用户反馈 2026-10-18：图标大小没有随 Windows 缩放比例变化）。
+        125% 下 72 逻辑由 Qt 渲染成 90 物理——仍随 Windows 缩放同比变大
+        （2026-10-18 诉求保留），只是不再叠成 112(=72×1.25×1.25)。
         """
-        from . import theme  # 延迟导入：theme 不依赖 storage，无循环
         base = int(self.get_setting("icon_size"))
-        return max(24, int(round(base * theme.screen_dpr() * self.user_icon_scale())))
+        return max(24, int(round(base * self.user_icon_scale())))
 
     def user_icon_scale(self) -> float:
         """用户自定义缩放系数（设置滑条，0.6~2.0，默认 1.0）。"""
@@ -380,10 +386,23 @@ class Storage:
         except (TypeError, ValueError):
             return 1.0
 
+    def ui_scale(self) -> float:
+        """图标外围 chrome（留白/标签字号/行高/内边距/徽标）的**唯一旋钮**。
+
+        语义 = "chrome 相对逻辑基准的倍数"，值 = 用户图标缩放。
+        - dpr 不参与：Qt 已经把逻辑值放大成物理值一次（见上方注释）；
+        - cell 也不吃它：cell 由资源管理器原生图标边长反解，四格实测恒
+          84×91 逻辑，本来就是对的（B1 数据）。
+        """
+        return self.user_icon_scale()
+
     def icon_chrome_scale(self) -> float:
-        """图标外围 chrome（留白/标签字号/行高）的缩放系数 = DPI × 用户缩放。"""
-        from . import theme
-        return theme.screen_dpr() * self.user_icon_scale()
+        """deprecated：转发 `ui_scale()`。
+
+        B2 起所有调用点已改叫 `ui_scale()`；保留本名只为插件 SDK 与旧测试
+        的向后兼容（语义不再是 "dpr × user"）。v11 可删。
+        """
+        return self.ui_scale()
 
     def icon_tier(self) -> str:
         """图标三档（v6 A2，指导文档 §2.2）：small/medium/large，归一化。

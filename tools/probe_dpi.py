@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 """DPI 探针（v10 B1，反馈 2 / 15-b 的前置）：只读量两种配置下的几何事实。
 
-病根背景：`icon_chrome_scale = screen_dpr × user_icon_scale` 散在 6 处各自
-相乘，而 cell 完全不吃 DPI（`cell_from_native` 只由资源管理器图标边长决定）
-→ 125% 缩放下 chrome/cell 比例失衡，表现为文件夹弹窗与 UI 偏大、长按圆圈
-过大（反馈 2 / 15-b）。B2「单一旋钮」改法需要两台配置的真实数字对比，
-**没有两份数据不动 B2/B3 的码**。
+病根背景（B1 已定量，B2 已修）：`icon_chrome_scale` 里含 `screen_dpr`，
+而 Qt6 的高 DPI 缩放**已经把逻辑值放大成物理值一次**（125% 下
+`primaryScreen().geometry()` 是 1536×864 = 1920/1.25）→ chrome 物理按
+dpr² 增长，cell 只有 dpr¹（cell 由资源管理器原生图标边长反解，不吃 scale）
+→ 文件夹弹窗内边距偏大、长按圆圈过大（反馈 2 / 15-b）。
+
+B2 修法（本探针即验收工具）：`ui_scale()` = 用户缩放，**dpr 不参与**；
+`cell` 一个像素不动（四格实测恒 84×91 逻辑）。修好后 `chrome/cell 比`
+在任何 dpr 下都应是 1.00，徽标物理 ∝dpr¹（17/21/26/34）。
 
 探针铁律（遵守 §7.2）：只读枚举——不建窗口、不动用户桌面、不写真实
 state.json（用临时 Storage）、不碰原生桌面图标。
@@ -43,9 +47,10 @@ runpy.run_path('tools/probe_dpi.py', run_name='__main__')"
 
   机器 A（1920×1080 面板）  125% 真机 / 100% DPI 无感知视图  → 比 1.25 / 1.00
   机器 B（2560×1440 面板）  125% 真机 / 100% QT_SCALE_FACTOR=0.8 → 比 1.25 / 1.00
-  → **chrome/cell 比 == dpr**，与分辨率无关；`cell` 四格恒为 84×91 逻辑。
+  → **B1 时** chrome/cell 比 == dpr；`cell` 四格恒为 84×91 逻辑。
     徽标物理 17→26（+53%，dpr²）而 cell 物理 84→105（+25%，dpr¹）
-    —— 内层比外层涨得快，就是"长按圆圈变得很大"的量化来源（B2 要收敛它）。
+    —— 内层比外层涨得快，就是"长按圆圈变得很大"的量化来源。
+  → **B2 之后** 该比值应恒为 1.00（= user_icon_scale），徽标物理 ∝dpr¹。
   另一条 B1 顺带发现：`MAX_COLS=24 / MAX_ROWS=12` 在 2560×1440@100% 会夹紧
     （自然需求 29×14 → 24×12），100% 的大屏反而铺不满。
 """
@@ -94,12 +99,14 @@ def main(app):
 
     st = fresh_storage()
     user_scale = st.user_icon_scale()
-    chrome = st.icon_chrome_scale()
+    chrome = st.ui_scale()
     print("-" * 64)
     print("user_icon_scale: %.4f（settings icon_scale，夹 0.6~2.0）" % user_scale)
-    print("chrome_scale   : %.4f = dpr %.4f × user %.4f"
-          % (chrome, dpr, user_scale))
-    print("  ↑ AppIcon._m 用它（chrome 的唯一乘数）；**cell 不吃这个 scale**")
+    print("ui_scale       : %.4f = user %.4f（**dpr 不参与**，单一旋钮）"
+          % (chrome, user_scale))
+    print("  ↑ AppIcon._m 用它；cell 与图标都不吃 dpr（Qt 已经用过一次）")
+    print("icon_metric    : %d px（逻辑；physical %d）  [base × ui_scale]"
+          % (st.icon_metric(), round(st.icon_metric() * dpr)))
 
     native = win32_layer.native_icon_size()
     print("-" * 64)
@@ -119,9 +126,9 @@ def main(app):
           % (lay.icon_box, round(lay.icon_box * dpr)))
 
     print("-" * 64)
-    # 长按徽标（反馈 15-b）：d = max(16, round(17 * _m))，_m = chrome_scale
+    # 长按徽标（反馈 15-b）：d = max(16, round(BADGE_PX * _m))，_m = ui_scale
     d_badge = max(16, int(round(17 * chrome)))
-    print("长按徽标直径   : %d px（逻辑；physical %d）  [17×chrome_scale]"
+    print("长按徽标直径   : %d px（逻辑；physical %d）  [BADGE_PX=17 × ui_scale]"
           % (d_badge, round(d_badge * dpr)))
 
     # 文件夹弹窗（反馈 2）：cell_w 只吃逻辑值，chrome 侧却乘了 dpr
@@ -133,10 +140,10 @@ def main(app):
              round(pm["icon"] * dpr)))
 
     print("-" * 64)
-    print("chrome/cell 比 : %.4f（cell 的等效 scale 恒为 1.0；B2 要让这个数收敛）"
+    print("chrome/cell 比 : %.4f（= ui_scale；cell 的等效 scale 恒为 1.0）"
           % chrome)
-    print("  参考：100% 配置应约为 1.00；125% 配置应约为 1.25——若显著偏离，"
-          "说明还有第三处暗乘")
+    print("  判据：任何 dpr 下都应 = user_icon_scale（默认 1.00）；"
+          "若显著 >1，说明还有第三处暗乘 dpr。")
     print("=" * 64)
     print("把本段完整输出贴回对话（含两种配置各一份）。")
     return 0

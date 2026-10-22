@@ -69,7 +69,6 @@ def _left_button_down() -> bool:
 # 若提示还是 450，两者只差 20ms，手感上就是"没提示就被挤走"。把**提示
 # 提前**（350）而不是把挤开推后，两条诉求才能同时满足：提示先到 120ms。
 DWELL_MERGE_MS = 350
-
 # 拖放命中分流（2026-10-21 反馈 7 = v7 指导文档 §5.2 双区模型）：
 #   拖影中心在目标核心区（中心 55% 内缩矩形）-> 合并候选（武装 dwell）
 #   拖影中心在核心区外（让位区）            -> 桌面窗口（悬停够久挤走）
@@ -83,6 +82,12 @@ MERGE_ARM_RATIO = drag_merge.MERGE_ARM_RATIO
 # v6 §5.1（反馈 6）：拖动浮影 = 当前图标的 render 快照，半透明 0.8——
 # 替换旧 QDrag 的白块占位，拖动中保留原始样式（图标 + 标签 + 状态）。
 GHOST_OPACITY = 0.8
+
+# 左上角多选徽标直径的**逻辑基准**（v10 B2 / 反馈 15-b）。
+# 实测病根：旧式 `17 * self._m` 的 `_m` 里含 dpr，而 Qt 已经把逻辑值
+# 放大成物理值一次 → 徽标物理按 dpr² 增长（125% 下 26px，而 cell 只
+# 105px，比值 0.248 vs 100% 的 0.202）。`_m` 去掉 dpr 后这里恢复 ∝dpr¹。
+BADGE_PX = 17
 
 
 def _is_tooltip_window(w) -> bool:
@@ -158,8 +163,9 @@ class AppIcon(QWidget):
         self.entry = entry
         self.in_folder = in_folder
         self.selected = False
-        # 外围 chrome 缩放（留白 / 标签字号 / 行高随 DPI×用户缩放同比放大，
-        # 图标本身由 icon_size 已经放大——2026-10-18 DPI 感知）
+        # 外围 chrome 缩放（留白 / 标签字号 / 行高随**用户缩放**同比放大）。
+        # v10 B2：不含 dpr——Qt 高 DPI 缩放已经把逻辑值渲染成物理值时乘过
+        # 一次（125% 下 1536×864 逻辑视口就是证据），再乘就是 dpr²。
         self._m = max(0.5, float(chrome_scale))
         self._no_label = not bool(show_label)
         self._compact = False      # 文件夹内紧凑格（单行小标签路径）
@@ -255,8 +261,9 @@ class AppIcon(QWidget):
         self._long_watch.timeout.connect(self._watch_long_slide)
         # 多选态（手机模式菜单 ▸ 选择）：左上角画空心圆 / 选中画对钩
         self._selection_visible = False
-        # 外围 chrome 缩放（留白 / 标签字号 / 行高随 DPI×用户缩放同比放大，
-        # 图标本身由 icon_size 已经放大——2026-10-18 DPI 感知）
+        # 外围 chrome 缩放（留白 / 标签字号 / 行高随**用户缩放**同比放大）。
+        # v10 B2：不含 dpr——Qt 高 DPI 缩放已经把逻辑值渲染成物理值时乘过
+        # 一次（125% 下 1536×864 逻辑视口就是证据），再乘就是 dpr²。
         self._m = max(0.5, float(chrome_scale))
         # 动效状态（三个独立属性，动画互不冲突；paintEvent 相乘）
         self._hover_scale = 1.0    # 悬停轻放大
@@ -791,7 +798,7 @@ class AppIcon(QWidget):
         """左上角多选标记：空心圆 → 实心对钩。"""
         if not self._selection_visible:
             return
-        d = max(16, int(round(17 * self._m)))
+        d = max(16, int(round(BADGE_PX * self._m)))
         left = (self._box_x if self._box_x is not None else int(round(2 * self._m)))
         rect = QRectF(left + 1, 1, d, d)
         p.setRenderHint(QPainter.Antialiasing, True)

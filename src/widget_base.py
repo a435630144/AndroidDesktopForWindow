@@ -338,14 +338,14 @@ class FloatingWidget(QWidget):
     EDIT_HANDLES = ("nw", "n", "ne", "e", "se", "s", "sw", "w")
 
     def _handle_size(self):
-        """控制点直径（视觉尺寸，随 DPI×用户缩放）。
+        """控制点直径（视觉尺寸，随**用户缩放**；dpr 由 Qt 承担一次）。
 
         2026-10-21 反馈 20（v7e / v7 B5）：基准 14 → 10（iOS/安卓编辑框
-        手柄在 10~12 逻辑像素），本机 125% = 13px（旧 18px）。旧值偏大
-        且圆心贴边被裁，两个毛病叠在一起才显得"像碎块"。
+        手柄在 10~12 逻辑像素），本机 125% 下逻辑 10 / 物理 13px（旧 18）。
+        旧值偏大且圆心贴边被裁，两个毛病叠在一起才显得"像碎块"。
         """
         try:
-            m = self.storage.icon_chrome_scale()
+            m = self.storage.ui_scale()
         except Exception:
             m = 1.0
         return max(9, int(round(HANDLE_D_REF * float(m))))

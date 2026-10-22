@@ -685,7 +685,7 @@ class DesktopWindow(QWidget):
                     return True, HTTRANSPARENT
                 if self._organize_mode():
                     return True, HTCLIENT
-                pad = int(round(14 * self.storage.icon_chrome_scale()))
+                pad = int(round(14 * self.storage.ui_scale()))
                 for icon in self.icons.values():
                     r = QRect(icon.mapToGlobal(QPoint(0, 0)), icon.size())
                     if r.adjusted(-pad, -pad, pad, pad).contains(pt):
@@ -1283,7 +1283,7 @@ class DesktopWindow(QWidget):
         # 条目仍完整留在 storage 里，关掉该模式重建即回来。
         if not self._widgets_only():
             size = self._icon_size()             # v6 §1.3：双模式图标边长
-            chrome = self.storage.icon_chrome_scale()
+            chrome = self.storage.ui_scale()
             for idx, entry in enumerate(self.storage.layout):
                 # v6 A2：三档 × 当前 cell；反馈 12 再乘该条目的 icon_scale
                 layout = self._icon_layout(entry)
@@ -1344,7 +1344,7 @@ class DesktopWindow(QWidget):
         if entry["id"] in self.icons:
             return self.icons[entry["id"]]
         size = self._icon_size()
-        chrome = self.storage.icon_chrome_scale()
+        chrome = self.storage.ui_scale()
         layout = self._icon_layout(entry)          # v6 A2 + 反馈 12 单图标倍数
         icon = AppIcon(entry, size, parent=self, chrome_scale=chrome,
                        layout=layout)

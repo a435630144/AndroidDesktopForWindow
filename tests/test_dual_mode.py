@@ -34,7 +34,7 @@ def check(name, cond, extra=""):
 
 class FakeStorage:
     """get_setting/layout/widgets/columns + cell_size 依赖面（icon_metric/
-    icon_chrome_scale）——与 grid_metrics.compute 的依赖面一致。"""
+    ui_scale）——与 grid_metrics.compute 的依赖面一致。"""
 
     def __init__(self, layout=(), widgets=(), settings=None):
         self.layout = list(layout)
@@ -60,7 +60,7 @@ class FakeStorage:
     def icon_metric(self):
         return 48
 
-    def icon_chrome_scale(self):
+    def ui_scale(self):
         return 1.0
 
 

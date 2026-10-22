@@ -45,7 +45,7 @@ class _St:
     def icon_metric(self):
         return 72
 
-    def icon_chrome_scale(self):
+    def ui_scale(self):
         return 1.0
 
 

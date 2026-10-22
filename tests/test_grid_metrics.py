@@ -41,7 +41,7 @@ class _St:
     def icon_metric(self):
         return int(round(self._s["icon_size"] * self._dpr * self._s["icon_scale"]))
 
-    def icon_chrome_scale(self):
+    def ui_scale(self):
         return self._dpr * self._s["icon_scale"]
 
 

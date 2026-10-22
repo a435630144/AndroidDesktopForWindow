@@ -138,7 +138,7 @@ def main():
         def user_icon_scale(self):
             return 2.0
 
-        def icon_chrome_scale(self):
+        def ui_scale(self):
             return 2.0
 
     m_big = grid_metrics.compute(FakeStorage(), (2048, 1152))

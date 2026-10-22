@@ -426,7 +426,7 @@ class FolderPopup(QWidget):
     def _metrics(self):
         """DPI × 用户缩放感知的布局度量（成员与桌面网格同大小）。"""
         icon_size = max(56, self.storage.icon_metric())
-        m = self.storage.icon_chrome_scale()
+        m = self.storage.ui_scale()
         pad = int(round(16 * m))
         title_h = int(round(36 * m))
         # 反馈 8：底部工具条取消——「样式」「快速添加」都移到右上角按钮组，
@@ -445,7 +445,7 @@ class FolderPopup(QWidget):
         """页点占位高度（只有一页时为 0，不占地方也不画）。"""
         if self._page_total() <= 1:
             return 0
-        m = self.storage.icon_chrome_scale()
+        m = self.storage.ui_scale()
         return max(12, int(round(18 * m)))
 
     def _page_total(self) -> int:
@@ -466,7 +466,7 @@ class FolderPopup(QWidget):
         total = self._page_total()
         if total <= 1:
             return []
-        m = self.storage.icon_chrome_scale()
+        m = self.storage.ui_scale()
         d = max(5, int(round(6 * m)))
         gap = max(6, int(round(9 * m)))
         band = self._pager_rect()
@@ -490,7 +490,7 @@ class FolderPopup(QWidget):
 
     def _member_label_h(self):
         """成员名的单行标签高度（与 AppIcon 紧凑格同一公式）。"""
-        m = self.storage.icon_chrome_scale()
+        m = self.storage.ui_scale()
         font_px = max(10, int(round(11 * m)))
         return max(12, int(round(font_px * 1.45)))
 
@@ -503,12 +503,12 @@ class FolderPopup(QWidget):
         **这个值必须与 AppIcon 紧凑格的 pad_x 同一个来源**，否则布局数学按
         宽格算、控件按窄格画，内容块立刻不再居中（P7/P9c 会红）。
         """
-        m = self.storage.icon_chrome_scale()
+        m = self.storage.ui_scale()
         return max(2, int(round(4 * m))) + int(round(MEMBER_PAD_X * m))
 
     def _member_box(self):
         """单个成员占位方块 (宽, 高)：图标 + 内边距 + 单行文件名（反馈 7）。"""
-        m = self.storage.icon_chrome_scale()
+        m = self.storage.ui_scale()
         pad = max(2, int(round(4 * m)))
         icon = self._member_icon_size()
         return (icon + self._member_pad_x() * 2,
@@ -527,7 +527,7 @@ class FolderPopup(QWidget):
 
     def _member_pitch(self):
         """成员格间距 (横向, 纵向)：紧凑，只留一个小间隙。"""
-        m = self.storage.icon_chrome_scale()
+        m = self.storage.ui_scale()
         bw, bh = self._member_box()
         gap = max(4, int(round(10 * m)))
         return bw + gap, bh + gap
@@ -539,11 +539,11 @@ class FolderPopup(QWidget):
 
     # ---------- 右上角按钮组（反馈 8：○ = 样式，＋ = 快速添加） ----------
     def _header_btn_size(self):
-        return max(20, int(round(22 * self.storage.icon_chrome_scale())))
+        return max(20, int(round(22 * self.storage.ui_scale())))
 
     def _header_rects(self):
         """右上角按钮矩形：{"close", "add", "style"}（从右往左排列）。"""
-        m = self.storage.icon_chrome_scale()
+        m = self.storage.ui_scale()
         s = self._header_btn_size()
         gap = max(4, int(round(6 * m)))
         top = max(6, int(round(10 * m)))

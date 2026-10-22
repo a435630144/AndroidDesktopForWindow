@@ -91,15 +91,19 @@ def compute(storage, screen_size: Tuple[int, int],
       3. 旧键 `settings["columns"]`（int >= 2 视为手动列数，v6 遗留）
       4. 全自动
 
-    storage 只需提供 get_setting / icon_metric / icon_chrome_scale
+    storage 只需提供 get_setting / icon_metric / ui_scale
     （以及可选的 grid_* 访问器——缺失时按 auto 处理，旧 fake storage 仍可单测）。
     screen_size：availableGeometry 的 (W, H)，任务栏已由 Qt 扣除；
     窗口左上角在屏幕上的偏移由调用方处理（整理窗口铺满整个工作区）。
+
+    v10 B2：边距的缩放改读 `ui_scale()`（= 用户缩放，dpr 不参与）；
+    cell 仍由 `cell_from_native(native_px)` 反解、**不吃任何 scale**——
+    B1 四格实测 cell 恒 84×91 逻辑，物理侧已由 Qt 按 dpr 放大一次。
     """
     from . import grid_sizing  # 延迟导入：cell 公式的唯一实现，避免重复
 
     W, H = int(screen_size[0]), int(screen_size[1])
-    chrome = float(storage.icon_chrome_scale())
+    chrome = float(storage.ui_scale())
     edge_x = int(round(26 * chrome))
     edge_y = int(round(22 * chrome))
 

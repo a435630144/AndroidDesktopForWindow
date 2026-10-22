@@ -40,7 +40,7 @@ GAP = 10          # 与锚点窗口的间距
 
 def _scale(storage) -> float:
     try:
-        return float(storage.icon_chrome_scale())
+        return float(storage.ui_scale())
     except Exception:
         return 1.0
 

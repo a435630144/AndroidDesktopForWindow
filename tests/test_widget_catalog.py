@@ -40,7 +40,7 @@ class _St:
     def icon_metric(self):
         return int(self._s["icon_size"] * 1.25)
 
-    def icon_chrome_scale(self):
+    def ui_scale(self):
         return 1.25
 
     @property
