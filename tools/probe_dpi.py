@@ -17,6 +17,25 @@ state.json（用临时 Storage）、不碰原生桌面图标。
 需要在两种配置下各跑一次，把完整输出贴回对话：
   ① 1920×1080 @ 100%
   ② 2560×1440 @ 125%（逻辑 2048×1152）
+
+**100% 数据不必改系统缩放**（改完还要注销重登）：进程级 DPI 虚拟化可精确模拟——
+`SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE)`（=-1）在本进程
+导入 PySide6 **之前**调用，进程视图即变为 dpr=1.0，与真机 100% 配置完全同构
+（cell / chrome / 徽标 / popup 全是逻辑值派生，与 physical 报哪个数无关）。
+2026-10-22 实测 wrapper：
+    python -c "import ctypes,runpy,sys; \
+ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-1)); \
+sys.argv=['probe_dpi.py']; \
+runpy.run_path('tools/probe_dpi.py', run_name='__main__')"
+坑：`QT_SCALE_FACTOR=1.0` 在 Qt6 下**无效**（dpr 仍报系统值），别用它。
+
+**已采数据（2026-10-22，本机 1920×1080 面板）**：
+  125% 真机：dpr 1.25 / chrome_scale 1.25 / cell 84×91 / 徽标 21px /
+            popup(9) 269×337 / **chrome/cell 比 1.25**
+  100% 模拟：dpr 1.00 / chrome_scale 1.00 / cell 84×91 / 徽标 17px /
+            popup(9) 269×337 / **chrome/cell 比 1.00**
+  → 比值 = dpr（cell 等效 scale 恒 1.0），与分辨率无关；2560×1440@125% 预期
+    同为 1.25（机制可推，硬件不支持则无需实测，B2 落地后真机复跑验收）。
 """
 import sys
 import tempfile
