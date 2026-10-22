@@ -4,15 +4,15 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前版本 **v9a**（安装包 4.0.0，v9 迭代第一个包），**89 个测试文件 / 约 2150 条断言全绿**；v7 的 39 条实机反馈与 v8 的组件中心全部闭环。v9 首批带来**全组件外观自定义**（背景色/透明度/文字色/强调色）、**组件插件平台**（写一个目录或 zip 就能装进桌面，见 [docs/组件开发指南.md](docs/组件开发指南.md)）、**组件库并入设置面板**、**每页独立排序规则**，以及**手机式双交互**（单击启动 / 长按菜单 / 多选批量 / 滑动翻页）。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v9.md](docs/指导文档_v9.md)，实施计划见 [docs/实施计划_v9.md](docs/实施计划_v9.md)。
+> 🚧 **项目处于活跃开发中**：当前版本 **v10a**（安装包 5.0.0，v10 迭代第一个包），**89 个测试文件 / 2308 条断言全绿**。v10 带来**组件商店**（gitee 优先 / github 兜底 / sha256 校验，设置 ▸ 组件库「本地 / 商店」双页签，首批世界时钟与倒计时）、**英文界面**（自动 / 中文 / English 即时切换）、**安装器双语言 + 美化**，以及 v9 的**全组件外观自定义**（背景色/透明度/文字色/强调色）、**组件插件平台**（写一个目录或 zip 就能装进桌面，见 [docs/组件开发指南.md](docs/组件开发指南.md)）与**手机式双交互**（单击启动 / 长按菜单 / 多选批量 / 滑动翻页）。问题与想法欢迎 Issues。
 
-[![release](https://img.shields.io/badge/release-v4.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-79%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v5.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-89%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
 一款**界面语言与操作逻辑都走手机路线**的第三方桌面美化整理软件：它在桌面之上挂载一层自有网格，把原生图标替换为完全可控的渲染层——位置、动效、文件夹、小组件，全部由你定义。
 
-开发深度上它**早已不是原型 Demo**：安装包 + 托盘常驻 + 崩溃日志 + 单实例 + 自动重挂守护，**89 个测试文件 / 约 2150 条断言**，外加完整的开发日志与接手手册（见 [DEVLOG.md](DEVLOG.md) / [HANDOVER.md](HANDOVER.md)）。v10 起产品名统一为 **PhoneDesktop**（exe 名、安装目录、`%APPDATA%` 数据目录一起改；老用户的数据目录在首次启动时**一次性自动迁移**，布局与设置不丢）。
+开发深度上它**早已不是原型 Demo**：安装包 + 托盘常驻 + 崩溃日志 + 单实例 + 自动重挂守护，**89 个测试文件 / 2308 条断言**。v10 起产品名统一为 **PhoneDesktop**（exe 名、安装目录、`%APPDATA%` 数据目录一起改；老用户的数据目录在首次启动时**一次性自动迁移**，布局与设置不丢）。
 
 <p align="center"><img src="docs/images/01-desktop.png" width="900" alt="桌面总览：安卓式网格图标 + 锚定小组件"></p>
 
@@ -106,7 +106,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-运行时数据在 `%APPDATA%\DesktopOrganizer\state.json`（布局、设置、小组件显隐）。
+运行时数据在 `%APPDATA%\PhoneDesktop\state.json`（布局、设置、小组件显隐）。
 自检：`python main.py --selftest`（启动 → 截图 → 退出，产出 `selftest_report.txt`；打包后的 exe 同样支持 `--selftest`）。
 
 > ⚠️ **首次使用建议**：先在托盘图标右键熟悉「暂停自动创建/恢复原生」入口——整理模式会接管桌面图标显示，随时可一键恢复原生桌面。
@@ -118,10 +118,10 @@ PhoneDesktopForWindow/
 ├── main.py                  # 入口：崩溃钩子 → 单实例 → 托盘 → 主窗口 → BandGuard
 ├── requirements.txt         # PySide6==6.10.*
 ├── assets/                  # 应用图标
-├── docs/                    # 规格与计划（见「文档索引」）
-│   ├── 指导文档_v7.md / 实施计划_v7.md
-│   ├── DESKBOX_REFERENCE.md
-│   └── archive/             # 已完结迭代的规格（冻结，仅供回溯）
+├── docs/                    # 面向用户的文档
+│   ├── 组件开发指南.md        # 外部开发者写插件组件的 SDK 文档
+│   ├── release_notes/        # 各版本发布说明
+│   └── images/               # README 配图（脚本生成）
 ├── src/
 │   ├── 核心机制 ★
 │   │   ├── win32_layer.py    # 桌面层挂载 + 原生图标隐藏/恢复 + z-order 工具
@@ -169,9 +169,9 @@ Get-ChildItem tests/test_*.py | ForEach-Object {
 }
 ```
 
-> 每个测试脚本自带 `check()` + 汇总 + 退出码。**输出文案各文件不统一**（`ALL PASSED` / `ALL xxx PASSED` / `ALL PASS`），所以别用 grep 固定文案判通过——曾经因此把 41 个全绿文件误报成失败（DEVLOG §7.3）。
+> 每个测试脚本自带 `check()` + 汇总 + 退出码。**输出文案各文件不统一**（`ALL PASSED` / `ALL xxx PASSED` / `ALL PASS`），所以别用 grep 固定文案判通过——曾经因此把 41 个全绿文件误报成失败。
 
-`tools/` 下另有运行态探针（probe5–probe23：动效可视化、让位精度、接管模式、层序、鼠标命中）与打包版验证（`verify_frozen.py` / `verify_live.py`）。**探针安全铁律：只读枚举用户窗口、绝不移动/关闭任何用户窗口**（见 DEVLOG §7.2）。
+`tools/` 下另有运行态探针（probe5–probe23：动效可视化、让位精度、接管模式、层序、鼠标命中）与打包版验证（`verify_frozen.py` / `verify_live.py`）。**探针安全铁律：只读枚举用户窗口、绝不移动/关闭任何用户窗口**。
 
 ## 📦 打包
 
@@ -189,14 +189,11 @@ pwsh -File scripts/build_portable.ps1
 
 | 文档 | 内容 |
 |---|---|
-| [docs/README.md](docs/README.md) | **文档地图**：三层结构（入口 / 规格 / 归档）、文档生命周期规则与提交前自检 |
-| [DEVLOG.md](DEVLOG.md) | **开发日志（权威账本）**：架构决策、Day 1–16 时间线、踩坑台账、测试体系、打包交付 |
-| [HANDOVER.md](HANDOVER.md) | **接手手册**：模块地图、核心机制、安全铁律、开放项、**§10 文档更新标准**、接手检查清单 |
-| [docs/指导文档_v7.md](docs/指导文档_v7.md) | **当前规格**：v7 —— 尺寸两层模型 / 双布局并存 / 拖拽与命中 / 文件夹与浮层（21 项反馈 → A–G 归组） |
-| [docs/实施计划_v7.md](docs/实施计划_v7.md) | **当前实施计划**：B1 拆 T1–T15，每卡含文件 / 签名 / 验证命令 / 预期红 |
-| [docs/反馈研判_v7_1.md](docs/反馈研判_v7_1.md) | **v7a 实机 17 项反馈的研判**：哪些是尚未开工的批次、哪些是真 bug、批次重组与 3 个待拍板决策 |
-| [docs/DESKBOX_REFERENCE.md](docs/DESKBOX_REFERENCE.md) | 竞品 DeskBox 调研与可借鉴点分级清单 |
-| [docs/archive/](docs/archive/README.md) | **归档区**：Phase 1 / v5 / v6g 的规格与计划（已冻结，仅供回溯） |
+| [docs/组件开发指南.md](docs/组件开发指南.md) | **组件插件开发指南**：不碰主程序代码就能做出可安装、可配置的桌面小组件 |
+| [docs/release_notes/](docs/release_notes/) | 各版本发布说明 |
+| [docs/images/](docs/images/) | README 配图（由 `tools/shot_readme.py` 等脚本从真实控件渲染生成） |
+
+> 开发过程文档（开发日志、迭代规格与实施计划、反馈研判）只在本地维护，不进仓库。
 
 ## 🗺️ 路线图
 
@@ -213,8 +210,9 @@ pwsh -File scripts/build_portable.ps1
 | v7e | **v7d 之后的 8 项反馈闭环 + B5 视觉批次**：推让/提示节拍两头提前（450/700→350/470，翻页 600→360）/ 无界松手不回弹 / 组件右键菜单随模式 / 无界→网格组件坐标回算 / 自动排列真正密排 / 弹窗图标 40–56 与绘制单点 / 控制点改圆球 + ≥22px 命中区 / 仅小组件归还原生桌面 / 脏区重绘守 60fps（`frame_stats` 可读） | 2.1.3 |
 | v9a | **v9 首批：外观自定义 + 组件插件平台 + 双交互**：全组件统一外观（背景色/透明度/文字色/强调色/圆角，注册时自动注入，组件零改动）/ 时钟便签玻璃化重写 / 每页独立排序规则（跨页拖动不再回弹）/ 组件库并入设置面板（独立窗口带来的"被压住 + 点不动"从结构上消失）/ 组件开发标准文档 + `widget_plugin`（manifest 校验、zip-slip 防护、命名空间隔离）+ 预览调试器 + 打包脚本 + 组件库一键导入 / **手机式交互**（单击启动、长按 450ms 菜单、长按后滑动转拖动、多选空心圆与对钩、批量合并文件夹/移动分页/删除、空白滑动翻页）/ 组件「隐藏」「关闭」合并为「关闭」 | 4.0.0 |
 | v8a | **v8 首批：组件库 + 四个新组件**：组件注册表单点化（`WidgetSpec` 一处声明跨度/分类/形态/设置/预览）/ 玻璃卡片基类（静态玻璃，不做实时模糊）/ 系统监控（CPU·内存·磁盘，纯 Win32 无新依赖）/ 待办清单（多实例）/ 日历（月视图，翻月记忆）/ 天气（Open-Meteo，实时 / 缓存 / 空 三级降级）/ 组件设置弹窗（`FieldSpec` 驱动）/ 独立组件库窗口（四态卡片 + 实时预览） | 3.0.0 |
+| v10a | **组件商店 + 英文适配 + 安装器双语言 + 改名 PhoneDesktop**：组件商店（gitee→github→jsDelivr 兜底、sha256 校验、本地/商店双页签，首批世界时钟与倒计时）/ 界面语言 自动·中文·English（设置、托盘、右键菜单、组件库、组件设置即时生效）/ 安装向导双语言 + 120% 美化 / 改名 PhoneDesktop（数据目录一次性自动迁移）/ 9 条实机反馈闭环（组件交互盲区 / Dock 独立设置分页与拖入 / 新组件默认网格 / 右键双模式改名 / 组件填充百分比 / 调节虚线贴边 / 桌面面板重构 / Dock 默认圆角收小 12px） | 5.0.0 |
 
-**v7 已交付**（规格 [docs/指导文档_v7.md](docs/指导文档_v7.md)，计划 [docs/实施计划_v7.md](docs/实施计划_v7.md)）：
+**v7 已交付**：
 
 - [x] **B1** 尺寸地基：`cell_from_native` 由原生图标推导格子、档位只改格内占比（`icon_fit`）、行数=纯裁剪、网格原点可手动定位
 - [x] **B2** 双布局并存：网格与无界各自保存，切换零换算零清空（含图标尺寸单源，`icon_px` 退役）
@@ -223,7 +221,7 @@ pwsh -File scripts/build_portable.ps1
 - [x] **B5** 文件夹与视觉细节：弹窗图标比例（`popup_metrics` 与桌面档位解耦）/ 弹窗贴边与两级居中 / 编辑控制点改圆球 + 放大命中区（v7e 完成）
 - [x] **B6** 浮层与分页：下拉弹层实心（`ui_choice.ComboBox`）、分页入口两模式可用
 
-**v9 实施中**（规格 [docs/指导文档_v9.md](docs/指导文档_v9.md)，计划 [docs/实施计划_v9.md](docs/实施计划_v9.md)）：
+**v9 已交付**：
 
 - [x] **V1** 外观自定义：样式层 `widget_style` + 全组件统一注入 + 时钟便签玻璃化
 - [x] **V2** 两个 BUG（组件库被压住 / 自动排布跨页回弹）+ 每页排序规则 + 组件库融入设置页
@@ -231,7 +229,7 @@ pwsh -File scripts/build_portable.ps1
 - [x] **V4** 双交互逻辑：Windows 习惯 / 手机习惯（长按菜单、多选批量、滑动翻页）
 - [x] **V5** 回归 + 门禁 + 出包 v9a
 
-**v8 已交付**（规格 [docs/指导文档_v8.md](docs/指导文档_v8.md)，计划 [docs/实施计划_v8.md](docs/实施计划_v8.md)）：
+**v8 已交付**：
 
 - [x] **C1** 组件注册表：`WidgetSpec` 单点声明，`WIDGET_TYPES` / `WIDGET_NAMES` / `WIDGET_CATALOG` 全部退化为派生（旧调用点一行未改）
 - [x] **C2** 玻璃卡片基类 `GlassWidget`：静态玻璃（竖向渐变 tint + 顶部 specular + 圆角裁剪），**不做实时高斯模糊**——常驻组件每帧抓桌面会推翻 v7 的 60fps
@@ -240,7 +238,7 @@ pwsh -File scripts/build_portable.ps1
 - [x] **C8** 组件设置：`FieldSpec` 声明式表单，右键菜单"有声明才出现"（不出灰项）
 - [x] **C9** 回归 + 门禁 + 出包 v8a
 
-- [ ] **v7.1**（延后）：组件商店（在线安装组件包，模块化组件生态）
+- [x] **组件商店**（在线安装组件包，模块化组件生态）：已随 v10a（5.0.0）交付，见[组件开发指南](docs/组件开发指南.md)
 
 更远：整理模式原生能力补齐（F2 重命名 / Delete 回收站 / 剪贴板）、Ctrl+Z 撤销、多显示器。
 

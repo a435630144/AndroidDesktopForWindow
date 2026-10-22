@@ -4,15 +4,15 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: current version **v9a** (installer 4.0.0, first package of the v9 line) with **86 test files / ~2000 assertions green**; all 39 v7 field reports and the whole v8 widget center are closed. v9's first batch adds **per-widget appearance settings** (background / opacity / text / accent colour), a **widget plugin platform** (drop in a folder or a zip — see [docs/组件开发指南.md](docs/组件开发指南.md)), the **widget library merged into the settings panel**, **per-page auto-arrange rules**, and a **phone-style input mode** (single tap launches / long-press menu / multi-select with batch actions / swipe to flip pages). Bug reports and ideas are welcome via Issues — current spec: [docs/指导文档_v9.md](docs/指导文档_v9.md), plan: [docs/实施计划_v9.md](docs/实施计划_v9.md) (both Chinese).
+> 🚧 **Under active development**: current version **v10a** (installer 5.0.0, first package of the v10 line) with **89 test files / 2308 assertions green**. v10 brings a **widget store** (gitee first, github fallback, sha256 verification; Local / Store tabs in the widget library, first batch: world clock & countdown), an **English UI** (auto / 中文 / English, applied instantly), a **bilingual + refreshed installer**, plus v9's **per-widget appearance settings** (background / opacity / text / accent colour), a **widget plugin platform** (drop in a folder or a zip — see [docs/组件开发指南.md](docs/组件开发指南.md)) and a **phone-style input mode** (single tap launches / long-press menu / multi-select with batch actions / swipe to flip pages). Bug reports and ideas are welcome via Issues.
 
-[![release](https://img.shields.io/badge/release-v4.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-86%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v5.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-89%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
 A third-party desktop organizer and beautifier for Windows with a **phone-style UI and interaction model**: it mounts its own grid layer above the native desktop and replaces native icons with a fully controlled rendering layer — positions, animations, folders and widgets are all yours to define.
 
-Despite the name, this is **far past the prototype stage**: installer, tray residency, crash logging, single-instance guard, auto re-attach watchdog, **86 test files / ~2000 assertions**, plus a full dev log and handover guide ([DEVLOG.md](DEVLOG.md) / [HANDOVER.md](HANDOVER.md), both Chinese). Since v10 the product is called **PhoneDesktop** everywhere (exe name, install dir and the `%APPDATA%` data dir); existing users' data is **migrated automatically on first launch**, so layouts and settings survive the rename.
+Despite the name, this is **far past the prototype stage**: installer, tray residency, crash logging, single-instance guard, auto re-attach watchdog, **89 test files / 2308 assertions**. Since v10 the product is called **PhoneDesktop** everywhere (exe name, install dir and the `%APPDATA%` data dir); existing users' data is **migrated automatically on first launch**, so layouts and settings survive the rename.
 
 <p align="center"><img src="docs/images/01-desktop.png" width="900" alt="The desktop: Android-style icon grid with anchored widgets"></p>
 
@@ -106,7 +106,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Runtime data lives in `%APPDATA%\DesktopOrganizer\state.json` (layout, settings, widget visibility).
+Runtime data lives in `%APPDATA%\PhoneDesktop\state.json` (layout, settings, widget visibility).
 Self-check: `python main.py --selftest` (launch → screenshot → exit, writes `selftest_report.txt`; the packaged exe accepts `--selftest` too).
 
 > ⚠️ **First-run advice**: familiarize yourself with the tray menu's "Pause auto-creation / restore native" entry — organizer mode takes over desktop icon rendering and can restore the native desktop at any time with one click.
@@ -118,10 +118,10 @@ PhoneDesktopForWindow/
 ├── main.py                  # Entry: crash hook → single instance → tray → main window → BandGuard
 ├── requirements.txt         # PySide6==6.10.*
 ├── assets/                  # App icon
-├── docs/                    # Specs & plans (see Documentation)
-│   ├── 指导文档_v7.md / 实施计划_v7.md
-│   ├── DESKBOX_REFERENCE.md
-│   └── archive/             # Specs of finished iterations (frozen, reference only)
+├── docs/                    # User-facing docs
+│   ├── 组件开发指南.md        # Widget plugin SDK guide for external developers (Chinese)
+│   ├── release_notes/        # Per-release notes
+│   └── images/               # README screenshots (script-generated)
 ├── src/
 │   ├── Core mechanics ★
 │   │   ├── win32_layer.py    # Desktop-band mounting + native icon hide/restore + z-order utils
@@ -149,7 +149,7 @@ PhoneDesktopForWindow/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip (needs pwsh 7)
 │   ├── installer.iss        # Inno Setup 6 installer (must be UTF-8 BOM)
 │   └── check_docs.py        # Docs consistency check (dead links / duplicate sections / doc-vs-code drift)
-├── tests/                   # 86 standalone scripts (no pytest); judge by exit code
+├── tests/                   # 89 standalone scripts (no pytest); judge by exit code
 │   ├── smoke_test.py        # Headless logic regression (storage/clone/layout)
 │   └── test_*.py            # One per contract: reflow, dual mode, hit-testing, popup, widgets…
 └── tools/                   # Runtime probes probe*.py + packaged-build verification verify_*.py
@@ -161,16 +161,16 @@ PhoneDesktopForWindow/
 # Headless logic regression
 python tests/smoke_test.py
 
-# Full suite: 86 standalone scripts, no pytest; judge by exit code only
+# Full suite: 89 standalone scripts, no pytest; judge by exit code only
 Get-ChildItem tests/test_*.py | ForEach-Object {
     python $_.FullName
     if ($LASTEXITCODE -ne 0) { "FAILED: $($_.Name)" }
 }
 ```
 
-> Each script ships its own `check()` + summary + exit code. **The closing text differs per file** (`ALL PASSED` / `ALL xxx PASSED` / `ALL PASS`), so never grep for a fixed string to judge success — doing so once mis-reported 41 green files as failures (DEVLOG §7.3).
+> Each script ships its own `check()` + summary + exit code. **The closing text differs per file** (`ALL PASSED` / `ALL xxx PASSED` / `ALL PASS`), so never grep for a fixed string to judge success — doing so once mis-reported 41 green files as failures.
 
-`tools/` also contains runtime probes (probe5–probe23: animation visualization, reflow precision, takeover mode, z-order, mouse hit-testing) and packaged-build verification (`verify_frozen.py` / `verify_live.py`). **Probe safety rule: user windows are read-only enumerated — never moved or closed** (see DEVLOG §7.2).
+`tools/` also contains runtime probes (probe5–probe23: animation visualization, reflow precision, takeover mode, z-order, mouse hit-testing) and packaged-build verification (`verify_frozen.py` / `verify_live.py`). **Probe safety rule: user windows are read-only enumerated — never moved or closed**.
 
 ## 📦 Packaging
 
@@ -188,14 +188,11 @@ pwsh -File scripts/build_portable.ps1
 
 | Document | Contents |
 |---|---|
-| [docs/README.md](docs/README.md) | **Documentation map**: three layers (entry / specs / archive), doc lifecycle rules and the pre-commit self-check |
-| [DEVLOG.md](DEVLOG.md) | **Development log (authoritative ledger)**: architecture decisions, Day 1–16 timeline, pitfall ledger, test system, packaging & delivery |
-| [HANDOVER.md](HANDOVER.md) | **Handover manual**: module map, core mechanics, safety rules, open items, **§10 documentation standards**, takeover checklist |
-| [docs/指导文档_v7.md](docs/指导文档_v7.md) | **Current spec** (Chinese): v7 — two-layer sizing / coexisting dual layouts / drag & hit-testing / folder & overlays |
-| [docs/实施计划_v7.md](docs/实施计划_v7.md) | **Current implementation plan** (Chinese): B1 split into T1–T15 |
-| [docs/反馈研判_v7_1.md](docs/反馈研判_v7_1.md) | **Triage of the 17 field reports against v7a** (Chinese): which are not-yet-started batches, which are real bugs, rebatched plan + 3 open decisions |
-| [docs/DESKBOX_REFERENCE.md](docs/DESKBOX_REFERENCE.md) | DeskBox research report and lessons applicable to this project (Chinese) |
-| [docs/archive/](docs/archive/README.md) | **Archive**: Phase 1 / v5 / v6g specs and plans (frozen, reference only) |
+| [docs/组件开发指南.md](docs/组件开发指南.md) | **Widget plugin development guide** (Chinese): build an installable, configurable desktop widget without touching the main program |
+| [docs/release_notes/](docs/release_notes/) | Per-release notes |
+| [docs/images/](docs/images/) | README screenshots (rendered from real widgets by `tools/shot_readme.py` and friends) |
+
+> Development-process documents (dev log, iteration specs & plans, feedback triage) are kept locally only and are not committed to this repository.
 
 ## 🗺️ Roadmap
 
@@ -213,8 +210,9 @@ pwsh -File scripts/build_portable.ps1
 
 | v9a | **v9 first batch: appearance customisation + widget plugins + dual input modes**: one shared appearance layer for every widget (background / opacity / text / accent / radius, injected at registration so widgets need zero code) / clock and notes rewritten on the glass base class / per-page auto-arrange rules (cross-page drops no longer snap back) / widget library merged into the settings panel (the "covered and unclickable" bug disappears structurally) / a widget developer guide plus `widget_plugin` (manifest validation, zip-slip protection, namespace isolation), a preview debugger, a packaging script and one-click zip import / **phone-style interaction** (tap to launch, 450 ms long-press menu, slide-after-long-press becomes a drag, selection rings and check marks, batch merge-into-folder / move-to-page / delete, swipe on empty space to flip pages) / widget "hide" and "close" merged into a single "close" | 4.0.0 |
 | v8a | **v8 first batch: widget library + four new widgets**: widgets declared once via `WidgetSpec` (spans / category / form / settings / preview) / glass card base class (static glass, no live blur) / system monitor (CPU · memory · disk, pure Win32, no new dependency) / to-do list (multi-instance) / calendar (month view with remembered month) / weather (Open-Meteo, live → cache → empty fallback) / widget settings dialog driven by `FieldSpec` / dedicated widget library window | 3.0.0 |
+| v10a | **Widget store + English UI + bilingual installer + rename to PhoneDesktop**: widget store (gitee → github → jsDelivr fallback, sha256 verification, Local / Store tabs, first batch world clock & countdown) / UI language auto · 中文 · English (settings, tray, context menus, widget library & settings apply instantly) / bilingual installer wizard with 120% visuals / rename to PhoneDesktop with one-time automatic data migration / 9 field reports closed (widget interaction blind spots / Dock drag-in + its own settings page / new widgets default to grid mode / dual-mode rename / widget fill ratio / resize guide lines at card edge / desktop panel rework / Dock default corner radius shrunk to 12 px) | 5.0.0 |
 
-**v7 delivered** (spec: [docs/指导文档_v7.md](docs/指导文档_v7.md), plan: [docs/实施计划_v7.md](docs/实施计划_v7.md)):
+**v7 delivered**:
 
 - [x] **B1** Sizing foundation: `cell_from_native` derives cells from the native icon size, tiers only change in-cell ratio (`icon_fit`), row count = pure cropping, grid origin is manually placeable
 - [x] **B2** Coexisting layouts: grid and free-floating each persist their own layout; switching never converts or clears (single sizing source, `icon_px` retired)
@@ -223,7 +221,7 @@ pwsh -File scripts/build_portable.ps1
 - [x] **B5** Folder & visual polish: popup icon ratio decoupled from the desktop tier (`popup_metrics`) / popup edge placement and two-level centering / edit handles rebuilt as round dots with enlarged hit areas (delivered in v7e)
 - [x] **B6** Popups & paging: solid combo popup (`ui_choice.ComboBox`), paging entry available in both modes
 
-**v8 in progress** (spec: [docs/指导文档_v8.md](docs/指导文档_v8.md), plan: [docs/实施计划_v8.md](docs/实施计划_v8.md)):
+**v8 delivered**:
 
 - [x] **C1** Widget registry: every static fact declared once in `WidgetSpec`; `WIDGET_TYPES` / `WIDGET_NAMES` / `WIDGET_CATALOG` all became derived views (no call site changed)
 - [x] **C2** Glass card base class `GlassWidget`: static glass (vertical gradient tint + top specular + rounded clip), **no real-time blur** — grabbing the desktop every frame would break the 60 fps work done in v7
@@ -232,7 +230,7 @@ pwsh -File scripts/build_portable.ps1
 - [x] **C8** Widget settings: declarative forms from `FieldSpec`; the context-menu entry only appears when a widget declares settings
 - [x] **C9** Regression + docs gate + v8a package
 
-- [ ] **v7.1** (deferred): widget store (install widget packages online, modular ecosystem)
+- [x] **Widget store** (install widget packages online, modular ecosystem): delivered in v10a (5.0.0) — see the [widget plugin guide](docs/组件开发指南.md)
 
 Further out: native capability parity (F2 rename / Delete to recycle bin / clipboard), Ctrl+Z undo, multi-monitor.
 
