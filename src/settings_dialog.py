@@ -120,8 +120,9 @@ def open_settings(window, storage, layer, page="general"):
 
 class SettingsDialog(QDialog):
     # v9 V2：新增「组件库」分页（原独立窗口融合进来，BUG1 从结构上消失）
-    NAV = (("general", "通用"), ("widgets", "组件库"), ("appearance", "外观与图标"),
-           ("layout", "布局与网格"), ("mode", "模式"), ("advanced", "高级"))
+    NAV = (("general", "通用"), ("widgets", "组件库"), ("dock", "Dock 栏"),
+           ("appearance", "外观与图标"), ("layout", "布局与网格"),
+           ("mode", "模式"), ("advanced", "高级"))
 
     def __init__(self, window, storage, layer, parent=None, page=None):
         super().__init__(parent)
@@ -381,62 +382,57 @@ class SettingsDialog(QDialog):
         self._row(c, card, i18n.T("settings.general.widget_center.title"),
                   btn_center, i18n.T("settings.general.widget_center.hint"))
 
-        # v10 A7-1（反馈 13）：「显示桌面小组件」上面那个总开关之外，再给一个
-        # **一键救回**的按钮——用户一个个把组件关了（或用了组件库的「关闭所有」），
-        # 想全回来时不必去组件库里逐个点「显示」。
-        btn_show_all = QPushButton(i18n.T("button.show_all"))
-        btn_show_all.setStyleSheet(theme.BUTTON_QSS)
-        btn_show_all.setToolTip(i18n.T("settings.general.restore.tip"))
-        btn_show_all.clicked.connect(self._show_all_widgets)
-        # v10 A4（反馈 10 规则 3）：hint 原是按钮名的同义复读，删。
-        self._row(c, card, i18n.T("settings.general.restore.title"), btn_show_all)
-
-        # v10 C3（反馈 17）：Dock 栏——开关 + 位置四选一。
-        # 两者都只写设置、再由 window.apply_dock_settings() 重排（唯一入口：
-        # 先让 Dock 自己落位，再 refresh_grid 用新 inset 重算行列）。
-        self.chk_dock = Switch()
-        self.chk_dock.setChecked(bool(self.storage.get_setting("dock_enabled")))
-        self.chk_dock.toggled.connect(self._apply_dock)
-        self._row(c, card, i18n.T("settings.general.dock.title"), self.chk_dock,
-                  i18n.T("settings.general.dock.hint"))
-
-        self.cmb_dock_pos = ComboBox()
-        for label, pos in dock.POSITION_LABELS:
-            self.cmb_dock_pos.addItem(i18n.TL("dock.pos." + pos, label), pos)
-        self.cmb_dock_pos.setCurrentIndex(max(0, self.cmb_dock_pos.findData(
-            dock.normalize_position(self.storage.get_setting("dock_position")))))
-        self.cmb_dock_pos.setEnabled(self.chk_dock.isChecked())
-        self.cmb_dock_pos.currentIndexChanged.connect(self._apply_dock)
-        self._row(c, card, i18n.T("settings.general.dock_position.title"),
-                  self.cmb_dock_pos,
-                  i18n.T("settings.general.dock_position.hint"))
+        # 2026-10-23 反馈 5（v10 A9）：用户点名删掉这一行——
+        # 「恢复组件」与上方「显示桌面小组件」开关语义重叠，关着的组件本来
+        # 就能在设置 ▸ 组件库逐个点「显示」，「一键全部恢复」反而多一个
+        # 让人犹豫的按钮（用户原话："不要设置里的恢复组件按钮。没用。"）。
+        # v10 A9（反馈 2）：Dock 的开关 / 位置 / 外观全部搬到独立的
+        # 「Dock 栏」分页（`_page_dock`）——dock 已经有一整套样式旋钮，
+        # 塞在通用页的一张卡里既放不下也不好找。
         lay.addWidget(card)
 
     def _apply_dock(self, *_):
-        """Dock 开关 / 位置（v10 C3）：写设置 -> 交给窗口重排（唯一入口）。
+        """Dock 开关 / 位置 / 外观（v10 A9）：写设置 -> 交给窗口重排。
 
         窗口是唯一写者：`apply_dock_settings()` 内部先让 Dock 落位、再
         `refresh_grid()` 用新 inset 重算行列。窗口不可用（探针 / 替身）时
         只落设置，下次启动生效——绝不在这里自己算一遍几何（双源）。
+
+        控件在 `_page_dock` 里，可能尚未建（构造期 / 老测试只建了通用页）：
+        一律用 getattr 兜底，缺控件就不写那一项。
         """
+        ctl = lambda name: getattr(self, name, None)  # noqa: E731
         on = bool(self.chk_dock.isChecked())
-        pos = dock.normalize_position(self.cmb_dock_pos.currentData())
         self.storage.set_setting("dock_enabled", on)
-        self.storage.set_setting("dock_position", pos)
+        self.storage.set_setting(
+            "dock_position",
+            dock.normalize_position(self.cmb_dock_pos.currentData()))
+        if ctl("sp_dock_icon") is not None:
+            self.storage.set_setting(
+                "dock_icon", int(self.sp_dock_icon.value()))
+        if ctl("sld_dock_alpha") is not None:
+            self.storage.set_setting(
+                "dock_alpha", round(int(self.sld_dock_alpha.value()) / 100.0, 4))
+        if ctl("cmb_dock_radius") is not None:
+            self.storage.set_setting(
+                "dock_radius_mode",
+                dock.normalize_radius_mode(self.cmb_dock_radius.currentData()))
+        if ctl("chk_dock_hover") is not None:
+            self.storage.set_setting("dock_hover",
+                                     bool(self.chk_dock_hover.isChecked()))
+        if ctl("chk_dock_dot") is not None:
+            self.storage.set_setting("dock_dot",
+                                     bool(self.chk_dock_dot.isChecked()))
         self.storage.save()
-        self.cmb_dock_pos.setEnabled(on)
+        # 关掉 Dock 时，子控件一并禁用（不留"能点但无效"的旋钮）
+        for name in ("cmb_dock_pos", "sp_dock_icon", "sld_dock_alpha",
+                     "cmb_dock_radius", "chk_dock_hover", "chk_dock_dot"):
+            w = ctl(name)
+            if w is not None:
+                w.setEnabled(on)
         hook = getattr(self.window, "apply_dock_settings", None)
         if hook is not None:
             hook()
-
-    def _show_all_widgets(self):
-        """一键恢复全部被隐藏的组件（v10 A7-1）。没有 layer（测试/异常）时静默跳过。"""
-        if self.layer is None:
-            return
-        try:
-            self.layer.show_all()
-        except Exception:      # noqa: BLE001 —— 别让一个按钮把设置窗搞崩
-            pass
 
     def _open_widget_center(self):
         """跳到组件库分页（v9 V2：不再新开窗口）。
@@ -485,6 +481,117 @@ class SettingsDialog(QDialog):
         self.deleteLater()
         QTimer.singleShot(
             0, lambda: open_settings(win, storage, layer, page=page))
+
+    def _page_dock(self, body, lay):
+        """Dock 栏（v10 A9）：开关 + 位置 + 外观 + 清空。"""
+        on = bool(self.storage.get_setting("dock_enabled"))
+        card, c = self._card(body, i18n.T("settings.dock.card_basic"))
+
+        self.chk_dock = Switch()
+        self.chk_dock.setChecked(on)
+        self.chk_dock.toggled.connect(self._apply_dock)
+        self._row(c, card, i18n.T("settings.general.dock.title"), self.chk_dock,
+                  i18n.T("settings.general.dock.hint"))
+
+        self.cmb_dock_pos = ComboBox()
+        for label, pos in dock.POSITION_LABELS:
+            self.cmb_dock_pos.addItem(i18n.TL("dock.pos." + pos, label), pos)
+        self.cmb_dock_pos.setCurrentIndex(max(0, self.cmb_dock_pos.findData(
+            dock.normalize_position(self.storage.get_setting("dock_position")))))
+        self.cmb_dock_pos.setEnabled(on)
+        self.cmb_dock_pos.currentIndexChanged.connect(self._apply_dock)
+        self._row(c, card, i18n.T("settings.general.dock_position.title"),
+                  self.cmb_dock_pos,
+                  i18n.T("settings.general.dock_position.hint"))
+        lay.addWidget(card)
+
+        card2, c2 = self._card(body, i18n.T("settings.dock.card_style"))
+
+        self.sp_dock_icon = Stepper()
+        self.sp_dock_icon.setRange(dock.DOCK_ICON_MIN, dock.DOCK_ICON_MAX)
+        self.sp_dock_icon.setSingleStep(2)
+        self.sp_dock_icon.setSuffix(i18n.T("settings.dock.unit_px"))
+        self.sp_dock_icon.setFixedWidth(96)
+        self.sp_dock_icon.setValue(dock.icon_base(self.storage))
+        self.sp_dock_icon.setEnabled(on)
+        self.sp_dock_icon.valueChanged.connect(self._apply_dock)
+        self._row(c2, card2, i18n.T("settings.dock.icon.title"),
+                  self.sp_dock_icon, i18n.T("settings.dock.icon.hint"))
+
+        self.sld_dock_alpha = QSlider(Qt.Horizontal)
+        self.sld_dock_alpha.setRange(30, 100)
+        self.sld_dock_alpha.setValue(int(round(dock.bg_alpha(self.storage) * 100)))
+        self.sld_dock_alpha.setFixedWidth(150)
+        self.sld_dock_alpha.setStyleSheet(theme.SLIDER_QSS)
+        self.sld_dock_alpha.setEnabled(on)
+        self.sld_dock_alpha.valueChanged.connect(self._apply_dock)
+        self._row(c2, card2, i18n.T("settings.dock.alpha.title"),
+                  self.sld_dock_alpha, i18n.T("settings.dock.alpha.hint"))
+
+        self.cmb_dock_radius = ComboBox()
+        for mode, label in dock.RADIUS_LABELS:
+            self.cmb_dock_radius.addItem(
+                i18n.TL("dock.radius." + mode, label), mode)
+        self.cmb_dock_radius.setCurrentIndex(max(0, self.cmb_dock_radius.findData(
+            dock.normalize_radius_mode(
+                self.storage.get_setting("dock_radius_mode")))))
+        self.cmb_dock_radius.setEnabled(on)
+        self.cmb_dock_radius.currentIndexChanged.connect(self._apply_dock)
+        self._row(c2, card2, i18n.T("settings.dock.radius.title"),
+                  self.cmb_dock_radius, i18n.T("settings.dock.radius.hint"))
+
+        self.chk_dock_hover = Switch()
+        self.chk_dock_hover.setChecked(dock.hover_enabled(self.storage))
+        self.chk_dock_hover.setEnabled(on)
+        self.chk_dock_hover.toggled.connect(self._apply_dock)
+        self._row(c2, card2, i18n.T("settings.dock.hover.title"),
+                  self.chk_dock_hover, i18n.T("settings.dock.hover.hint"))
+
+        self.chk_dock_dot = Switch()
+        self.chk_dock_dot.setChecked(dock.dot_enabled(self.storage))
+        self.chk_dock_dot.setEnabled(on)
+        self.chk_dock_dot.toggled.connect(self._apply_dock)
+        self._row(c2, card2, i18n.T("settings.dock.dot.title"),
+                  self.chk_dock_dot, i18n.T("settings.dock.dot.hint"))
+        lay.addWidget(card2)
+
+        card3, c3 = self._card(body, i18n.T("settings.dock.card_items"))
+        self.lbl_dock_count = QLabel("")
+        self.lbl_dock_count.setObjectName("rowHint")
+        self._sync_dock_count()
+        c3.addWidget(self.lbl_dock_count)
+        btn_clear = QPushButton(i18n.T("settings.dock.clear"))
+        btn_clear.setStyleSheet(theme.BUTTON_QSS)
+        btn_clear.clicked.connect(self._clear_dock)
+        self._row(c3, card3, i18n.T("settings.dock.clear.title"), btn_clear,
+                  i18n.T("settings.dock.clear.hint"))
+        lay.addWidget(card3)
+
+    def _sync_dock_count(self):
+        """刷新「当前 N 个应用」提示（清空后要立刻变）。"""
+        try:
+            n = len(dock.load_items(self.storage))
+        except Exception:      # noqa: BLE001
+            n = 0
+        self.lbl_dock_count.setText(
+            i18n.T("settings.dock.count", n=n))
+
+    def _clear_dock(self):
+        """清空 Dock（只删 dock_items，桌面布局一条不动）。"""
+        if not dock.load_items(self.storage):
+            return
+        ok = QMessageBox.question(
+            self, i18n.T("settings.dock.clear.title"),
+            i18n.T("settings.dock.clear.confirm"),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if ok != QMessageBox.Yes:
+            return
+        dock.save_items(self.storage, [])
+        self.storage.save()
+        self._sync_dock_count()
+        hook = getattr(self.window, "apply_dock_settings", None)
+        if hook is not None:
+            hook()
 
     def _page_appearance(self, body, lay):
         card, c = self._card(body, i18n.T("settings.appearance.card.icons"))

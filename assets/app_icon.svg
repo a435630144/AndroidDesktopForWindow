@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#82AAFF"/>
+      <stop offset="0.48" stop-color="#5470F0"/>
+      <stop offset="1" stop-color="#3A4FDB"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="26"/>
+    </filter>
+    <path id="sq" d="M 272,48 H 752 A 224,224 0 0 1 976,272 V 752 A 224,224 0 0 1 752,976 H 272 A 224,224 0 0 1 48,752 V 272 A 224,224 0 0 1 272,48 Z"/>
+    <clipPath id="clipSq"><use href="#sq"/></clipPath>
+    <path id="tile" d="M 0,0 h 160 a 40,40 0 0 1 40,40 v 80 a 40,40 0 0 1 -40,40 h -160 a 40,40 0 0 1 -40,-40 v -80 a 40,40 0 0 1 40,-40 Z"/>
+  </defs>
+
+  <!-- 画布：一方属于两个世界的屏幕 -->
+  <use href="#sq" fill="url(#bg)"/>
+  <g clip-path="url(#clipSq)">
+    <rect x="48" y="48" width="928" height="440" fill="url(#gloss)"/>
+    <use href="#sq" fill="none" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="2.5"/>
+  </g>
+
+  <!-- 八枚锚定的图标 -->
+  <g fill="#FFFFFF">
+    <use href="#tile" transform="translate(232,176)"/>
+    <use href="#tile" transform="translate(632,176)"/>
+    <use href="#tile" transform="translate(232,376)"/>
+    <use href="#tile" transform="translate(432,376)"/>
+    <use href="#tile" transform="translate(632,376)"/>
+    <use href="#tile" transform="translate(232,576)"/>
+    <use href="#tile" transform="translate(432,576)"/>
+    <use href="#tile" transform="translate(632,576)"/>
+  </g>
+
+  <!-- 领舞者：长按选中，浮起一分，世界为它重排 -->
+  <g transform="translate(0,26) translate(512,238) scale(1.08) translate(-512,-256)">
+    <rect x="428" y="172" width="168" height="168" rx="45"
+          fill="#1B2A78" opacity="0.34" filter="url(#soft)"/>
+  </g>
+  <use href="#tile" fill="#FFFFFF"
+       transform="translate(512,238) scale(1.08) translate(-512,-256) translate(432,176)"/>
+
+  <!-- 页面指示器：这里可以翻页 -->
+  <rect x="457" y="833" width="26" height="10" rx="5" fill="#FFFFFF" fill-opacity="0.95"/>
+  <circle cx="517" cy="838" r="9" fill="#FFFFFF" fill-opacity="0.28"/>
+  <circle cx="562" cy="838" r="9" fill="#FFFFFF" fill-opacity="0.28"/>
+</svg>

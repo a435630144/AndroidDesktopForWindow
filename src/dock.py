@@ -34,7 +34,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from PySide6.QtCore import (QEasingCurve, QPoint, QPropertyAnimation, QRect,
-                            QRectF, Qt, Property, Signal)
+                            QRectF, Qt, QTimer, Property, Signal)
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
@@ -48,16 +48,74 @@ POSITIONS = ("bottom", "top", "left", "right")
 POSITION_LABELS = (("bottom", "底部"), ("top", "顶部"),
                    ("left", "左侧"), ("right", "右侧"))
 
-DOCK_ICON = 40          # 图标基准边长（逻辑 px，100% 缩放）
+# 条带圆角形态（设置 ▸ Dock 栏）。数据自带中文，界面用 `i18n.TL` 兜底。
+RADIUS_LABELS = (("pill", "胶囊"), ("round", "圆角"), ("square", "直角"))
+
+# 2026-10-23 反馈 2（v10 A9）：默认样式整体缩小一档——40px 图标 + 5 槽位
+# 的条带在小屏上像"另一条任务栏"，用户原话"默认样式不要加入这么大的"。
+# 现在 32px / 4 槽位（空态长度 ~152px），并且这三项都进了设置 ▸ Dock 栏。
+DOCK_ICON = 32          # 图标基准边长（逻辑 px，100% 缩放；设置可改 24~56）
+DOCK_ICON_MIN, DOCK_ICON_MAX = 24, 56
 DOCK_GAP = 6            # 图标间距（图标 PNG 自带透明边，视觉间隙约 2 倍）
-DOCK_PAD = 8            # 条带内边距（hover 图标与条带边留出呼吸）
-DOCK_HOVER = 1.28       # hover 放大倍数（1.0 = 不放大；1.12 时肉眼几乎看不出）
-MIN_SLOTS = 5           # 空态/少量条目时按 5 个槽位撑住长度（条形不会缩成一点）
+DOCK_PAD = 6            # 条带内边距（hover 图标与条带边留出呼吸）
+DOCK_HOVER = 1.22       # hover 放大倍数（1.0 = 不放大；设置里可整项关闭）
+MIN_SLOTS = 4           # 空态/少量条目时按 4 个槽位撑住长度（条形不会缩成一点）
 DOCK_MAX_ITEMS = 24     # 上限（再多滚不动，靠拖出/排序管理；
                         # 与待办清单的 MAX_ITEMS 同名会撞文档门禁的常量表）
 
 HOVER_MS = 160          # hover 放大动画时长（spring_curve，禁近似曲线）
 DRAG_OUT_PX = 36        # 拖出多远算"移出 Dock"（松手即移除）
+
+# 条带形状（设置 ▸ Dock 栏 ▸ 圆角形态）。`pill` = 胶囊（默认），
+# `round` = 固定圆角，`square` = 近乎直角——三种都是同一条条带，只改半径。
+RADIUS_MODES = ("pill", "round", "square")
+DEFAULT_ALPHA = 0.86
+ROUND_RADIUS = 16
+
+
+def setting(storage, key, default):
+    """读设置并兜底缺省。
+
+    `Storage.get_setting(key)` **只接受一个参数**（测试桩则允许 default），
+    所以这里不能直接写 `get_setting(key, default)`——那会在真实 storage
+    上抛 TypeError（Dock 一构造就崩）。
+    """
+    try:
+        v = storage.get_setting(key)
+    except Exception:      # noqa: BLE001 —— 设置层异常不该让 Dock 消失
+        return default
+    return default if v is None else v
+
+
+def normalize_radius_mode(value) -> str:
+    v = str(value or "").strip().lower()
+    return v if v in RADIUS_MODES else "pill"
+
+
+def icon_base(storage) -> int:
+    """图标基准边长（设置值夹到 24~56；缺省 `DOCK_ICON`）。"""
+    try:
+        v = int(setting(storage, "dock_icon", DOCK_ICON))
+    except (TypeError, ValueError):
+        v = DOCK_ICON
+    return max(DOCK_ICON_MIN, min(DOCK_ICON_MAX, v))
+
+
+def bg_alpha(storage) -> float:
+    """条带背景不透明度（0.30~1.0）。"""
+    try:
+        v = float(setting(storage, "dock_alpha", DEFAULT_ALPHA))
+    except (TypeError, ValueError):
+        v = DEFAULT_ALPHA
+    return max(0.30, min(1.0, v))
+
+
+def hover_enabled(storage) -> bool:
+    return bool(setting(storage, "dock_hover", True))
+
+
+def dot_enabled(storage) -> bool:
+    return bool(setting(storage, "dock_dot", True))
 
 
 class DockMetrics(NamedTuple):
@@ -82,20 +140,32 @@ def _scale(ui_scale) -> float:
     return min(2.0, max(0.6, s))
 
 
-def metrics(ui_scale, count: int) -> DockMetrics:
+def metrics(ui_scale, count: int, base: int = DOCK_ICON) -> DockMetrics:
     """Dock 几何：图标/间距/内边距只随 `ui_scale` 线性放大。
 
     条带厚度 = pad×2 + hover 后的图标边长——**预留放大空间**是有意的：
     hover 时图标在条带内长大，永远不出窗口（见模块 docstring）。
+
+    `base` 是"100% 缩放下的图标边长"（v10 A9 起可配置：设置 ▸ Dock 栏）。
     """
     s = _scale(ui_scale)
-    icon = max(16, int(round(DOCK_ICON * s)))
+    icon = max(16, int(round(int(base) * s)))
     gap = max(3, int(round(DOCK_GAP * s)))
     pad = max(2, int(round(DOCK_PAD * s)))
     thickness = pad * 2 + int(round(icon * DOCK_HOVER))
     slots = max(MIN_SLOTS, min(DOCK_MAX_ITEMS, max(0, int(count))))
     length = pad * 2 + slots * icon + (slots - 1) * gap
     return DockMetrics(icon, gap, pad, thickness, length, slots)
+
+
+def metrics_for(storage, count: int = 0) -> DockMetrics:
+    """按当前设置求一次 Dock 几何（**唯一入口**，别再各自传 ui_scale）。"""
+    if count <= 0:
+        try:
+            count = len(load_items(storage))
+        except Exception:      # noqa: BLE001
+            count = 0
+    return metrics(storage.ui_scale(), count, icon_base(storage))
 
 
 def normalize_position(position) -> str:
@@ -271,7 +341,7 @@ def storage_inset(storage) -> tuple:
     """当前设置下的可用区扣除 —— **网格唯一入口**（见模块 docstring 铁律 1）。"""
     if not bool(storage.get_setting("dock_enabled")):
         return (0, 0, 0, 0)
-    m = metrics(storage.ui_scale(), len(load_items(storage)))
+    m = metrics_for(storage)
     return inset(True, storage.get_setting("dock_position"), m.thickness)
 
 
@@ -317,7 +387,7 @@ class DockWindow(QWidget):
         self._items = load_items(storage)
         self._avail = (1920, 1080)
         self._bar = (0, 0, 0, 0)
-        self._m = metrics(storage.ui_scale(), len(self._items))
+        self._m = metrics_for(storage, len(self._items))
         self._position = normalize_position(
             storage.get_setting("dock_position"))
         self._hover_index = None
@@ -329,6 +399,12 @@ class DockWindow(QWidget):
         self._drag_index = None
         self._drag_out = False
         self._drop_highlight = False
+        # v10 A9（反馈 2）：外部拖入的插入落点（None = 没有落点指示）。
+        # 旧实现只会"追加到末尾"且没有任何视觉反馈，用户拖上去看不出会发生
+        # 什么，松手没加进去就以为"拖不进 Dock"。
+        self._drop_index = None
+        self._hover_on = hover_enabled(storage)
+        self._dot_on = dot_enabled(storage)
 
         flags = (Qt.FramelessWindowHint | Qt.Tool
                  | Qt.WindowDoesNotAcceptFocus)
@@ -355,17 +431,41 @@ class DockWindow(QWidget):
         self._avail = (max(1, int(avail_size[0])), max(1, int(avail_size[1])))
         self._position = normalize_position(
             self.storage.get_setting("dock_position"))
-        self._m = metrics(self.storage.ui_scale(), len(self._items))
+        self._m = metrics_for(self.storage, len(self._items))
+        self._hover_on = hover_enabled(self.storage)
+        self._dot_on = dot_enabled(self.storage)
         if not self.enabled:
             self.hide()
             self._bar = (0, 0, 0, 0)
             return self._bar
         self._bar = bar_rect(self._avail, self._position, self._m)
+        # 2026-10-23 反馈 6：位置切换必须**真的动**。旧实现只在"不可见时
+        # show"，可见时依赖 setGeometry——几何是对的，但分层窗口在桌面带里
+        # 被 SetWindowPos 重排过 z-order 后，Windows 偶尔会把窗口位置回退到
+        # 上一次的摆放（Qt 侧 geometry 与实际窗口不同步），用户看到"切了位置
+        # 没生效"。这里 setGeometry 之后强制一次 raise/重绘刷新，并由
+        # `apply_dock_settings` 再补一次 `refresh_band()`。
         self.setGeometry(*self._bar)
         if not self.isVisible():
             self.show()
+        elif not self.underMouse():
+            self.update(self.rect())
         self.update()
         return self._bar
+
+    def refresh_band(self):
+        """重新挂到桌面带（位置 / 外观变化后调用）。
+
+        分层窗口的位置由 Qt 的 setGeometry 改，z-order 由 win32 改；两者
+        交替操作后必须再确认一次层序，否则切了位置看起来"没生效"
+        （窗口还在旧位置的下方被桌面窗口盖住一截）。
+        """
+        if getattr(self, "attached", False) and self.isVisible():
+            self.attached = win32_layer.attach_to_desktop(
+                self, layer=win32_layer.BAND_LAYER_DOCK)
+            if self.attached:
+                win32_layer.enforce_band_order()
+        self.update()
 
     def is_visible_bar(self) -> bool:
         """条带当前是否可见（启用 + 有窗口）——空态也算可见（占位提示）。"""
@@ -387,8 +487,12 @@ class DockWindow(QWidget):
         self.apply_geometry(self._avail)
         self.changed.emit()
 
-    def add_item(self, item: dict) -> bool:
-        """追加一条（拖入路径）；重复不追加，返回是否真的加了。"""
+    def add_item(self, item: dict, index=None) -> bool:
+        """插入一条（拖入路径）；重复不追加，返回是否真的加了。
+
+        v10 A9（反馈 2）：`index` 是插入位置（None = 追加到末尾）。旧实现
+        只能追加，用户拖到第 1 个位置松手却跑到最后，也是"拖不进去"的错觉源。
+        """
         if not isinstance(item, dict):
             return False
         norm = normalize_items([item])
@@ -396,8 +500,28 @@ class DockWindow(QWidget):
             return False
         if any(i.get("target") == norm[0]["target"] for i in self._items):
             return False
-        self.set_items(self._items + norm)
+        items = list(self._items)
+        if index is None:
+            items.extend(norm)
+        else:
+            i = max(0, min(len(items), int(index)))
+            items[i:i] = norm
+        self.set_items(items)
         return True
+
+    def _flash_duplicate(self):
+        """重复拖入的提示：条带闪一下（不弹窗、不阻塞）。"""
+        self._drop_highlight = True
+        self.update()
+        QTimer.singleShot(220, self._clear_highlight)
+
+    def _clear_highlight(self):
+        if not self._drag_active_now():
+            self._drop_highlight = False
+            self.update()
+
+    def _drag_active_now(self) -> bool:
+        return self._drop_index is not None
 
     def remove_at(self, index: int):
         if 0 <= int(index) < len(self._items):
@@ -427,6 +551,9 @@ class DockWindow(QWidget):
     hover_t = Property(float, _get_hover_t, _set_hover_t)
 
     def _animate_hover(self, to: float):
+        if not self._hover_on:
+            self._set_hover_t(0.0)
+            return
         if self._anim is not None:
             self._anim.stop()
         if effects.reduced_motion():
@@ -460,11 +587,16 @@ class DockWindow(QWidget):
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
 
-        radius = min(rect.width(), rect.height()) / 2.0
+        radius = self._shape_radius(rect)
         path = QPainterPath()
         path.addRoundedRect(rect, radius, radius)
-        p.fillPath(path, theme.SURFACE)
-        p.setPen(QPen(theme.BORDER, 1))
+        # v10 A9：背景不透明度可调（0.30~1.0）——桌面壁纸透出来多少由用户定
+        bg = QColor(theme.SURFACE)
+        bg.setAlphaF(bg_alpha(self.storage))
+        p.fillPath(path, bg)
+        border = QColor(theme.BORDER)
+        border.setAlphaF(min(1.0, 0.55 + bg_alpha(self.storage) * 0.45))
+        p.setPen(QPen(border, 1))
         p.drawPath(path)
 
         if not self._items:
@@ -483,6 +615,39 @@ class DockWindow(QWidget):
         if self._drop_highlight:
             p.setPen(QPen(theme.ACCENT, 2))
             p.drawPath(path)
+            self._paint_drop_indicator(p)
+
+    def _shape_radius(self, rect) -> float:
+        """条带圆角（设置 ▸ Dock 栏 ▸ 圆角形态）。"""
+        mode = normalize_radius_mode(
+            self.storage.get_setting("dock_radius_mode"))
+        short = min(rect.width(), rect.height()) / 2.0
+        if mode == "pill":
+            return short
+        if mode == "square":
+            return min(4.0, short)
+        return min(max(6.0, ROUND_RADIUS * _scale(self.storage.ui_scale())), short)
+
+    def _paint_drop_indicator(self, p: QPainter):
+        """外部拖入时的插入位置竖线（水平条）／横线（竖向条）。
+
+        没有这个指示，用户拖上去只看到边框变蓝，不知道松手会插到哪里；
+        `dropEvent` 按同一个 `_drop_index` 插入，所以指示位置 == 实际落点。
+        """
+        if self._drop_index is None:
+            return
+        m = self._m
+        _x, _y, w, h = self._bar
+        i = max(0, min(int(self._drop_index), len(self._items)))
+        step = m.icon + m.gap
+        p.setPen(QPen(theme.ACCENT, 3, Qt.SolidLine, Qt.RoundCap))
+        # 窗口 == 条带，所以"局部坐标"= 条带内偏移（不掺 bar 原点）
+        if self._position in ("bottom", "top"):
+            lx = m.pad + i * step - m.gap / 2.0
+            p.drawLine(QPointF(lx, m.pad * 0.6), QPointF(lx, h - m.pad * 0.6))
+        else:
+            ly = m.pad + i * step - m.gap / 2.0
+            p.drawLine(QPointF(m.pad * 0.6, ly), QPointF(w - m.pad * 0.6, ly))
 
     def _paint_empty_hint(self, p, rect):
         p.setPen(QPen(theme.TEXT_FAINT, 1))
@@ -526,7 +691,7 @@ class DockWindow(QWidget):
         p.setOpacity(1.0)
 
         # hover 项下方的小圆点（macOS 的"运行中"指示位置，这里表示"当前指向"）
-        if i == self._hover_index and self._hover_t > 0.2:
+        if self._dot_on and i == self._hover_index and self._hover_t > 0.2:
             dot = max(2, int(round(3 * self._hover_t)))
             p.setPen(Qt.NoPen)
             p.setBrush(theme.ACCENT)
@@ -545,9 +710,26 @@ class DockWindow(QWidget):
         p.drawText(rect, Qt.AlignCenter, ch)
 
     # ---------- 鼠标：hover / 点击启动 / 拖动排序 ----------
+    def _bar_point(self, pos):
+        """窗口局部坐标 -> **条带坐标**（屏幕）。
+
+        2026-10-23（v10 A9）：`hit_index` / `bar_rect` / `item_rect` 全都用
+        **屏幕坐标**（条带可能是屏幕中间的一段），而鼠标事件给的是窗口局部
+        坐标。旧实现直接把局部坐标喂给 `hit_index`——条带不在屏幕左上角时
+        （居中摆放的 bottom/top、right 侧）判断恒为"没命中"：hover 不放大、
+        点图标不启动、拖出去也判不出"移出"。条带贴左时才碰巧正确，
+        所以这个 bug 一直没被发现。这里统一加条带原点，所有判定共用。
+        """
+        try:
+            return (int(pos.x()) + int(self._bar[0]),
+                    int(pos.y()) + int(self._bar[1]))
+        except (AttributeError, IndexError, TypeError):
+            return (int(getattr(pos, "x", lambda: 0)()),
+                    int(getattr(pos, "y", lambda: 0)()))
+
     def _local_index(self, pos):
         return hit_index(self._bar, self._position, self._m,
-                         len(self._items), (pos.x(), pos.y()),
+                         len(self._items), self._bar_point(pos),
                          enabled=self.enabled)
 
     def mouseMoveEvent(self, e):
@@ -577,7 +759,21 @@ class DockWindow(QWidget):
         x, y, w, h = self._bar
         g = QRect(x - DRAG_OUT_PX, y - DRAG_OUT_PX,
                   w + DRAG_OUT_PX * 2, h + DRAG_OUT_PX * 2)
-        return not g.contains(pos.x(), pos.y())
+        px, py = self._bar_point(pos)
+        return not g.contains(px, py)
+
+    def _insert_index(self, pos) -> int:
+        """落点 -> 插入索引（拖入新条目时用；与排序用的 `_drop_target` 同口径）。"""
+        m = self._m
+        x, y, w, h = self._bar
+        horizontal = self._position in ("bottom", "top")
+        bp = self._bar_point(pos)
+        v = bp[0] if horizontal else bp[1]
+        origin = (x if horizontal else y) + m.pad
+        step = m.icon + m.gap
+        if step <= 0:
+            return 0
+        return max(0, min(len(self._items), int(round((v - origin) / step))))
 
     def _drop_target(self, pos):
         """拖动中的落点索引：按住某图标时按"中心越过邻居中心"判换位。
@@ -588,7 +784,8 @@ class DockWindow(QWidget):
         if self._drag_index is None:
             return None
         horizontal = self._position in ("bottom", "top")
-        v = pos.x() if horizontal else pos.y()
+        bp = self._bar_point(pos)
+        v = bp[0] if horizontal else bp[1]
         m = self._m
         origin = (self._bar[0] if horizontal else self._bar[1]) + m.pad
         step = m.icon + m.gap
@@ -656,14 +853,21 @@ class DockWindow(QWidget):
 
     def dragMoveEvent(self, e):
         if e.mimeData().hasFormat(MIME_TYPE):
+            idx = self._insert_index(e.position().toPoint())
+            if idx != self._drop_index:
+                self._drop_index = idx
+                self.update()
             e.acceptProposedAction()
 
     def dragLeaveEvent(self, _e):
         self._drop_highlight = False
+        self._drop_index = None
         self.update()
 
     def dropEvent(self, e):
+        idx = self._drop_index
         self._drop_highlight = False
+        self._drop_index = None
         self.update()
         md = e.mimeData()
         if not md.hasFormat(MIME_TYPE):
@@ -680,10 +884,13 @@ class DockWindow(QWidget):
         if not entry_is_app(entry):
             e.ignore()          # Q2：文件/文件夹/组件不收
             return
-        if self.add_item(item_from_entry(entry)):
+        if self.add_item(item_from_entry(entry), index=idx):
             e.acceptProposedAction()
             self.storage.save()
         else:
+            # 已在 Dock 里：**也要接受**并给一次视觉反馈（旧实现 e.ignore()，
+            # 拖拽源拿不到落点、图标弹回原位，用户以为"拖不进 Dock"）
+            self._flash_duplicate()
             e.acceptProposedAction()
 
     # ---------- 桌面带 ----------

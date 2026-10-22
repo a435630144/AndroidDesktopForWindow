@@ -195,8 +195,10 @@ def main(app):
     cw3, ch3 = grid_flow.cell_size(st3)
     ox3, oy3 = grid_flow.origin()
     aw = layer.widgets.get("clk")
-    check("W7 网格模式锚定组件在格点", aw is not None and aw.pos() == QPoint(ox3 + 2 * cw3, oy3),
-          "%s" % (aw.pos() if aw else None,))
+    from src import widget_geom
+    _w7 = widget_geom.card_pos(st3, 2, 0, grid_flow.widget_span(st3, st3.widgets[0]))
+    check("W7 网格模式锚定组件在卡片位", aw is not None and aw.pos() == QPoint(*_w7),
+          "%s want=%s" % (aw.pos() if aw else None, _w7))
     # 网格 spawn 已把 w/h 覆写为 span 派生值——切无界后应原样保留
     # （不再按 span 重新推导，用户像素尺寸权威在 entry.w/h）
     wh_before = (st3.widgets[0].get("w"), st3.widgets[0].get("h"))

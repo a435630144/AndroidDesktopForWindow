@@ -167,6 +167,17 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             spans=((3, 4),),
             category="效率",
             default_anchored=True,
+            # v10 A9（反馈 9）：面板 = 可组合的信息面板，每一块单独开关。
+            # 天气卡不再画示例数据（订阅共享天气源），所以"显示天气"是
+            # "要不要这张卡"，不是"用真数据还是假数据"。
+            settings=(
+                FieldSpec("show_search", "显示搜索框", "bool", True),
+                FieldSpec("show_folders", "显示快捷文件夹", "bool", True),
+                FieldSpec("show_disk", "显示磁盘卡片", "bool", True),
+                FieldSpec("show_recent", "显示最近下载", "bool", True),
+                FieldSpec("show_weather", "显示天气卡片", "bool", True,
+                          hint="与「天气」组件共用同一份城市与数据"),
+            ),
         ),
         WidgetSpec(
             type="monitor",

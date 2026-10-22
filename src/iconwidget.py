@@ -1055,6 +1055,18 @@ class AppIcon(QWidget):
                 # 自算承载面补上。
                 target = self._drag_surface_at(gpos)
             return target
+        # v10 A9（反馈 2）：**Dock 条带优先**。Dock 是独立分层窗，`widgetAt`
+        # 在它的透明边 / 圆角外会穿透到下面的整理窗口，于是"拖到 Dock 上"
+        # 时有时拿到 Dock、有时拿到桌面，落点判定在两条路径间摇摆——用户
+        # 看到的就是"拖不进 Dock"。这里按条带几何直接判定（与
+        # `desktop_window._dock_hit` 同一口径：visible + 窗口矩形包含点）。
+        dock = self._dock_window()
+        if dock is not None:
+            try:
+                if dock.is_visible_bar() and dock.geometry().contains(gpos):
+                    return dock
+            except (RuntimeError, AttributeError):
+                pass
         if isinstance(target, AppIcon) and target is not self:
             # 只擦到边缘：目标保持不动，落点交给桌面窗口（实时挤走语义）
             return self._host_desktop(gpos)
@@ -1207,6 +1219,18 @@ class AppIcon(QWidget):
             except RuntimeError:
                 return None
         return None
+
+    def _dock_window(self):
+        """宿主桌面窗口挂着的 Dock（没有则 None）。
+
+        图标不知道 Dock 的存在，也不该知道——通过宿主窗口的公开属性拿引用，
+        与 `widgetAt` 是"另一条判定路径"，但落点几何只有一份（Dock 自己）。
+        """
+        win = self.window()
+        dock = getattr(win, "_dock", None)
+        if dock is None or dock is self:
+            return None
+        return dock
 
     def _send_drag_event(self, widget, event):
         """派发合成拖放事件；目标已被销毁（rebuild/deleteLater）时静默跳过。"""

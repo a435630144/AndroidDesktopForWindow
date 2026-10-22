@@ -8,7 +8,7 @@
   - widget_span 从 catalog 读，不再 round 像素（银行家舍入坑根除）
   - entry 已存 colspan/rowspan 优先（用户尺寸切换的持久化）
   - 非 catalog 类型回退 legacy 像素换算
-  - pixel_size = span × cell 精确推导（碰撞 = 视觉边界）
+  - pixel_size = 卡片尺寸（span × cell × 填充比例；v10 A8）
   - widget_cells 按 span 精确展开（时钟 2×2 = 4 格，旧 round 只有 2 格）
 """
 import os
@@ -94,15 +94,17 @@ def main():
           grid_flow.widget_span(st, ghost) == (2, 1))
 
     # ---------- 5. pixel_size = span × cell 精确推导 ----------
-    check("pixel_size(clock) == 2×cell（240×284 @125%）",
-          widget_catalog.pixel_size(st, "clock") == (2 * cw, 2 * ch),
+    from src import widget_geom
+    check("pixel_size(clock) == 卡片尺寸（2×2 格 × fill）",
+          widget_catalog.pixel_size(st, "clock") == widget_geom.card_size(st, (2, 2)),
           "%s" % (widget_catalog.pixel_size(st, "clock"),))
-    check("pixel_size(clock, span=(4,2)) == 4×2 cell",
-          widget_catalog.pixel_size(st, "clock", (4, 2)) == (4 * cw, 2 * ch))
-    check("pixel_size(notes) == 2×2 cell（v6 §6.1 登记后不再 None）",
-          widget_catalog.pixel_size(st, "notes") == (2 * cw, 2 * ch))
-    check("pixel_size(panel) == 3×4 cell",
-          widget_catalog.pixel_size(st, "panel") == (3 * cw, 4 * ch))
+    check("pixel_size(clock, span=(4,2)) == 4×2 卡片",
+          widget_catalog.pixel_size(st, "clock", (4, 2))
+          == widget_geom.card_size(st, (4, 2)))
+    check("pixel_size(notes) == 2×2 卡片（v6 §6.1 登记后不再 None）",
+          widget_catalog.pixel_size(st, "notes") == widget_geom.card_size(st, (2, 2)))
+    check("pixel_size(panel) == 3×4 卡片",
+          widget_catalog.pixel_size(st, "panel") == widget_geom.card_size(st, (3, 4)))
     check("pixel_size(未知类型) 返回 None",
           widget_catalog.pixel_size(st, "nosuchtype") is None)
 

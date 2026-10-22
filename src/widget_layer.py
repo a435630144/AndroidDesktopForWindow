@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, QPoint, Signal
 from PySide6.QtWidgets import QApplication
 
 from . import grid_flow
+from . import widget_geom
 from . import widget_registry
 from . import win32_layer
 from .band_guard import BandGuard
@@ -101,9 +102,12 @@ class WidgetLayer(QObject):
                     if "col" in entry and "row" in entry:
                         # 反馈 3：未接管时自动无界——没有 fx/fy 的旧数据按
                         # 它原来的格点像素懒生成，切换瞬间视觉不跳变
-                        # （旧实现回退 x/y，会跳到窗口左上角）
-                        entry["fx"], entry["fy"] = grid_flow.cell_pos(
-                            self.storage, int(entry["col"]), int(entry["row"]))
+                        # （旧实现回退 x/y，会跳到窗口左上角）。
+                        # v10 A8：用卡片位（格盒居中 × 填充比例）而不是
+                        # 格点左上角，切模式时卡片不横移。
+                        entry["fx"], entry["fy"] = widget_geom.card_pos(
+                            self.storage, int(entry["col"]), int(entry["row"]),
+                            grid_flow.widget_span(self.storage, entry))
                     else:
                         entry["fx"] = int(entry.get("x", 0) or 0)
                         entry["fy"] = int(entry.get("y", 0) or 0)
@@ -125,9 +129,10 @@ class WidgetLayer(QObject):
                 entry["col"], entry["row"] = col, row
                 cs, rs = grid_flow.widget_span(self.storage, entry)
                 entry["colspan"], entry["rowspan"] = cs, rs
-                # M6：位置统一走 cell_pos（页内局部行映射）
-                entry["x"], entry["y"] = grid_flow.cell_pos(
-                    self.storage, int(entry["col"]), int(entry["row"]))
+                # M6：位置统一走 card_pos（页内局部行映射 + 填充比例居中）
+                entry["x"], entry["y"] = widget_geom.card_pos(
+                    self.storage, int(entry["col"]), int(entry["row"]),
+                    (cs, rs))
             self.storage.save()
         w = cls(self.storage, entry)
         w.closed.connect(self._on_closed)
@@ -346,8 +351,16 @@ class WidgetLayer(QObject):
             self.widgetsChanged.emit()
             return entry
 
+        # 2026-10-23 反馈 3（v10 A9）：**新组件跟随当前桌面模式**。
+        # 旧实现读 `spec.default_anchored`（各组件写死的静态值），于是网格
+        # 模式下新加的钟表 / 天气是"悬浮卡片"（不占格、浮在图标上），用户
+        # 看到的却是"加了个无界模式的东西"。网格模式 -> 锚定（占格融入桌面）；
+        # 无界模式 -> 自由悬浮（跟随鼠标/像素位）。
+        # 交互型组件（便签 / 待办）在锚定态同样可输入——`FloatingWidget`
+        # 只对**纯展示**组件加 NOACTIVATE（见 widget_base.__init__）。
+        anchored = not grid_flow.free_mode(self.storage)
         entry = {"id": uuid.uuid4().hex[:8], "type": wtype,
-                 "hidden": False, "anchored": bool(spec.default_anchored)}
+                 "hidden": False, "anchored": anchored}
         # 尺寸：锚定组件由 catalog 的 span × cell 推导（widget_base 会覆盖），
         # 这里给的像素值只对悬浮组件生效，也给锚定态一个合理初值。
         from . import widget_catalog

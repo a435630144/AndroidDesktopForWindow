@@ -25,6 +25,11 @@
   D11 dock_items 三次往返逐字段相等
   D12 网格扣除端到端：inset 让 cols/rows 变少且原点偏移正确
   D13 DockWindow 真窗口几何落在条带内、空态可见、ui_scale 变化重排
+  D15 默认样式收小（图标 32 / 4 槽位），条带厚度随之变薄
+  D16 外观旋钮生效（图标大小 / 不透明度 / 圆角形态 / hover / 指示点）
+  D17 切位置后窗口几何真的换边（开关 + 四向 + 恢复）
+  D18 拖入按落点插入（add_item(index) / _insert_index 同口径）
+  D19 设置 ▸ Dock 栏分页存在，改旋钮写设置并触发窗口重排
 
 运行：python tests/test_dock.py   （offscreen；判据看退出码）
 """
@@ -321,6 +326,151 @@ def main():
     check("D14 关掉后条带隐藏", not bar14.is_visible_bar(), "hidden")
     w14.close()
     bar14.close()
+
+    # ---------- D15：默认样式收小（v10 A9 反馈 2） ----------
+    m_def = dock.metrics(1.0, 0)
+    check("D15 默认图标 32px", m_def.icon == 32, "icon=%d" % m_def.icon)
+    check("D15 空态 4 槽位（条带不缩成一点）", m_def.slots == dock.MIN_SLOTS == 4,
+          "slots=%d" % m_def.slots)
+    check("D15 空态条带厚度变薄（< 56）", m_def.thickness < 56,
+          "thick=%d" % m_def.thickness)
+    check("D15 空态长度 = pad*2 + 4*icon + 3*gap",
+          m_def.length == m_def.pad * 2 + 4 * m_def.icon + 3 * m_def.gap,
+          "len=%d" % m_def.length)
+
+    # ---------- D16：外观旋钮 ----------
+    st16 = Storage(path=tmp / "dock16.json")
+    base16 = dock.metrics_for(st16, 4).icon
+    st16.set_setting("dock_icon", 48)
+    check("D16 dock_icon 生效", dock.metrics_for(st16, 4).icon == 48,
+          "icon=%d" % dock.metrics_for(st16, 4).icon)
+    st16.set_setting("dock_icon", 999)
+    check("D16 dock_icon 上限夹到 56", dock.icon_base(st16) == dock.DOCK_ICON_MAX,
+          "%d" % dock.icon_base(st16))
+    st16.set_setting("dock_icon", 1)
+    check("D16 dock_icon 下限夹到 24", dock.icon_base(st16) == dock.DOCK_ICON_MIN,
+          "%d" % dock.icon_base(st16))
+    st16.set_setting("dock_icon", 32)
+    st16.set_setting("dock_alpha", 0.5)
+    check("D16 dock_alpha 读取", abs(dock.bg_alpha(st16) - 0.5) < 1e-6,
+          "%s" % dock.bg_alpha(st16))
+    st16.set_setting("dock_alpha", 0.01)
+    check("D16 dock_alpha 下限 0.30", abs(dock.bg_alpha(st16) - 0.30) < 1e-6)
+    st16.set_setting("dock_radius_mode", "SQUARE")
+    check("D16 圆角形态归一化", dock.normalize_radius_mode(
+        st16.get_setting("dock_radius_mode")) == "square")
+    st16.set_setting("dock_radius_mode", "鬼东西")
+    check("D16 非法圆角回退 pill",
+          dock.normalize_radius_mode("鬼东西") == "pill")
+    st16.set_setting("dock_hover", False)
+    check("D16 dock_hover 关闭", dock.hover_enabled(st16) is False)
+    st16.set_setting("dock_dot", False)
+    check("D16 dock_dot 关闭", dock.dot_enabled(st16) is False)
+    check("D16 metrics(ui_scale) 与 icon_base 同源",
+          dock.metrics(1.0, 4, dock.icon_base(st16)).icon
+          == dock.metrics_for(st16, 4).icon)
+
+    # ---------- D17：切位置真的换边 ----------
+    st17 = Storage(path=tmp / "dock17.json")
+    dock.save_items(st17, seed)
+    st17.set_setting("dock_enabled", True)
+    w17 = dock.DockWindow(st17)
+    seen = {}
+    for pos in ("bottom", "top", "left", "right"):
+        st17.set_setting("dock_position", pos)
+        seen[pos] = w17.apply_geometry((1920, 1080))
+    check("D17 bottom 贴底", seen["bottom"][1] + seen["bottom"][3] == 1080,
+          "%s" % (seen["bottom"],))
+    check("D17 top 贴顶", seen["top"][1] == 0, "%s" % (seen["top"],))
+    check("D17 left 贴左", seen["left"][0] == 0, "%s" % (seen["left"],))
+    check("D17 right 贴右", seen["right"][0] + seen["right"][2] == 1920,
+          "%s" % (seen["right"],))
+    check("D17 窗口几何 = 条带（Qt 侧真的跟着走）",
+          (w17.geometry().x(), w17.geometry().y())
+          == (seen["right"][0], seen["right"][1]),
+          "%s vs %s" % (w17.geometry(), seen["right"]))
+    st17.set_setting("dock_position", "bottom")
+    check("D17 切回 bottom 复位", w17.apply_geometry((1920, 1080)) == seen["bottom"],
+          "%s" % (w17.apply_geometry((1920, 1080)),))
+    w17.close()
+
+    # ---------- D18：按落点插入 ----------
+    from PySide6.QtCore import QPoint
+    st18 = Storage(path=tmp / "dock18.json")
+    items18 = [{"name": "A", "target": "a.exe", "icon_path": "a.exe"},
+               {"name": "B", "target": "b.exe", "icon_path": "b.exe"}]
+    w18 = dock.DockWindow(st18)
+    w18.set_items(items18)
+    w18.apply_geometry((1920, 1080))
+    check("D18 插入到 0 号位",
+          w18.add_item({"name": "C", "target": "c.exe"}, index=0)
+          and [i["name"] for i in w18.items()] == ["C", "A", "B"],
+          "%s" % [i["name"] for i in w18.items()])
+    check("D18 插入到末尾（index=None 仍追加）",
+          w18.add_item({"name": "D", "target": "d.exe"})
+          and [i["name"] for i in w18.items()] == ["C", "A", "B", "D"],
+          "%s" % [i["name"] for i in w18.items()])
+    check("D18 重复 target 不插入", w18.add_item({"name": "A2", "target": "a.exe"}) is False,
+          "%s" % [i["name"] for i in w18.items()])
+    m18 = w18.current_metrics()
+    x0, y0, ww, hh = w18._bar
+    # 落点在 1 号图标中心 -> 插入索引 1
+    cx = m18.pad + m18.icon // 2 + (m18.icon + m18.gap)
+    check("D18 _insert_index 按图标中心算",
+          w18._insert_index(QPoint(int(cx), hh // 2)) == 1,
+          "%s" % w18._insert_index(QPoint(int(cx), hh // 2)))
+    check("D18 落点在左边距外 -> 0",
+          w18._insert_index(QPoint(0, hh // 2)) == 0)
+    check("D18 落点在最右 -> len", w18._insert_index(QPoint(ww + 50, hh // 2))
+          == len(w18.items()))
+    w18.close()
+
+    # ---------- D19：设置 ▸ Dock 栏分页 ----------
+    from src import settings_dialog
+    st19 = Storage(path=tmp / "dock19.json")
+
+    class FakeWin:
+        def __init__(self):
+            self.calls = 0
+
+        def apply_dock_settings(self):
+            self.calls += 1
+
+    fw = FakeWin()
+    try:
+        dlg = settings_dialog.SettingsDialog(fw, st19, None)
+    except Exception as exc:      # noqa: BLE001
+        check("D19 设置窗可构造", False, repr(exc))
+        dlg = None
+    if dlg is not None:
+        check("D19 含独立 Dock 分页", "dock" in dlg._pages, str(list(dlg._pages)))
+        check("D19 Dock 分页控件齐全",
+              all(hasattr(dlg, n) for n in
+                  ("chk_dock", "cmb_dock_pos", "sp_dock_icon", "sld_dock_alpha",
+                   "cmb_dock_radius", "chk_dock_hover", "chk_dock_dot")),
+              "missing")
+        before = fw.calls
+        dlg.sp_dock_icon.setValue(44)
+        check("D19 图标大小写设置", st19.get_setting("dock_icon") == 44,
+              "%s" % st19.get_setting("dock_icon"))
+        check("D19 触发窗口重排（apply_dock_settings）", fw.calls > before,
+              "calls=%d" % fw.calls)
+        dlg.sld_dock_alpha.setValue(60)
+        check("D19 不透明度写设置",
+              abs(float(st19.get_setting("dock_alpha")) - 0.6) < 1e-6,
+              "%s" % st19.get_setting("dock_alpha"))
+        idx = dlg.cmb_dock_radius.findData("square")
+        dlg.cmb_dock_radius.setCurrentIndex(idx)
+        check("D19 圆角形态写设置",
+              st19.get_setting("dock_radius_mode") == "square",
+              "%s" % st19.get_setting("dock_radius_mode"))
+        dlg.chk_dock_hover.setChecked(False)
+        check("D19 hover 开关写设置", st19.get_setting("dock_hover") is False)
+        dlg.chk_dock.setChecked(False)
+        check("D19 关掉开关后子控件禁用",
+              not dlg.sp_dock_icon.isEnabled() and not dlg.cmb_dock_pos.isEnabled())
+        dlg.deleteLater()
+
 
     print("")
     if failures:

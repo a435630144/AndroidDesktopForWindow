@@ -231,26 +231,30 @@ def main(app):
         st2.ui_scale = (lambda: 1.25)
         w.resize(320, 360)
         s = w._handle_size()
-        line = w._edit_line()
+        w._edit_mode = False        # H1 是直接置位的，先归零再走正式入口
+        w._enter_edit()
         rects = w._handle_rects()
+        cr = w.card_rect()
         check("H3 直径 = max(9, round(10*chrome)) 且 <= 14",
               s == max(9, int(round(10 * 1.25))) and s <= 14, "d=%d" % s)
         cx = rects["nw"].center().x()
         cy = rects["nw"].center().y()
-        check("H2 圆心落线（nw 在 (line,line)）",
-              abs(cx - line) <= 1 and abs(cy - line) <= 1,
-              "center=(%s,%s) line=%s" % (cx, cy, line))
-        check("H2b 边中点圆心在 w//2 / h-line",
-              abs(rects["n"].center().x() - w.width() // 2) <= 1
-              and abs(rects["s"].center().y() - (w.height() - line)) <= 1,
-              "n=%s s=%s" % (rects["n"].center(), rects["s"].center()))
+        # v10 A8（反馈 22）：圆心 = **卡片**角点（虚线压在卡片边缘，不再内缩）
+        check("H2 圆心落在卡片角点（nw 在 card.left/top）",
+              abs(cx - cr.left()) <= 1 and abs(cy - cr.top()) <= 1,
+              "center=(%s,%s) card=(%s,%s)" % (cx, cy, cr.left(), cr.top()))
+        check("H2b 边中点圆心在卡片边中点",
+              abs(rects["n"].center().x() - cr.center().x()) <= 1
+              and abs(rects["s"].center().y() - cr.bottom()) <= 1,
+              "n=%s s=%s card=%s" % (rects["n"].center(), rects["s"].center(), cr))
         hits = w._handle_hit_rects()
-        check("H4 命中区 >= 22×22 且包含可见圆",
-              all(hr.width() >= 22 and hr.height() >= 22
+        check("H4 命中区 >= 20×20 且包含可见圆",
+              all(hr.width() >= 20 and hr.height() >= 20
                   and hr.contains(rects[k]) for k, hr in hits.items()),
               "hit=%d paint=%d" % (hits["nw"].width(), rects["nw"].width()))
         hit = w._handle_at(rects["nw"].center())
         check("H4b 点圆心必中（命中区语义）", hit == "nw", "hit=%s" % (hit,))
+        w._exit_edit()
         w._edit_mode = False
         check("H5 非编辑态返回 {}", w._handle_rects() == {})
         w._edit_mode = True

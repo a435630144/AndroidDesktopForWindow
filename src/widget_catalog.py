@@ -44,14 +44,14 @@ def default_span(wtype: str) -> Optional[Span]:
 
 
 def pixel_size(storage, wtype: str, span: Optional[Span] = None) -> Optional[Span]:
-    """span 对应的像素尺寸 = span × cell_size（精确推导，无 round）。
+    """span 对应的**卡片**像素尺寸（v10 A8：格盒 × 填充比例，精确推导）。
 
     span 缺省用 default_span；未登记类型返回 None。
+    注意这不是"占位尺寸"——占位/碰撞永远按整格（`widget_geom.span_box`）。
     """
     if span is None:
         span = default_span(wtype)
     if span is None:
         return None
-    from . import grid_flow  # 延迟导入，打破 grid_flow <-> widget_catalog 循环
-    cw, ch = grid_flow.cell_size(storage)
-    return int(span[0]) * cw, int(span[1]) * ch
+    from . import widget_geom  # 延迟导入，打破 grid_flow <-> widget_catalog 循环
+    return widget_geom.card_size(storage, span)

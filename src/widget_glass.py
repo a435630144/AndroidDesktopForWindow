@@ -185,7 +185,9 @@ class GlassWidget(FloatingWidget):
 
     def _paint_surface(self, p):
         st = self.style
-        paint_glass(p, QRectF(self.rect()), st.radius,
+        # v10 A8：玻璃画在**卡片**矩形上——编辑态窗口外扩了一圈，玻璃
+        # 必须留在卡片位置，外扩区只保留 alpha=2 的命中填充。
+        paint_glass(p, QRectF(self.card_rect()), st.radius,
                     tint_alpha=st.tint_alpha, tint_color=st.bg)
 
     def paint_content(self, p):

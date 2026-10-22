@@ -134,16 +134,18 @@ def part_a(app):
     # ---------- S1：构造后是 no-op ----------
     check("S1 构造后跨度仍为 2×2", grid_flow.widget_span(st, w.entry) == (2, 2),
           "%s" % (grid_flow.widget_span(st, w.entry),))
-    check("S1 视觉尺寸 = span × cell",
-          (w.width(), w.height()) == (2 * cw, 2 * ch),
-          "%dx%d want %dx%d" % (w.width(), w.height(), 2 * cw, 2 * ch))
+    from src import widget_geom
+    check("S1 视觉尺寸 = 卡片尺寸（span × cell × fill）",
+          (w.width(), w.height()) == widget_geom.card_size(st, (2, 2)),
+          "%dx%d want %s" % (w.width(), w.height(),
+                             widget_geom.card_size(st, (2, 2))))
     before = dict(w.entry)
     w._sync_span_from_geometry()
     check("S1 尺寸一致时同步不改 entry",
           {k: v for k, v in w.entry.items() if k in before} == before)
 
     # ---------- S2：像素尺寸改了但没走占位写入（用户场景） ----------
-    w.resize(4 * cw, 1 * ch)          # 只改视觉，不动 entry 的 span
+    w.resize(*widget_geom.card_size(st, (4, 1)))   # 只改视觉，不动 entry 的 span
     span = grid_flow.widget_span(st, w.entry)
     check("S2 改像素尺寸后跨度同步为 4×1", span == (4, 1), "span=%s" % (span,))
     check("S2 entry 的 colspan/rowspan 已落盘",
@@ -164,7 +166,9 @@ def part_a(app):
     check("S9 跨度已对齐时同步返回 False", w._sync_span_from_geometry() is False)
 
     # ---------- S6：半格噪声不抖动 ----------
-    w.resize(4 * cw + cw // 2 - 4, ch)
+    # v10 A8：卡片步长是 cell×fill（默认 0.9），"半卡噪声"必须按卡片步长算
+    _cw4 = widget_geom.card_size(st, (4, 1))[0]
+    w.resize(_cw4 - 4, widget_geom.card_size(st, (4, 1))[1])
     check("S6 半格内的尺寸噪声不改跨度",
           grid_flow.widget_span(st, w.entry) == (4, 1),
           "w=%d span=%s" % (w.width(), grid_flow.widget_span(st, w.entry)))
@@ -179,9 +183,11 @@ def part_a(app):
     drag_handle(w, "se", 2, -1)
     span = grid_flow.widget_span(st, w.entry)
     check("S5 se 角点同时改宽高（2×2 → 4×1）", span == (4, 1), "span=%s" % (span,))
-    check("S5 视觉尺寸与跨度一致",
-          (w.width(), w.height()) == (4 * cw, 1 * ch),
-          "%dx%d want %dx%d" % (w.width(), w.height(), 4 * cw, 1 * ch))
+    check("S5 视觉尺寸（卡片区）与跨度一致",
+          (w.card_rect().width(), w.card_rect().height())
+          == widget_geom.card_size(st, (4, 1)),
+          "%dx%d want %s" % (w.card_rect().width(), w.card_rect().height(),
+                             widget_geom.card_size(st, (4, 1))))
     w._exit_edit()
 
     # ---------- S8：悬浮组件跳过 ----------

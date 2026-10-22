@@ -339,7 +339,7 @@ class MonitorWidget(GlassWidget):
 
     # ---------- 绘制 ----------
     def paint_content(self, p: QPainter):
-        draw(p, QRectF(self.rect()), self._snap, self._smooth, style=self.style)
+        draw(p, QRectF(self.card_rect()), self._snap, self._smooth, style=self.style)
 
     def on_settings_changed(self):
         super().on_settings_changed()   # 清样式缓存 + 重绘

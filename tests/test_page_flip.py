@@ -310,9 +310,12 @@ def main():
           str(grid_flow.page_offset(st10, 1)))
     check("F10 静止态瞬移为 0", grid_flow.flip_px(st10, 1) == (0, 0),
           str(grid_flow.flip_px(st10, 1)))
-    check("F10 组件与图标坐标一致（同一 cell）",
+    from src import widget_geom
+    check("F10 组件与图标同源（卡片位 = 格点 + 居中留缝）",
           grid_flow.widget_pos(st10, ent)
-          == grid_flow.cell_pos(st10, 0, 0), "widget_pos vs cell_pos")
+          == widget_geom.card_pos(st10, 0, 0,
+                                  grid_flow.widget_span(st10, ent)),
+          "widget_pos=%s" % (grid_flow.widget_pos(st10, ent),))
     w10.close()
 
     print("")

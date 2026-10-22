@@ -20,6 +20,7 @@ from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPen, QPolygonF
 from ... import theme
 from ...widget_style import DEFAULT_STYLE, Style
 from . import weather_api as wa
+from . import source as wsource
 from ...widget_glass import PAD, GlassWidget
 
 WIDE_RATIO = 1.6
@@ -227,28 +228,32 @@ def draw(p: QPainter, rect, model: Optional[wa.WeatherModel], state: str = "live
 # ---------------------------------------------------------------- 组件
 
 class WeatherWidget(GlassWidget):
-    TYPE = "weather"
-    AUTO_REFRESH_MS = 1500              # 首刷延迟：先把界面画出来（测试可置 0 关闭）
-    REFRESH_PERIOD_MS = 30 * 60 * 1000  # 之后每 30 分钟
+    """天气组件：**只负责画**共享天气源里的那份数据（v10 A9 反馈 9）。
 
-    _result = Signal(object, str)       # (model, state) —— 跨线程回主线程
+    取数、缓存、城市、联网开关全部在 `weather/source.py`——桌面面板里的
+    天气卡订阅同一个源，于是"两个天气框显示两个温度"在结构上不可能发生。
+    """
+
+    TYPE = "weather"
+    AUTO_REFRESH_MS = 1500              # 首刷延迟：先把界面画出来（测试可置 0）
+    REFRESH_PERIOD_MS = wsource.REFRESH_PERIOD_MS
 
     def __init__(self, storage, entry):
         super().__init__(storage, entry)
-        self._model: Optional[wa.WeatherModel] = None
-        self._state = "empty"
-        self._busy = False
-        self._result.connect(self._on_result)
-        # 先用缓存点亮：不等网络，打开桌面立刻有东西看
-        cached = wa.cache_to_model(wa.load_cache())
-        if cached is not None:
-            self._model, self._state = cached, "cached"
-        self._timer = QTimer(self)
-        self._timer.setInterval(self.REFRESH_PERIOD_MS)
-        self._timer.timeout.connect(self.refresh)
-        self._timer.start()
+        self._src = wsource.shared(storage)
+        self._model: Optional[wa.WeatherModel] = self._src.model()
+        self._state = self._src.state()
+        self._src.subscribe(self._sync_source)
+        self._adopt_city()
         if self.AUTO_REFRESH_MS:
             QTimer.singleShot(self.AUTO_REFRESH_MS, self.refresh)
+
+    # ---------- 城市迁移 ----------
+    def _adopt_city(self):
+        """把旧版写在组件设置里的城市并入全局设置（只补缺，不覆盖用户）。"""
+        own = str((self.entry.get("settings") or {}).get("city") or "").strip()
+        if own and not self._src.city():
+            self._src.set_city(own, refresh=False)
 
     # ---------- 取数 ----------
     def _settings(self) -> Dict:
@@ -256,44 +261,36 @@ class WeatherWidget(GlassWidget):
 
     def refresh(self):
         """发起一次刷新（立即返回，UI 不等网络）。"""
-        if self._busy:
-            return
         city = str(self._settings().get("city") or "").strip()
-        online = bool(self._settings().get("online", True))
-        if not city and self._model is None:
-            self._state = "empty"
-            self.update()
-            return
-        self._busy = True
-        threading.Thread(target=self._work, args=(city, online), daemon=True).start()
+        if city and city != self._src.city():
+            self._src.set_city(city, refresh=False)
+        self._src.refresh()
 
-    def _work(self, city: str, online: bool):
-        try:
-            state, model = wa.fetch_sync(city, online)
-        except Exception:      # noqa: BLE001  —— 后台线程绝不能把异常抛给 Qt
-            state, model = "cached", None
-        self._result.emit(model, state)
-
-    def _on_result(self, model, state: str):
-        self._busy = False
-        if model is not None:
-            self._model = model
-            self._state = state
-        else:
-            self._state = "cached" if self._model is not None else "empty"
+    def _sync_source(self):
+        """共享源变了：同步本地镜像并重画（订阅会跨线程排队回主线程）。"""
+        self._model = self._src.model()
+        self._state = self._src.state()
         self.update()
 
     # ---------- 绘制 ----------
     def paint_content(self, p: QPainter):
-        draw(p, QRectF(self.rect()), self._model, self._state, style=self.style)
+        draw(p, QRectF(self.card_rect()), self._model, self._state,
+             style=self.style)
 
     def on_settings_changed(self):
-        # 改城市 / 开关联网后立刻重取（关掉联网时走缓存分支）
-        super().on_settings_changed()   # 清样式缓存（颜色可能也改了）
+        # 改城市 / 开关联网后立刻重取（关掉联网时走缓存分支）。
+        # city / online 是**全局**设置的代理：面板天气卡与这个组件共用一份。
+        super().on_settings_changed()
+        st = self._settings()
+        if "city" in st:
+            self._src.set_city(str(st.get("city") or ""), refresh=False)
+        if "online" in st:
+            self._src.set_online(bool(st.get("online", True)), refresh=False)
         self.refresh()
 
     def closeEvent(self, e):
-        timer = getattr(self, "_timer", None)
-        if timer is not None:
-            timer.stop()
+        try:
+            self._src.unsubscribe(self._sync_source)
+        except RuntimeError:
+            pass
         super().closeEvent(e)

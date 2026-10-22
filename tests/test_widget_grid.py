@@ -92,12 +92,15 @@ def main(app):
         # ---------- P1：便签 2×2 ----------
         check("P1 便签 entry span = 2×2",
               (st.widgets[0].get("colspan"), st.widgets[0].get("rowspan")) == (2, 2))
-        check("P1 便签尺寸 = 2×2 cell（视觉 = 占位）",
-              (note.width(), note.height()) == (2 * cw, 2 * ch),
-              "got=%s want=%s" % ((note.width(), note.height()), (2 * cw, 2 * ch)))
+        from src import widget_geom
+        _want1 = widget_geom.card_size(st, (2, 2))
+        check("P1 便签尺寸 = 卡片尺寸（2×2 格 × fill）",
+              (note.width(), note.height()) == _want1,
+              "got=%s want=%s" % ((note.width(), note.height()), _want1))
         nc, nr = int(st.widgets[0]["col"]), int(st.widgets[0]["row"])
-        check("P1 便签位置 = cell_pos(col,row)",
-              (note.pos().x(), note.pos().y()) == grid_flow.cell_pos(st, nc, nr),
+        check("P1 便签位置 = card_pos(col,row)",
+              (note.pos().x(), note.pos().y())
+              == widget_geom.card_pos(st, nc, nr, (2, 2)),
               "pos=%s" % (note.pos(),))
         check("P1b 首个组件落 (0,0)（未定位组件不产生幻影占位）",
               (nc, nr) == (0, 0), "cell=%s" % ((nc, nr),))
@@ -108,12 +111,14 @@ def main(app):
         # ---------- P2：面板 3×4 ----------
         check("P2 面板 entry span = 3×4",
               (st.widgets[1].get("colspan"), st.widgets[1].get("rowspan")) == (3, 4))
-        check("P2 面板尺寸 = 3×4 cell（旧 340×460 最小值不挡 span）",
-              (panel.width(), panel.height()) == (3 * cw, 4 * ch),
-              "got=%s want=%s" % ((panel.width(), panel.height()), (3 * cw, 4 * ch)))
+        _want2 = widget_geom.card_size(st, (3, 4))
+        check("P2 面板尺寸 = 卡片尺寸（3×4 格 × fill）",
+              (panel.width(), panel.height()) == _want2,
+              "got=%s want=%s" % ((panel.width(), panel.height()), _want2))
         pc, pr = int(st.widgets[1]["col"]), int(st.widgets[1]["row"])
-        check("P2 面板位置 = cell_pos(col,row)",
-              (panel.pos().x(), panel.pos().y()) == grid_flow.cell_pos(st, pc, pr),
+        check("P2 面板位置 = card_pos(col,row)",
+              (panel.pos().x(), panel.pos().y())
+              == widget_geom.card_pos(st, pc, pr, (3, 4)),
               "pos=%s" % (panel.pos(),))
         check("P2b 面板紧随便签右侧 (2,0)（幻影不把自己推去远处）",
               (pc, pr) == (2, 0), "cell=%s" % ((pc, pr),))

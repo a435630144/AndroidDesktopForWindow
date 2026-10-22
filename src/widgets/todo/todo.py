@@ -251,7 +251,7 @@ class TodoWidget(GlassWidget):
 
     # ---------- 排版 ----------
     def _relayout(self):
-        self.edit.setGeometry(layout(QRectF(self.rect()))["input"].toRect())
+        self.edit.setGeometry(layout(QRectF(self.card_rect()))["input"].toRect())
         self._clamp_scroll()
 
     def resizeEvent(self, e):
@@ -267,7 +267,7 @@ class TodoWidget(GlassWidget):
 
     # ---------- 数据 ----------
     def _clamp_scroll(self):
-        visible = layout(QRectF(self.rect()))["visible"]
+        visible = layout(QRectF(self.card_rect()))["visible"]
         self._scroll = max(0, min(self._scroll, max(0, len(self.items()) - visible)))
 
     def items(self) -> List[Dict]:
@@ -289,7 +289,7 @@ class TodoWidget(GlassWidget):
 
     # ---------- 交互 ----------
     def _hit_row(self, pos) -> Optional[int]:
-        L = layout(QRectF(self.rect()))
+        L = layout(QRectF(self.card_rect()))
         for vi in range(L["visible"]):
             if vi + self._scroll >= len(self.items()):
                 break
@@ -315,7 +315,7 @@ class TodoWidget(GlassWidget):
             vi = self._hit_row(e.position())
             if vi is not None:
                 idx = self._scroll + vi
-                L = layout(QRectF(self.rect()))
+                L = layout(QRectF(self.card_rect()))
                 rr = row_rect(L["list"], vi)
                 if check_rect(rr).contains(e.position()):
                     self._set_items(toggle_item(self.items(), self.items()[idx]["id"]))
@@ -339,7 +339,7 @@ class TodoWidget(GlassWidget):
 
     # ---------- 绘制 ----------
     def paint_content(self, p: QPainter):
-        draw(p, QRectF(self.rect()), self.items(), self._scroll, self._hover,
+        draw(p, QRectF(self.card_rect()), self.items(), self._scroll, self._hover,
              show_input=False, style=self.style)
 
     def on_settings_changed(self):

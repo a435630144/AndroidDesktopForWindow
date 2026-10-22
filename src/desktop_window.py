@@ -1067,14 +1067,25 @@ class DesktopWindow(QWidget):
         self.refresh_grid()
 
     def apply_dock_settings(self):
-        """Dock 开关 / 位置 / 图标缩放过变化：重排条带 + 重算网格。
+        """Dock 开关 / 位置 / 外观过变化：重排条带 + 重算网格。
 
         唯一入口（设置页只调它）：先让 Dock 自己落位（它读 storage 的
-        enabled/position），再 `refresh_grid()` 用新的 inset 重算几何。
+        enabled/position/外观），再 `refresh_grid()` 用新的 inset 重算几何。
         顺序不能反——先 refresh 会拿到旧条带厚度。
+
+        2026-10-23 反馈 6（v10 A9）：位置切换"没生效"的根因是**分层窗口
+        只改了 Qt 侧几何**——Dock 在桌面带里的 z-order 由 win32 维护，
+        切到顶部/左右侧后窗口可能仍被旧位置的层序关系影响（Qt 的
+        setGeometry 与 SetWindowPos 交替后偶发回退）。这里补一次
+        `refresh_band()`：重新挂到桌面带并让层序归位，位置与层级一起刷新。
         """
         if self._dock is not None:
-            self._dock.apply_geometry((self.width(), self.height()))
+            try:
+                self._dock.apply_geometry((self.width(), self.height()))
+                self._dock.refresh_band()
+            except (RuntimeError, AttributeError):
+                # 窗口已被销毁（退出路径）——别让设置收尾炸掉整个程序
+                self._dock = None
         self.refresh_grid()
 
     def _dock_hit(self, pos) -> bool:

@@ -97,7 +97,7 @@ class NotesWidget(GlassWidget):
 
     def paint_content(self, p):
         st = self.style
-        r = QRectF(self.rect())
+        r = QRectF(self.card_rect())
         p.setPen(QColor(st.faint))
         p.setFont(theme.ui_font(12))
         p.drawText(QRectF(r.left() + PAD, r.top() + PAD - 4,

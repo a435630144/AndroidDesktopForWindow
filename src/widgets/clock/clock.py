@@ -133,7 +133,7 @@ class ClockWidget(GlassWidget):
         self.update()
 
     def paint_content(self, p):
-        draw(p, QRectF(self.rect()), self._model, self.style)
+        draw(p, QRectF(self.card_rect()), self._model, self.style)
 
     def on_resized(self):
         """尺寸变化（span 切换 / DPI 变化）：字号是比例算的，重绘即可。"""

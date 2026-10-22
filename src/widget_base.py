@@ -19,19 +19,21 @@
     手势全程连续"的桌面版），松手弹簧淡回 1.0
   - 锚定吸附：松手后弹簧滑到网格格点（grid_flow.snap_point）
 """
-from PySide6.QtCore import QEasingCurve, QPoint, QPointF, QPropertyAnimation, QRect, Qt, Signal
+from PySide6.QtCore import (QEasingCurve, QPoint, QPointF, QPropertyAnimation,
+                            QRect, QRectF, Qt, Signal)
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from . import effects
 from . import grid_flow
 from . import theme
+from . import widget_geom
 from . import win32_layer
 from .win32_layer import attach_to_desktop
 
-# 编辑态控制点直径基准（逻辑像素，v7 B5 反馈 20）。
-# 旧基准 14 偏大（18px @125%），iOS/安卓编辑框手柄在 10~12。
-HANDLE_D_REF = 10
+# 编辑态控制点直径基准：唯一来源搬到 `widget_geom`（点径 / 外扩 / 虚线
+# 位置三件事必须同一份数据推导，旧实现分散在三个方法里各 +1/+2）。
+HANDLE_D_REF = widget_geom.HANDLE_D_REF
 
 
 class FloatingWidget(QWidget):
@@ -64,14 +66,21 @@ class FloatingWidget(QWidget):
         self._anims = []      # 持有透明度动画引用，防 GC
         self._closing = False  # 退场动画防重入
         self._snapping = False  # 吸附动画中：不再响应拖动
+        # 编辑态窗口外扩（v10 A8，反馈 22）：进入编辑时窗口比卡片大一圈，
+        # 手柄圆心才能压在卡片边缘上且整圆可见。外扩/收回会改 geometry，
+        # 期间必须挂起"尺寸 -> 跨度"的反推（见 resizeEvent）。
+        self._chrome_suspend = False
+        self._margins_base = None   # 布局内边距原值（编辑态在其上叠加外扩）
         # 注意：不能用 WindowStaysOnTopHint，否则会盖在所有应用程序窗口之上；
         # 正确做法是挂载到桌面带（Progman 正上方），与整理窗口处于同一层级。
         flags = Qt.FramelessWindowHint | Qt.Tool
-        if not interactive or self.anchored:
+        if not self.interactive:
             # WindowDoesNotAcceptFocus(WS_EX_NOACTIVATE)：永不被激活，
             # 因此永远不会抢到应用窗口前面（"时钟组件被置顶"Bug 的根治）。
-            # 纯展示型组件与锚定组件一律用它；锚定组件即便内容可交互
-            # （如便签）也不抢焦点——它是桌面的一部分，不是窗口。
+            # 纯展示型组件一律用它。v10 A9（反馈 3）：**可交互组件（便签/
+            # 待办）即便是锚定形态也不加**——旧实现连 anchored 一起加，
+            # 于是"网格模式下的便签"根本打不了字，只能被迫悬浮；而新组件
+            # 默认跟随网格模式后，这条限制会让便签一加上就不可用。
             flags |= Qt.WindowDoesNotAcceptFocus
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -106,8 +115,12 @@ class FloatingWidget(QWidget):
 
     # ---------- 跨度尺寸（M3） ----------
     def _anchored_pixel_size(self):
-        """锚定且跨度已知（saved colspan 或 catalog）时的像素尺寸；
+        """锚定且跨度已知（saved colspan 或 catalog）时的**卡片**像素尺寸；
         否则返回 (None, None)——调用方回退 entry 的 w/h。
+
+        v10 A8（反馈 21）：尺寸 = 格盒 × `widget_fill`（默认 90%），
+        不再填满整格——填满会让并排的两个组件边缘贴死（视觉上连成一块）。
+        静止态窗口 == 卡片，所以这里返回的也是窗口尺寸。
 
         v6 §1.3：无界模式返回 (None, None)——组件尺寸 = 用户像素值
         （entry 的 w/h，可拖手柄改），不走 span × cell 派生。
@@ -121,8 +134,48 @@ class FloatingWidget(QWidget):
         if not self.entry.get("colspan") and widget_catalog.default_span(wtype) is None:
             return None, None    # 未登记类型：legacy 像素尺寸，不强行推导
         span = grid_flow.widget_span(self.storage, self.entry)
-        cw, ch = grid_flow.cell_size(self.storage)
-        return span[0] * cw, span[1] * ch
+        return widget_geom.card_size(self.storage, span)
+
+    # ---------- 卡片 / 窗口矩形（v10 A8） ----------
+    def _chrome_pad(self) -> int:
+        """编辑态窗口相对卡片的外扩量；非编辑态 0。
+
+        只在编辑态外扩是刻意的：静止态的窗口必须严格等于卡片，否则相邻
+        组件的透明外扩区会互相重叠、抢走邻居边缘的点击（另一种盲区）。
+        """
+        if not (self._edit_mode and self.anchored):
+            return 0
+        if grid_flow.free_mode(self.storage):
+            return 0
+        return widget_geom.pad(self.storage)
+
+    def card_rect(self) -> QRect:
+        """卡片矩形（窗口内坐标）——玻璃底、内容、编辑虚线都用它。
+
+        锚定组件静止态 `card_rect() == rect()`；编辑态窗口外扩了 pad，
+        卡片仍停在原地，于是虚线正好压在卡片边缘、手柄圆心也落在卡片
+        边缘上（一半在 pad 区，整圆可见）。
+        """
+        p = self._chrome_pad()
+        if p <= 0:
+            return self.rect()
+        return self.rect().adjusted(p, p, -p, -p)
+
+    def _sync_chrome_layout(self):
+        """编辑态把布局内边距叠加 pad（子控件型组件的内容跟着卡片缩进）。
+
+        基准内边距在**第一次**调用时缓存——此时组件已 `_build()` 完，
+        layout 的 margins 就是作者写的值，之后只在它上面叠加，不会累加。
+        """
+        lay = self.layout()
+        if lay is None:
+            return
+        if self._margins_base is None:
+            m = lay.contentsMargins()
+            self._margins_base = (m.left(), m.top(), m.right(), m.bottom())
+        b = self._margins_base
+        p = self._chrome_pad()
+        lay.setContentsMargins(b[0] + p, b[1] + p, b[2] + p, b[3] + p)
 
     def _set_span(self, cs: int, rs: int):
         """右键「组件尺寸」切换跨度：写 entry → 原地 resize → 重算占位。
@@ -142,14 +195,13 @@ class FloatingWidget(QWidget):
             return
         if grid_flow.free_mode(self.storage):
             return
-        cw, ch = grid_flow.cell_size(self.storage)
-        self.resize(cs * cw, rs * ch)
-        self.entry["w"], self.entry["h"] = cs * cw, rs * ch
+        self.entry["w"], self.entry["h"] = widget_geom.card_size(
+            self.storage, (cs, rs))
         col, row = grid_flow.pos_cell(self.storage, self.x(), self.y())
         col, row = grid_flow.clamp_widget_cell(self.storage, col, row, cs, rs)
         col, row = grid_flow.resolve_widget_cell(
             self.storage, col, row, cs, rs, exclude_id=self.entry.get("id"))
-        self.move(*grid_flow.cell_pos(self.storage, col, row))
+        self._place_card(col, row, (cs, rs))
         self._save_geom()
         # 不能预写 entry["colspan"] 再调 _sync_grid_occupancy——那会让
         # 后者的变化检测失效（span 已写，changed=False，gridChanged 不发，
@@ -251,21 +303,23 @@ class FloatingWidget(QWidget):
         self.storage.save()
 
     def _span_from_geometry(self):
-        """按当前像素尺寸反推跨度（网格模式下的"碰撞形状"）。"""
+        """按当前**卡片**像素尺寸反推跨度（网格模式下的"碰撞形状"）。
+
+        v10 A8：反推必须走 `widget_geom.span_from_pixels`（它按
+        `cell × fill` 折算）——旧的 `w / cell` 在填充比例 0.9 下会把
+        3 格宽的卡片算成 2 格（碰撞形状比视觉小一格）。
+        """
+        card = self.card_rect()
         try:
-            cw, ch = grid_flow.cell_size(self.storage)
-        except Exception:
+            return widget_geom.span_from_pixels(self.storage,
+                                                card.width(), card.height())
+        except Exception:      # noqa: BLE001 —— 几何快照未就绪时放弃反推
             return None
-        if cw <= 0 or ch <= 0:
-            return None
-        cs = max(1, int(round(self.width() / float(cw))))
-        rs = max(1, int(round(self.height() / float(ch))))
-        return cs, rs
 
     def _sync_span_from_geometry(self):
         """视觉尺寸 ↔ entry 跨度对齐；不一致时以**视觉**为准写回。
 
-        幂等：尺寸本来就是 span×cell 时什么也不做（正常拖动落定走这里
+        幂等：尺寸本来就是 span×card 时什么也不做（正常拖动落定走这里
         不会产生额外写入，也不会误发 gridChanged）。
 
         跳过条件：
@@ -273,7 +327,7 @@ class FloatingWidget(QWidget):
           - 无界模式（没有格跨度概念，尺寸就是像素）；
           - entry 还没有 col/row（spawn 中，WidgetLayer 还没分配格位——
             此时写占位会和它的 find_widget_slot 抢 (0,0)）；
-          - 像素尺寸与跨度的乘积差不到半格（避免 DPI 取整噪声抖动）。
+          - 像素尺寸与跨度的乘积差不到半卡（避免 DPI 取整噪声抖动）。
         """
         if not self.anchored:
             return False
@@ -285,10 +339,13 @@ class FloatingWidget(QWidget):
         if got is None:
             return False
         cs, rs = got
-        cw, ch = grid_flow.cell_size(self.storage)
-        # 半格容差：|w - cs*cw| < cw/2 时不算"尺寸变了"
-        if abs(self.width() - cs * cw) > cw // 2 or \
-                abs(self.height() - rs * ch) > ch // 2:
+        # 半卡容差：v10 A8 起"一格"是 cell×fill（卡片步长），不是 cell
+        want_w, want_h = widget_geom.card_size(self.storage, (cs, rs))
+        card = self.card_rect()
+        tol_x = max(6, int(want_w * 0.5 / max(1, cs)))
+        tol_y = max(6, int(want_h * 0.5 / max(1, rs)))
+        if abs(card.width() - want_w) > tol_x or \
+                abs(card.height() - want_h) > tol_y:
             return False
         cur = grid_flow.widget_span(self.storage, self.entry)
         if (cs, rs) == cur:
@@ -341,43 +398,43 @@ class FloatingWidget(QWidget):
         """控制点直径（视觉尺寸，随**用户缩放**；dpr 由 Qt 承担一次）。
 
         2026-10-21 反馈 20（v7e / v7 B5）：基准 14 → 10（iOS/安卓编辑框
-        手柄在 10~12 逻辑像素），本机 125% 下逻辑 10 / 物理 13px（旧 18）。
-        旧值偏大且圆心贴边被裁，两个毛病叠在一起才显得"像碎块"。
+        手柄在 10~12 逻辑像素），本机 125% 下逻辑 13。
+        v10 A8：基准搬到 `widget_geom`——点径 / 外扩 / 命中区由同一份推导。
         """
         try:
-            m = self.storage.ui_scale()
-        except Exception:
-            m = 1.0
-        return max(9, int(round(HANDLE_D_REF * float(m))))
+            return widget_geom.handle_size(self.storage)
+        except Exception:      # noqa: BLE001 —— 快照未就绪时回退基准
+            return max(9, HANDLE_D_REF)
 
     def _edit_line(self):
-        """编辑虚线框（与圆点圆心）距部件边缘的距离。
+        """编辑虚线距**卡片**边缘的距离。
 
-        由点径推导：`line = max(3, s//2 + 1)`——圆心距边 ≥ 半径 + 1，
-        任何 DPI 下圆点都**完整落在部件矩形内**（旧实现固定内缩 2px，
-        圆心压在 2px 处，18px 的点有一半在窗外被裁掉）。
+        v10 A8（反馈 22）：恒为 0 —— 虚线就画在卡片边缘上（用户原话
+        "虚线应该刚好压在小组件的边缘上"）。旧实现内缩 `s//2+1`（约 6px），
+        看起来像在组件内部套了个框。
+
+        卡片矩形本身已经由 `card_rect()` 表达（编辑态窗口比卡片大 pad），
+        所以"距卡片边缘 0"在窗口坐标里等于 pad。
         """
-        return max(3, self._handle_size() // 2 + 1)
+        return 0
 
     def _handle_center(self, key) -> tuple:
-        """控制点圆心（部件内坐标）：恒等于虚线框的四角 / 四边中点。"""
-        line = self._edit_line()
-        w, h = self.width(), self.height()
-        left, top, right, bottom = line, line, w - line, h - line
+        """控制点圆心（窗口坐标）：恒等于**卡片矩形**的四角 / 四边中点。"""
+        r = self.card_rect()
+        left, top, right, bottom = r.left(), r.top(), r.right(), r.bottom()
+        cx, cy = r.center().x(), r.center().y()
         pts = {
-            "nw": (left, top), "n": (w // 2, top),
-            "ne": (right, top),
-            "w": (left, h // 2), "e": (right, h // 2),
-            "sw": (left, bottom), "s": (w // 2, bottom),
-            "se": (right, bottom),
+            "nw": (left, top), "n": (cx, top), "ne": (right, top),
+            "w": (left, cy), "e": (right, cy),
+            "sw": (left, bottom), "s": (cx, bottom), "se": (right, bottom),
         }
         return pts[key]
 
     def _handle_rects(self):
-        """八个控制点的**可见圆**矩形（部件内坐标）；非编辑态 / 无界返回 {}。
+        """八个控制点的**可见圆**矩形（窗口坐标）；非编辑态 / 无界返回 {}。
 
-        v7 B5 反馈 20：圆心 = 虚线框角点/边中点（`_edit_line()` 内缩），
-        边长 = 直径 s —— 整圆在部件内，不再被窗口边界裁成碎块。
+        v10 A8：圆心 = 卡片角点/边中点；编辑态窗口外扩了 `pad`，
+        所以整个圆都在窗口内（不会再被边界裁成碎块）。
         """
         if not self._edit_mode or not self.anchored:
             return {}
@@ -391,17 +448,18 @@ class FloatingWidget(QWidget):
         return out
 
     def _handle_hit_rects(self):
-        """控制点**命中区**：每点外扩到 ≥ 22×22（HIG 最小点击目标）。
+        """控制点**命中区**：每点外扩到 ≥ 20×20（HIG 最小点击目标）。
 
-        画得小、点得中——旧实现直接用 18px 可见矩形做命中，可见部分只有
-        右下角一小块弧，用户点在"看起来是圆"的位置经常不中。
+        画得小、点得中——旧实现直接用可见矩形做命中，点"看起来是圆"的
+        位置经常不中。v10 A8 起命中区也由 `widget_geom` 推导，且
+        `pad` 保证命中区基本落在窗口内。
         """
         s = self._handle_size()
-        side = max(22, s + 9)
+        side = max(widget_geom.HANDLE_HIT_MIN, s + 9)
         out = {}
         for k, r in self._handle_rects().items():
             c = r.center()
-            out[k] = QRect(int(c.x() - side / 2), int(c.y() - side / 2),
+            out[k] = QRect(int(c.x() - side // 2), int(c.y() - side // 2),
                            side, side)
         return out
 
@@ -412,12 +470,18 @@ class FloatingWidget(QWidget):
         return None
 
     def _enter_edit(self):
-        """进入编辑态（网格模式 + 锚定才有意义）。"""
+        """进入编辑态（网格模式 + 锚定才有意义）。
+
+        v10 A8（反馈 22）：进入时窗口向外扩 `pad`——虚线要压在卡片边缘、
+        圆点圆心也在边缘上（半个圆落在窗外不可见）。只有编辑态外扩，
+        静止态窗口严格等于卡片，相邻组件的透明区永不重叠。
+        """
         if not self.anchored or grid_flow.free_mode(self.storage):
             return False
         if self._edit_mode:
             return True
         self._edit_mode = True
+        self._resize_chrome(widget_geom.pad(self.storage))
         self.on_edit_mode(True)
         self.update()
         return True
@@ -425,11 +489,30 @@ class FloatingWidget(QWidget):
     def _exit_edit(self):
         if not self._edit_mode:
             return False
+        p = widget_geom.pad(self.storage)     # 先取（_edit_mode 还是 True）
         self._edit_mode = False
         self._rz_edge = None
+        self._resize_chrome(-p)
         self.on_edit_mode(False)
         self.update()
         return True
+
+    def _resize_chrome(self, delta: int):
+        """把窗口按 delta 向四边各外扩（正）/收回（负），卡片视觉位置不变。
+
+        期间 `_chrome_suspend` 挂起 `resizeEvent` 的跨度反推——外扩出来的
+        22px 不是用户改尺寸，不能被当成"跨度变了"写回 entry。
+        """
+        if delta:
+            self._chrome_suspend = True
+            try:
+                g = self.geometry()
+                self.setGeometry(g.x() - delta, g.y() - delta,
+                                 max(1, g.width() + delta * 2),
+                                 max(1, g.height() + delta * 2))
+            finally:
+                self._chrome_suspend = False
+        self._sync_chrome_layout()
 
     def on_edit_mode(self, on: bool):
         """编辑态钩子（子类按需让交互子控件让出鼠标，见 NotesWidget）。"""
@@ -487,10 +570,28 @@ class FloatingWidget(QWidget):
         if (cs, rs, col, row) == (self._rz_span0[0], self._rz_span0[1],
                                   self._rz_cell0[0], self._rz_cell0[1]):
             return
-        self.resize(cs * cw, rs * ch)
-        self.move(*grid_flow.cell_pos(self.storage, col, row))
-        self.entry["w"], self.entry["h"] = cs * cw, rs * ch
+        self.entry["w"], self.entry["h"] = widget_geom.card_size(
+            self.storage, (cs, rs))
+        self._place_card(col, row, (cs, rs))
         self._write_occupancy(col, row, cs, rs)
+
+    def _place_card(self, col: int, row: int, span):
+        """把窗口摆到格盒对应的卡片位置（编辑态自动带上外扩量）。
+
+        唯一的"格位 -> 窗口几何"落地处：`_set_span` / `_resize_step` /
+        吸附落定都走它。分开算 resize 与 move 的旧实现漏了填充比例，
+        加 fill 之后必然有一处忘改（旧坑 #86 的同类病）。
+        """
+        p = self._chrome_pad()
+        w, h = widget_geom.card_size(self.storage, span)
+        x, y = widget_geom.card_pos(self.storage, col, row, span)
+        self._chrome_suspend = True
+        try:
+            self.resize(w + p * 2, h + p * 2)
+            self.move(x - p, y - p)
+        finally:
+            self._chrome_suspend = False
+        self._sync_chrome_layout()
 
     # ---------- 绘制 ----------
     # ---------- 绘制钩子（v8 C2） ----------
@@ -499,17 +600,21 @@ class FloatingWidget(QWidget):
 
         玻璃组件（`widget_glass.GlassWidget`）覆盖这一个方法换质感，
         编辑框、关闭按钮、缩放手柄等 chrome 仍由基类统一绘制。
+
+        v10 A8：画在 `card_rect()` 上而不是整窗——编辑态窗口外扩了一圈，
+        玻璃必须留在卡片位置（外扩区要透出壁纸，只保留 alpha=2 的命中填充）。
         """
+        r = self.card_rect()
         if self.anchored:
             tint = QColor(theme.SURFACE)
             tint.setAlphaF(0.34)
             p.setBrush(tint)
             p.setPen(Qt.NoPen)
-            p.drawRoundedRect(self.rect(), theme.RADIUS_PANEL, theme.RADIUS_PANEL)
+            p.drawRoundedRect(r, theme.RADIUS_PANEL, theme.RADIUS_PANEL)
         else:
             p.setBrush(theme.SURFACE)
             p.setPen(theme.BORDER)
-            p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1),
+            p.drawRoundedRect(r.adjusted(1, 1, -1, -1),
                               theme.RADIUS_PANEL, theme.RADIUS_PANEL)
 
     def paint_content(self, p):
@@ -526,38 +631,40 @@ class FloatingWidget(QWidget):
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        # 命中填充（反馈 3：组件左侧 / 上方有"点了没反应"的盲区）：
-        # 分层窗口（WA_TranslucentBackground）里 alpha=0 的像素会被 Windows
-        # 在 WM_NCHITTEST **之前**整块跳过——点击既进不了组件，也会被桌面
-        # 窗口的 _hit_widget 当成"在组件上"而返回 HTTRANSPARENT，最终落到
-        # 已隐藏的原生桌面：什么都不发生。先铺一层 alpha=2 的极淡填充
-        # （肉眼不可见，2/255 ≈ 0.8%），整块组件矩形就都进了命中表，
-        # 任何位置的点击都按"组件"处理（拖动 / 右键），盲区消失。
-        if self.anchored:
-            p.fillRect(self.rect(), QColor(0, 0, 0, 2))
+        # 命中填充（反馈 3 / v10 A8 反馈 21）：分层窗口（WA_TranslucentBackground）
+        # 里 alpha=0 的像素会被 Windows 在 WM_NCHITTEST **之前**整块跳过——
+        # 点击既进不了组件，也会被桌面窗口的 _hit_widget 当成"在组件上"而返回
+        # HTTRANSPARENT，最终落到已隐藏的原生桌面：什么都不发生。
+        # 先铺一层 alpha=2 的极淡填充（肉眼不可见，2/255 ≈ 0.8%），整块窗口
+        # 就都进了命中表，任何位置的点击都按"组件"处理（拖动 / 右键）。
+        #
+        # **必须无条件填**：旧实现只在 `anchored` 分支里填，悬浮组件（无界
+        # 模式 / 便签 / 待办）的圆角外一圈仍是 alpha=0 —— 那就是用户说的
+        # "小组件周围又出现操作交互盲区"。编辑态窗口外扩的 pad 也要覆盖到，
+        # 否则外扩区的鼠标事件在到达控制点之前就被丢掉了。
+        p.fillRect(self.rect(), QColor(0, 0, 0, 2))
+        # 玻璃底 / 内容都画在**卡片矩形**上（v10 A8）：静止态卡片 == 窗口；
+        # 编辑态窗口外扩了 pad，卡片留在原地，于是虚线正好压在卡片边缘。
+        card = self.card_rect()
         if self.anchored:
             # 锚定（非悬浮）：只铺一层低透明度 tint，无描边、无 chrome。
-            # 卡片之外的像素保持全透明 -> 分层窗口的逐像素命中测试天然
-            # 把点击穿透给真实桌面（design.md 3.2「融入桌面」）。
+            # 卡片之外的像素保持近透明 -> 分层窗口的逐像素命中测试把
+            # 点击穿透给真实桌面（design.md 3.2「融入桌面」）。
             # v8 C2：底色抽成 `_paint_surface()` 钩子——玻璃组件覆盖它换质感，
-            # 编辑框 / 关闭按钮 / 缩放手柄这些"chrome"仍由基类统一画（一份代码，
-            # 所有组件共享同一套交互外观）。
+            # 编辑框 / 关闭按钮 / 缩放手柄这些"chrome"仍由基类统一画。
             self._paint_surface(p)
             if self._edit_mode:
                 # 编辑框：虚线圈 + 八点（安卓小组件编辑语言的桌面版）。
-                # 线色用 ACCENT，点用实心白 + 主色描边，保证深/浅壁纸都可辨。
-                # 2026-10-21 反馈 20（v7e / v5 B5）：虚线框与圆点**共用**
-                # `_edit_line()` 的圆心，圆点用 center+半径绘制——
-                # QRect.adjusted(1,1,-1,-1) 在奇偶直径下会偏心 0.5px，
-                # 正是"看起来不够圆"的第二层原因。
-                line = self._edit_line()
+                # 2026-10-23 反馈 22：虚线**压在卡片边缘上**（不再内缩），
+                # 圆点圆心也在卡片边缘、跟着虚线一起外移——半个圆落在
+                # 编辑态外扩的 pad 区里，所以整圆可见、可点。
                 pen = QPen(QColor(theme.ACCENT))
                 pen.setWidth(2)
                 pen.setStyle(Qt.DashLine)
                 p.setPen(pen)
                 p.setBrush(Qt.NoBrush)
-                r = self.rect().adjusted(line, line, -line, -line)
-                p.drawRoundedRect(r, theme.RADIUS_PANEL, theme.RADIUS_PANEL)
+                p.drawRoundedRect(QRectF(card).adjusted(1, 1, -1, -1),
+                                  theme.RADIUS_PANEL, theme.RADIUS_PANEL)
                 s = self._handle_size()
                 p.setPen(QPen(QColor(theme.ACCENT), 1.25))
                 p.setBrush(QColor(255, 255, 255, 242))
@@ -614,7 +721,9 @@ class FloatingWidget(QWidget):
         # 最近的可行格（安卓语义）。放在 clamp 之后：先保证不出页，再消冲突。
         col, row = grid_flow.resolve_widget_cell(
             self.storage, col, row, cs, rs, exclude_id=self.entry.get("id"))
-        tx, ty = grid_flow.cell_pos(self.storage, col, row)
+        # v10 A8：落点是**卡片**位置（格盒居中 + 编辑态外扩补偿）
+        tx, ty = widget_geom.window_pos(self.storage, col, row, (cs, rs),
+                                        editing=self._chrome_pad() > 0)
         if (tx, ty) == (self.x(), self.y()):
             # 已在格点上：没有吸附动画，_on_snapped 永远不会来——直接同步
             # 占位。否则「拖到格点上松手」时 entry col/row 不更新、
@@ -641,6 +750,10 @@ class FloatingWidget(QWidget):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
+        # 编辑态外扩 / 收回窗口不是用户改尺寸：整段跳过（否则 22px 的
+        # chrome 会被当成"跨度变了"写回 entry，退出编辑时组件跳一格）。
+        if self._chrome_suspend:
+            return
         self.on_resized()
         # 反馈 2：尺寸变了就把跨度/占位对上（`_resize_step` 已写过时这里
         # 是 no-op）。放在 resizeEvent 而不是只放 _save_geom，是因为松手
@@ -832,7 +945,14 @@ class FloatingWidget(QWidget):
         2026-10-19 用户反馈：网格模式下要有「编辑」——进入后四角四边出现
         控制点，拖点按格改大小（安卓小组件语义）。无界模式没有格跨度，
         不出现该项（改成像素拖右下角手柄，悬浮态本来就有）。
+
+        2026-10-23 反馈 4（v10 A9）：形态切换项的**名字**改成用户已经
+        在托盘/桌面右键里学会的「网格模式 / 无界模式」——旧文案
+        「切换为自由悬浮 / 锚定到桌面（融入壁纸）」描述的是实现（锚定=?)
+        而不是用户看到的状态，两个词根本没人能对上号。
+        菜单项统一走 i18n（v10 D3 遗留的最后一块界面文案）。
         """
+        from . import i18n
         menu = QMenu(self)
         menu.setStyleSheet(theme.MENU_QSS)
         # 子菜单是 Python 所有的 QMenu：不额外持引用会被 GC，弹出来一片空白
@@ -842,21 +962,21 @@ class FloatingWidget(QWidget):
             grid_mode = not grid_flow.free_mode(self.storage)
             if grid_mode:
                 if self._edit_mode:
-                    menu.addAction("完成编辑", self._exit_edit)
+                    menu.addAction(i18n.T("widget.menu.done_edit"), self._exit_edit)
                 else:
-                    menu.addAction("编辑", self._enter_edit)
+                    menu.addAction(i18n.T("widget.menu.edit"), self._enter_edit)
                 menu.addSeparator()
-            menu.addAction("切换为自由悬浮", self._toggle_anchored)
+            menu.addAction(i18n.T("widget.menu.to_free"), self._toggle_anchored)
             self._add_span_menu(menu)
         else:
-            menu.addAction("锚定到桌面（融入壁纸）", self._toggle_anchored)
+            menu.addAction(i18n.T("widget.menu.to_grid"), self._toggle_anchored)
         self._add_settings_action(menu)
         # v9 修复（2026-10-21 反馈）：旧菜单同时有「隐藏」和「关闭」，描述重复；
         # 且「关闭」只走 close() 不写 entry["hidden"]，WidgetLayer._on_closed
         # 见 entry 未隐藏就立刻补建一个新实例（那里是"形态切换后重建"的保底
         # 逻辑），用户看到的就是"点关闭没反应/闪一下又回来"。合并为单项
         # 「关闭」：语义 = 从桌面移除但保留数据与设置，可在组件库/托盘重开。
-        menu.addAction("关闭", self._hide_self)
+        menu.addAction(i18n.T("widget.menu.close"), self._hide_self)
         return menu
 
     # ---------- 组件设置（v8 C8） ----------
@@ -874,7 +994,8 @@ class FloatingWidget(QWidget):
 
     def _add_settings_action(self, menu) -> None:
         if self._has_settings():
-            menu.addAction("组件设置…", self._open_settings)
+            from . import i18n
+            menu.addAction(i18n.T("widget.menu.settings"), self._open_settings)
 
     def _open_settings(self):
         spec = self._widget_spec()
@@ -900,21 +1021,23 @@ class FloatingWidget(QWidget):
         opts = widget_catalog.spans(self.entry.get("type"))
         if len(opts) < 2:
             return None
-        sub = menu.addMenu("组件尺寸")
+        from . import i18n
+        sub = menu.addMenu(i18n.T("widget.menu.size"))
         try:
             self._ctx_submenus.append(sub)
         except AttributeError:
             pass
         cur = grid_flow.widget_span(self.storage, self.entry)
         for cs, rs in opts:
-            act = sub.addAction("%d × %d 格" % (cs, rs),
+            act = sub.addAction(i18n.T("widget.menu.size_item", w=cs, h=rs),
                                 lambda cs=cs, rs=rs: self._set_span(cs, rs))
             act.setCheckable(True)
             act.setChecked((cs, rs) == cur)
         return sub
 
     def _toggle_anchored(self):
-        """锚定 <-> 悬浮：窗口标志位（NOACTIVATE）与绘制分支都要变，只能重建。
+        """网格模式 <-> 无界模式（原「锚定 <-> 悬浮」）：窗口标志位与绘制
+        分支都要变，只能重建。
         发 closed 让 WidgetLayer 重 spawn（entry 未 hidden，见 _on_closed）。
         切换时清掉占位字段：下次锚定由 WidgetLayer 重新找空格分配。"""
         self.entry["anchored"] = not self.anchored

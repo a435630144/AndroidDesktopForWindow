@@ -284,7 +284,7 @@ class MusicWidget(GlassWidget):
 
     # ---------- 交互 ----------
     def _button_at(self, pos) -> Optional[str]:
-        L = layout(QRectF(self.rect()), self._info)
+        L = layout(QRectF(self.card_rect()), self._info)
         for box, kind in zip(L["buttons"], ("prev", "play", "next")):
             # 命中区域放大到按钮框外扩 4px：小按钮上"差一点没点到"最恼人
             if box.adjusted(-4, -4, 4, 4).contains(QPointF(pos)):
@@ -316,7 +316,7 @@ class MusicWidget(GlassWidget):
 
     # ---------- 绘制 ----------
     def paint_content(self, p):
-        draw(p, QRectF(self.rect()), self._info, self.style, self._scroll)
+        draw(p, QRectF(self.card_rect()), self._info, self.style, self._scroll)
 
     def on_settings_changed(self):
         super().on_settings_changed()

@@ -1144,9 +1144,10 @@ def entry_pos(storage, entry) -> Cell:
 def widget_pos(storage, entry) -> Cell:
     """v6 §1.3：组件 -> 窗口控件坐标（双模式）。
 
-    锚定组件：网格模式 = cell_pos(col,row)；无界模式 = (fx,fy) + 页间
-    偏移（与图标同一套页载体语义）。悬浮组件两种模式都是 entry 的
-    x/y（屏幕角落 chrome，不参与翻页）。
+    锚定组件：网格模式 = 卡片位置（`widget_geom.card_pos`，格盒居中 ×
+    填充比例，v10 A8）；无界模式 = (fx,fy) + 页间偏移（与图标同一套页
+    载体语义）。悬浮组件两种模式都是 entry 的 x/y（屏幕角落 chrome，
+    不参与翻页）。
     """
     if entry.get("anchored"):
         if free_mode(storage):
@@ -1161,7 +1162,10 @@ def widget_pos(storage, entry) -> Cell:
             y = int(entry.get("fy", entry.get("y", 0)) or 0)
             dx, dy = page_offset(storage, page)
             return x + dx, y + dy
-        return cell_pos(storage, int(entry.get("col", 0)), int(entry.get("row", 0)))
+        from . import widget_geom      # 延迟导入：widget_geom 依赖本模块
+        span = widget_span(storage, entry)
+        return widget_geom.card_pos(storage, int(entry.get("col", 0)),
+                                    int(entry.get("row", 0)), span)
     return int(entry.get("x", 0) or 0), int(entry.get("y", 0) or 0)
 
 
@@ -1184,8 +1188,13 @@ def to_free_coords(storage) -> int:
     for w in getattr(storage, "widgets", []):
         if not w.get("anchored") or ("fx" in w and "fy" in w):
             continue
-        w["fx"], w["fy"] = _page_local_pos(
+        x, y = _page_local_pos(
             storage, int(w.get("col", 0) or 0), int(w.get("row", 0) or 0))
+        # v10 A8：组件的无界初值 = **卡片**位（格盒居中 × 填充比例），
+        # 否则切过去的一瞬间卡片会向左上跳半个间隙。
+        from . import widget_geom
+        dx, dy = widget_geom.box_inset(storage, widget_span(storage, w))
+        w["fx"], w["fy"] = x + dx, y + dy
         w.setdefault("fpage", page_of(int(w.get("row", 0) or 0)))
         n += 1
     return n

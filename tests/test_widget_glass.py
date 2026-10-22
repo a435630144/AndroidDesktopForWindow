@@ -10,7 +10,7 @@
   G6  draw_preview 兜底卡：非空，且不同名称产出不同像素（真的写了字）
   G7  GlassWidget 把绘制交给 paint_content（子类钩子被调用）
   G8  锚定态整窗铺 alpha=2 命中填充（v7 B4：透明区也要能点到）
-  G9  悬浮态四角仍透明（玻璃也是圆角，不是把整窗涂满）
+  G9  悬浮态四角只剩 alpha=2 命中填充（玻璃圆角真实，且无点击盲区）
   G10 玻璃底色是"上亮下沉"的竖向渐变（顶部比底部亮）
 
 运行：python tests/test_widget_glass.py   （offscreen）
@@ -180,9 +180,11 @@ def main(app):
           shot.pixelColor(int(40 * dpr), int(40 * dpr)).red() > 180
           and shot.pixelColor(int(40 * dpr), int(40 * dpr)).green() < 90,
           shot.pixelColor(int(40 * dpr), int(40 * dpr)).name())
-    check("G9 悬浮态四角透明",
-          shot.pixelColor(0, 0).alpha() == 0,
-          "a=%d" % shot.pixelColor(0, 0).alpha())
+    # v10 A8（反馈 21）：悬浮态也铺 alpha=2 命中填充——旧实现只在锚定态铺，
+    # 悬浮组件圆角外一圈是 alpha=0，鼠标在那里"点了没反应"（盲区）。
+    _a = shot.pixelColor(0, 0).alpha()
+    check("G9 悬浮态四角 = 命中填充（2，不再是 0）且仍近乎透明",
+          _a == 2, "a=%d" % _a)
     w.close()
 
     # ---------- G8：锚定命中填充 ----------

@@ -133,8 +133,10 @@ def main(app):
               "colspan=%s" % note.entry.get("colspan"))
         check("R3 左边界不动", int(note.entry["col"]) == start_col,
               "col=%s" % note.entry.get("col"))
-        check("R3 视觉宽度 = 3×cell", note.width() == 3 * cw,
-              "w=%d want=%d" % (note.width(), 3 * cw))
+        from src import widget_geom
+        _card3 = widget_geom.card_size(st, (3, int(note.entry["rowspan"])))
+        check("R3 卡片宽度 = 3 格 × fill", note.card_rect().width() == _card3[0],
+              "w=%d want=%d" % (note.card_rect().width(), _card3[0]))
 
         # ---------- R4：西侧左移 1 格（同时扩宽） ----------
         drag_handle(note, "w", -1, 0)
@@ -143,9 +145,13 @@ def main(app):
               "colspan=%s" % note.entry.get("colspan"))
         check("R4 左边界同步左移 1 格", int(note.entry["col"]) == start_col - 1,
               "col=%s want=%s" % (note.entry.get("col"), start_col - 1))
-        check("R4 视觉位置 = cell_pos(新列)",
-              (note.x(), note.y()) == grid_flow.cell_pos(
-                  st, int(note.entry["col"]), int(note.entry["row"])))
+        _span4 = grid_flow.widget_span(st, note.entry)
+        _card4 = widget_geom.card_pos(st, int(note.entry["col"]),
+                                      int(note.entry["row"]), _span4)
+        _pad = widget_geom.pad(st)
+        check("R4 卡片位置 = card_pos(新列)（编辑态窗口再外扩 pad）",
+              (note.x() + _pad, note.y() + _pad) == _card4,
+              "win=%s card=%s" % ((note.x() + _pad, note.y() + _pad), _card4))
 
         # ---------- R5：南侧过度上拖 -> 夹到 1 行 ----------
         drag_handle(note, "s", 0, -5)
@@ -165,37 +171,45 @@ def main(app):
         check("R6 扩张到别的组件处被挡住（不叠上去）",
               not (cells & clock_cells),
               "note=%s clock=%s" % (sorted(cells), sorted(clock_cells)))
-        check("R6 视觉宽度与跨度一致", note.width() == cs * cw,
-              "w=%d span=%d×%d" % (note.width(), cs, rs))
+        _want6 = widget_geom.card_size(st, (cs, rs))
+        check("R6 卡片尺寸与跨度一致",
+              (note.card_rect().width(), note.card_rect().height()) == _want6,
+              "%dx%d span=%d×%d want=%s" % (note.card_rect().width(),
+                                            note.card_rect().height(), cs, rs,
+                                            _want6))
 
-        # ---------- R7：控制点圆心压在虚线框上（反馈 2） ----------
-        # 控制点是圆，圆心必须落在虚线上。2026-10-21（v7 B5 反馈 20）：
-        # 内缩不再写死 2px，改由点径推导 `_edit_line() = max(3, s//2+1)`
-        # ——固定 2px 时 18px 的圆点有一半落在窗外被裁成碎块。
+        # ---------- R7：虚线压在卡片边缘、圆心也在卡片边缘（v10 A8 反馈 22） ----------
+        # 不再是"内缩 s//2+1"：卡片矩形本身由 card_rect() 表达，编辑态窗口
+        # 比卡片大 pad，于是虚线正好压在卡片边缘、圆点跨在边上且整圆可见。
         note._enter_edit()
         hs = note._handle_rects()
-        w, h = note.width(), note.height()
-        line = note._edit_line()
+        cr = note.card_rect()
         centers = {k: (r.center().x(), r.center().y()) for k, r in hs.items()}
-        check("R7 角控制点圆心落在虚线框四角",
-              abs(centers["nw"][0] - line) <= 1
-              and abs(centers["nw"][1] - line) <= 1
-              and abs(centers["se"][0] - (w - line)) <= 1
-              and abs(centers["se"][1] - (h - line)) <= 1,
-              "nw=%s se=%s line=%d" % (centers["nw"], centers["se"], line))
-        check("R7 边中点圆心落在虚线框边线上",
-              abs(centers["n"][1] - line) <= 1
-              and abs(centers["s"][1] - (h - line)) <= 1
-              and abs(centers["w"][0] - line) <= 1
-              and abs(centers["e"][0] - (w - line)) <= 1,
+        check("R7 卡片四角就是控制点圆心",
+              abs(centers["nw"][0] - cr.left()) <= 1
+              and abs(centers["nw"][1] - cr.top()) <= 1
+              and abs(centers["se"][0] - cr.right()) <= 1
+              and abs(centers["se"][1] - cr.bottom()) <= 1,
+              "nw=%s se=%s card=%s" % (centers["nw"], centers["se"], cr))
+        check("R7 边中点圆心落在卡片边线上",
+              abs(centers["n"][1] - cr.top()) <= 1
+              and abs(centers["s"][1] - cr.bottom()) <= 1
+              and abs(centers["w"][0] - cr.left()) <= 1
+              and abs(centers["e"][0] - cr.right()) <= 1,
               "n=%s s=%s w=%s e=%s" % (centers["n"], centers["s"],
                                        centers["w"], centers["e"]))
-        check("R7 控制点跨在线上（框内框外都有像素）",
-              all(r.left() < line if k in ("nw", "w", "sw") else True
+        check("R7 控制点跨在卡片边缘（内外都有像素）且整圆在窗内",
+              all(r.left() < cr.left() if k in ("nw", "w", "sw") else True
                   for k, r in hs.items())
-              and all(r.top() < line if k in ("nw", "n", "ne") else True
-                      for k, r in hs.items()),
+              and all(r.top() < cr.top() if k in ("nw", "n", "ne") else True
+                      for k, r in hs.items())
+              and all(note.rect().contains(r) for r in hs.values()),
               "%s" % {k: (r.left(), r.top()) for k, r in hs.items()})
+        check("R7 编辑态窗口比卡片大一圈（外扩 pad）",
+              note.width() == cr.width() + 2 * widget_geom.pad(st)
+              and note.height() == cr.height() + 2 * widget_geom.pad(st),
+              "win=%dx%d card=%dx%d" % (note.width(), note.height(),
+                                        cr.width(), cr.height()))
         note._exit_edit()
 
         # ---------- R2b：退出编辑态 ----------

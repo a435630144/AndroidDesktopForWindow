@@ -166,8 +166,8 @@ def main(app):
           "编辑" not in free_menu, "menu=%s" % (free_menu,))
     check("N3c 无界模式菜单没有「组件尺寸」（格跨度专属）",
           "组件尺寸" not in free_menu, "menu=%s" % (free_menu,))
-    check("N3d 无界模式菜单保留形态切换",
-          any("悬浮" in t for t in free_menu), "menu=%s" % (free_menu,))
+    check("N3d 无界模式菜单保留形态切换（v10 A9 改名「切换为网格模式」）",
+          any("无界模式" in t for t in free_menu), "menu=%s" % (free_menu,))
 
     # ---------------------------------------------------------------- N4
     # 在无界模式把组件拖到别的像素位，再切回网格：坐标必须跟着走

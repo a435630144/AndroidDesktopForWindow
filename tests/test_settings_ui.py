@@ -5,7 +5,7 @@
 深色底上失去可读性层次。重构为「左侧导航 + 右栏分页 + 行式卡片」，
 文字颜色与字号统一由 theme.SETTINGS_QSS 提供。
 
-  U1 左侧栏 5 个导航项（通用 / 外观与图标 / 布局与网格 / 模式 / 高级）
+  U1 左侧栏 7 个导航项（通用 / 组件库 / Dock 栏 / 外观与图标 / 布局与网格 / 模式 / 高级）
   U2 点导航切页：stack 索引跟着变，页标题跟着变
   U3 卡片走 objectName=settingsCard，样式统一来自 SETTINGS_QSS
   U4 行标题 rowTitle / 说明 rowHint 两级文字，颜色在 SETTINGS_QSS 里定义
@@ -96,24 +96,25 @@ def main(app):
     navs = [b for b in dlg.findChildren(QPushButton)
             if b.objectName() == "navItem"]
     # v9 V2：新增「组件库」分页（原独立窗口融合进来）
-    check("U1 左侧栏 6 个导航项", len(navs) == 6, "found=%d" % len(navs))
-    check("U1 导航文案依次为 通用/组件库/外观与图标/布局与网格/模式/高级",
+    check("U1 左侧栏 7 个导航项", len(navs) == 7, "found=%d" % len(navs))
+    check("U1 导航文案依次为 通用/组件库/Dock 栏/外观与图标/布局与网格/模式/高级",
           [b.text() for b in navs]
-          == ["通用", "组件库", "外观与图标", "布局与网格", "模式", "高级"],
+          == ["通用", "组件库", "Dock 栏", "外观与图标", "布局与网格", "模式", "高级"],
           "%s" % [b.text() for b in navs])
     stack = dlg.findChildren(QStackedWidget)
-    check("U1 右栏是 6 页堆栈", len(stack) == 1 and stack[0].count() == 6,
+    check("U1 右栏是 7 页堆栈", len(stack) == 1 and stack[0].count() == 7,
           "stacks=%d" % len(stack))
 
     # ---------- U2 切页 ----------
-    navs[4].click()
+    navs[5].click()       # v10 A9：Dock 栏插在「组件库」之后，「模式」顺延到 5
     app.processEvents()
-    check("U2 点「模式」→ stack 第 4 页",
-          dlg.stack.currentIndex() == 4, "idx=%d" % dlg.stack.currentIndex())
+    check("U2 点「模式」→ stack 第 5 页",
+          dlg.stack.currentIndex() == 5, "idx=%d" % dlg.stack.currentIndex())
     check("U2 页标题跟着变", dlg.lbl_page_title.text() == "模式",
           "%s" % dlg.lbl_page_title.text())
     check("U2 只有当前导航高亮",
-          [b.isChecked() for b in navs] == [False, False, False, False, True, False],
+          [b.isChecked() for b in navs]
+          == [False, False, False, False, False, True, False],
           "%s" % [b.isChecked() for b in navs])
     navs[0].click()
     app.processEvents()
@@ -167,7 +168,7 @@ def main(app):
     check("U5b 无界像素 spin 已退役", not hasattr(dlg, "spin_icon_px"))
 
     # ---------- U6 模式页归属 ----------
-    inside = page_widgets(dlg, 4)   # v9：组件库分页插在通用之后，索引整体 +1
+    inside = page_widgets(dlg, 5)   # v10 A9：Dock 栏插在组件库之后，模式页到 5
     # 反馈 16：接管开关下线（启动即接管），模式页只留布局与同步项
     check("U6 接管开关已下线", not hasattr(dlg, "chk_takeover"))
     check("U6 自动克隆在「模式」页", id(dlg.chk_autoclone) in inside)
@@ -203,7 +204,7 @@ def main(app):
 
     # ---------- U8 可滚动 ----------
     scrolls = dlg.findChildren(QScrollArea)
-    check("U8 每页内容装在可滚动区域", len(scrolls) == 5, "found=%d" % len(scrolls))
+    check("U8 每页内容装在可滚动区域", len(scrolls) == 6, "found=%d" % len(scrolls))
     check("U8 滚动区无横向滚动条（宽度自适应）",
           all(s.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
               for s in scrolls))

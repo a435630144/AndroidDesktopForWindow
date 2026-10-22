@@ -165,8 +165,12 @@ def main():
     st5 = FakeStorage(widgets=[widget_entry("clk", 2, 0),
                                widget_entry("note", 0, 0, anchored=False)])
     st5.widgets[1]["x"], st5.widgets[1]["y"] = 400, 300
+    from src import widget_geom
     pw = grid_flow.widget_pos(st5, st5.widgets[0])
-    check("M5 网格锚定 = cell_pos", pw == (ox + 2 * cw, oy), "%s" % (pw,))
+    _want5 = widget_geom.card_pos(
+        st5, 2, 0, grid_flow.widget_span(st5, st5.widgets[0]))
+    check("M5 网格锚定 = 卡片位（格盒居中 × fill）", pw == _want5,
+          "%s want=%s" % (pw, _want5))
     pn = grid_flow.widget_pos(st5, st5.widgets[1])
     check("M5 悬浮两种模式都是 x/y", pn == (400, 300), "%s" % (pn,))
     st5._settings["layout_mode"] = "free"

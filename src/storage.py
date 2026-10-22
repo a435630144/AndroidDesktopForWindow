@@ -107,6 +107,14 @@ DEFAULT_SETTINGS = {
                                # （设置高级选项，rows 始终自动）
     "opacity": 0.95,           # 整理窗口不透明度 0.5 ~ 1.0
     "show_widgets": True,      # 是否显示桌面小组件
+    # v10 A9（反馈 9）：天气**全局唯一**配置——「天气」组件与面板里的
+    # 天气卡共用一份城市 / 联网开关（旧版各存各的，于是两个界面两个温度）。
+    "weather_city": "",
+    "weather_online": True,
+    # v10 A8（反馈 21）：组件卡片占跨度的比例（0.6~1.0，默认 0.90）。
+    # 1.0 = 填满整格——并排的两个组件边缘会贴死（视觉上连成一块），
+    # 所以默认留 10% 的呼吸缝。换算见 `widget_geom`（唯一入口）。
+    "widget_fill": 0.90,
     # ---- v10 C3（反馈 17）：Dock 栏 ----
     # 默认开启：用户点名要的新功能，装上就该看到；关闭时 inset 全 0，
     # 网格立刻恢复满工作区（`dock.storage_inset` 是唯一扣除入口）。
@@ -114,6 +122,12 @@ DEFAULT_SETTINGS = {
     "dock_position": "bottom",  # bottom（默认）| top | left | right
     "dock_items": [],           # [{"name","target","icon_path"}]，规范化见 dock.py
     "dock_seeded": False,       # 首次启用是否已用桌面现成应用填过（只填一次）
+    # v10 A9（反馈 24）：Dock 外观（全部是"全局旋钮"，不进 dock_items）
+    "dock_icon": 32,            # 图标逻辑边长 24~56（100% 缩放下的基准）
+    "dock_alpha": 0.86,         # 条带背景不透明度 0.30~1.0
+    "dock_radius_mode": "pill",  # pill（胶囊）| round（圆角矩形）| square（直角）
+    "dock_hover": True,         # hover 放大 + 邻近让位
+    "dock_dot": True,           # hover 项下方的小圆点
     # v7 反馈 9「仅小组件模式」：开 → 记住当前布局模式并切无界（组件
     # 不占格 = 组件无界）、隐藏全部图标、停画页点/空态提示；关 → 恢复
     # 记住的模式与图标。托盘/右键里的小组件模式开关同步下线，入口唯一

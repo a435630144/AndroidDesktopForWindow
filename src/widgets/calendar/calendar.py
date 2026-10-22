@@ -218,11 +218,11 @@ class CalendarWidget(GlassWidget):
 
     # ---------- 绘制 / 交互 ----------
     def paint_content(self, p: QPainter):
-        draw(p, QRectF(self.rect()), self.model(), style=self.style)
+        draw(p, QRectF(self.card_rect()), self.model(), style=self.style)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
-            L = layout(QRectF(self.rect()), self.model())
+            L = layout(QRectF(self.card_rect()), self.model())
             pos = e.position()
             if L["nav_left"].contains(pos):
                 self.go_shift(-1)

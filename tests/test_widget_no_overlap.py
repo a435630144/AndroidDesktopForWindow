@@ -117,10 +117,12 @@ def main(app):
         check("O4 落定后与时钟占位不相交（不再堆叠）",
               not (note_cells & clock_cells),
               "note=%s clock=%s" % (sorted(note_cells), sorted(clock_cells)))
-        check("O4 窗口视觉位置与 entry 一致",
-              (note.x(), note.y()) == grid_flow.cell_pos(st, nc[0], nc[1]),
-              "pos=%s entry=%s" % ((note.x(), note.y()),
-                                   grid_flow.cell_pos(st, nc[0], nc[1])))
+        from src import widget_geom
+        _want = widget_geom.card_pos(st, nc[0], nc[1],
+                                     grid_flow.widget_span(st, note.entry))
+        check("O4 窗口视觉位置与 entry 一致（卡片位）",
+              (note.x(), note.y()) == _want,
+              "pos=%s want=%s" % ((note.x(), note.y()), _want))
 
     for w in layer.widgets.values():
         w.close()
