@@ -317,16 +317,21 @@ def write_paging_html(pages):
     html += "</div><script>" + _JS_COMMON + """
 const track = document.getElementById('track');
 
-/* 关键帧 [时间, 页号]：停 → 下一页 → 停 → 下一页 → 回翻 → 回首页 */
-const KEYS = [[0, 0], [0.70, 0], [1.25, 1], [1.95, 1], [2.50, 2],
-              [3.20, 2], [3.75, 1], [4.20, 1], [4.70, 0]];
+/* 关键帧 [时间, 页号]：停 → 下一页 → 停 → 下一页 → 回翻 → 回首页
+   v10 B3：翻页是**整页刚体平移 + 临界阻尼弹簧**（420ms，见
+   src/desktop_window.FLIP_MS），所以这里也走 spring(k, 1.0) 而不是
+   easeInOut——动图与真机的观感必须一致，否则 README 是"许愿"。 */
+const FLIP_S = 0.42;
+const KEYS = [[0, 0], [0.70, 0], [0.70 + FLIP_S, 1], [1.95, 1],
+              [1.95 + FLIP_S, 2], [3.10, 2], [3.10 + FLIP_S, 1],
+              [4.00, 1], [4.00 + FLIP_S, 0]];
 
 function pageAt(t){
   for (let i = 1; i < KEYS.length; i++){
     if (t <= KEYS[i][0]){
       const [t0, p0] = KEYS[i-1], [t1, p1] = KEYS[i];
       const k = seg(t, t0, t1);
-      return p0 + (p1 - p0) * easeInOut(k);
+      return p0 + (p1 - p0) * spring(k, 1.0);
     }
   }
   return KEYS[KEYS.length-1][1];

@@ -245,7 +245,6 @@ TEST_REF_RX = re.compile(r"tests/(test_[A-Za-z0-9_]+\.py)")
 # 白名单条目随之删除（B/C/D 批的 7 个仍在）。
 PLANNED_TESTS = {
     "test_i18n.py": "D3 英文适配",
-    "test_page_flip.py": "B3 轮播式翻页",
     "test_storage_paths.py": "D1 改名数据目录",
     "test_widget_music.py": "C2 音乐组件",
 }

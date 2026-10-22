@@ -30,7 +30,7 @@ Despite the name, this is **far past the prototype stage**: installer, tray resi
 | 🧩 Widget library | A page inside the settings panel: browse widgets by category, search, and see four-state cards (not added / hidden / on desktop / added) with **live previews rendered by the very same `draw()`** used on the desktop; import or uninstall third-party widget zips, and appearance edits apply immediately |
 | 🔀 Two modes | **Organizer mode** (native icons hidden, desktop rendering taken over) / **native mode** (free-floating): one-click switch, and each mode **keeps its own layout** independently |
 | 🚀 Dock | A row of app shortcuts, bottom by default (top / left / right, toggleable): spring-scaled hover, drop to append, drag to reorder, drag out to remove; the **grid automatically yields the strip and recomputes columns/rows** |
-| 📑 Paging | Automatic paging when icons overflow; page dots + wheel paging, drag to the screen edge to flip |
+| 📑 Paging | Automatic paging when icons overflow; page dots + wheel paging, drag to the screen edge to flip. Flips are **whole-page carousel slides** (icons and widgets share one spring scalar, 420 ms critically damped — no leftovers, no drift) |
 | 🔄 Desktop sync | Watches the desktop folder (1 s debounce): new files enter automatically, deleted items are cleaned up |
 | 🪄 Full takeover | Hides native icons and re-renders from the desktop folder clone, giving complete control over position and style (Route A); can also switch back to effects-only mode |
 | 🖥️ Custom desktop context menu | No more losing right-click in organizer mode: new folder/text file, rescan, icon size, display/personalization settings |
@@ -149,7 +149,7 @@ PhoneDesktopForWindow/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip (needs pwsh 7)
 │   ├── installer.iss        # Inno Setup 6 installer (must be UTF-8 BOM)
 │   └── check_docs.py        # Docs consistency check (dead links / duplicate sections / doc-vs-code drift)
-├── tests/                   # 82 standalone scripts (no pytest); judge by exit code
+├── tests/                   # 83 standalone scripts (no pytest); judge by exit code
 │   ├── smoke_test.py        # Headless logic regression (storage/clone/layout)
 │   └── test_*.py            # One per contract: reflow, dual mode, hit-testing, popup, widgets…
 └── tools/                   # Runtime probes probe*.py + packaged-build verification verify_*.py
