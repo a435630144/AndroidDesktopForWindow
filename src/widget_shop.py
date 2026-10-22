@@ -18,14 +18,17 @@ import threading
 from typing import List
 
 from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMessageBox,
-                               QPushButton, QScrollArea, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel,
+                               QMessageBox, QPushButton, QScrollArea,
+                               QSizePolicy, QVBoxLayout, QWidget)
 
 from . import i18n
 from . import theme
 from . import widget_store
+from .widget_center import CARD_MAX_COLS, GRID_GAP, columns_for
 
-SHOP_CARD_W = 268
+SHOP_CARD_W = 268        # 目标卡宽（可被拉伸）
+SHOP_CARD_MIN_W = 240    # 最小卡宽：再窄就减列（与组件库同一套列规则）
 SHOP_CARD_H = 132
 
 
@@ -65,7 +68,10 @@ class ShopCard(QFrame):
         super().__init__(parent)
         self.entry = dict(entry)
         self.setObjectName("shopCard")
-        self.setFixedSize(SHOP_CARD_W, SHOP_CARD_H)
+        # W16：与组件库同一套响应式规则——最小宽 + 高度固定 + 水平拉伸
+        self.setMinimumWidth(SHOP_CARD_MIN_W)
+        self.setFixedHeight(SHOP_CARD_H)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setStyleSheet(
             "QFrame#shopCard{background: rgba(255,255,255,0.04);"
             " border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;}"
@@ -174,14 +180,16 @@ class WidgetShopPage(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet(
             "QScrollArea{background: transparent;}"
             " QScrollArea > QWidget > QWidget{background: transparent;}")
         holder = QWidget()
-        self._lay = QVBoxLayout(holder)
+        self._lay = QGridLayout(holder)
         self._lay.setContentsMargins(0, 4, 8, 4)
-        self._lay.setSpacing(10)
-        self._lay.setAlignment(Qt.AlignTop)
+        self._lay.setHorizontalSpacing(GRID_GAP)
+        self._lay.setVerticalSpacing(GRID_GAP)
+        self._lay.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.scroll.setWidget(holder)
         root.addWidget(self.scroll, 1)
 
@@ -205,21 +213,27 @@ class WidgetShopPage(QWidget):
             tip.setWordWrap(True)
             tip.setStyleSheet("color: %s; font-size: 13px; padding: 40px 0;"
                               % theme.rgba(theme.TEXT_FAINT))
-            self._lay.addWidget(tip)
+            self._lay.addWidget(tip, 0, 0, 1, 1)
         else:
-            row = None
+            # W16：与组件库同一套响应式列数（放得下 2 列才 2 列）
+            cols = columns_for(self.scroll.viewport().width(),
+                               min_w=SHOP_CARD_MIN_W)
+            self._cols = cols
+            for c in range(CARD_MAX_COLS):
+                self._lay.setColumnStretch(c, 1 if c < cols else 0)
             for i, entry in enumerate(items):
-                if i % 2 == 0:
-                    row = QHBoxLayout()
-                    row.setSpacing(12)
-                    row.setAlignment(Qt.AlignLeft)
-                    self._lay.addLayout(row)
                 card = ShopCard(entry, self)
                 card.action.connect(self._on_action)
-                row.addWidget(card)
+                self._lay.addWidget(card, i // cols, i % cols)
                 self._cards.append(card)
-            self._lay.addStretch(1)
         self._sync_status(index)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        cols = columns_for(self.scroll.viewport().width(),
+                           min_w=SHOP_CARD_MIN_W)
+        if getattr(self, "_cols", None) != cols:
+            self._render(widget_store.cached_index())
 
     def _sync_status(self, index: dict = None, error: str = ""):
         idx = index if index is not None else widget_store.cached_index()

@@ -39,6 +39,7 @@ $ErrorActionPreference = 'Continue'
     --workpath $work `
     --icon assets\app_icon.ico `
     --add-data "assets;assets" `
+    --add-data "src/i18n;i18n" `
     main.py *> $log
 $pycode = $LASTEXITCODE
 $ErrorActionPreference = $prevEap

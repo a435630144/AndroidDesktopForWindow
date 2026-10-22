@@ -32,6 +32,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ROOT = Path(__file__).resolve().parent.parent
 
 from PySide6.QtWidgets import QApplication, QLabel
 
@@ -247,6 +248,67 @@ def main(app):
     from src import tray
     check("I14 托盘菜单组件名走 display_name",
           tray.widget_name("clock") == "Clock", tray.widget_name("clock"))
+
+    # ---------- I16：冻结态词表路径（v10a 事故回归，坑 #130） ----------
+    # v10a 冻结包没带 src/i18n/*.json，open 失败被 except 吞掉 → 词表空 →
+    # T() 全部回退 key 原文（界面满屏 settings.title）。判据：冻结布局下
+    # 词表必须从 _MEIPASS/i18n 加载，而不是源码目录。
+    import shutil
+    fake_meipass = Path(tempfile.mkdtemp(prefix="i18n_meipass_"))
+    (fake_meipass / "i18n").mkdir()
+    for _lang in (i18n.ZH, i18n.EN):
+        data = json.loads((ROOT / "src" / "i18n" / ("%s.json" % _lang))
+                          .read_text(encoding="utf-8"))
+        data["settings.title"] = "FROM_MEIPASS_%s" % _lang   # 打标记
+        (fake_meipass / "i18n" / ("%s.json" % _lang)).write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    saved_frozen = getattr(sys, "frozen", None)
+    saved_meipass = getattr(sys, "_MEIPASS", None)
+    try:
+        i18n.set_language(i18n.ZH)      # 上面 I15 之后是英文态，先归位
+        sys.frozen = True
+        sys._MEIPASS = str(fake_meipass)
+        i18n._TABLES.clear()
+        got = i18n.T("settings.title")
+        check("I16 冻结态从 _MEIPASS/i18n 取词",
+              got == "FROM_MEIPASS_zh_CN", got)
+        i18n.set_language(i18n.EN)
+        i18n._TABLES.clear()
+        got = i18n.T("settings.title")
+        check("I16b 冻结态英文词表同样可取",
+              got == "FROM_MEIPASS_en", got)
+        i18n.set_language(i18n.ZH)
+    finally:
+        if saved_frozen is None:
+            sys.__dict__.pop("frozen", None)
+        else:
+            sys.frozen = saved_frozen
+        if saved_meipass is None:
+            sys.__dict__.pop("_MEIPASS", None)
+        else:
+            sys._MEIPASS = saved_meipass
+        i18n._TABLES.clear()
+        shutil.rmtree(fake_meipass, ignore_errors=True)
+    check("I16c 回到源码态仍取得到中文词表",
+          i18n.T("settings.title") == "桌面整理 · 设置", i18n.T("settings.title"))
+
+    # ---------- I17：打包脚本必须带上词表（漏了就重蹈 v10a） ----------
+    build_ps1 = (ROOT / "scripts" / "build_portable.ps1").read_text(encoding="utf-8")
+    check("I17 build_portable.ps1 含 --add-data src/i18n",
+          re.search(r'--add-data\s+"src/i18n', build_ps1) is not None,
+          "scripts/build_portable.ps1 缺 --add-data \"src/i18n;i18n\"")
+
+    # ---------- I18：动态拼接的 key 前缀每个都有实例 ----------
+    # T("settings.nav." + page) 这类拼 key，词表里必须真的有前缀下的具体 key，
+    # 否则拼出来的 key 永远查不到、界面露原样 key 且无人发现。
+    used = set()
+    for py in (ROOT / "src").rglob("*.py"):
+        text = py.read_text(encoding="utf-8")
+        for m in re.finditer(r'\b(?:T|TL)\(\s*["\']([a-z0-9_.]+)["\']\s*\+', text):
+            used.add(m.group(1))
+    zh_table = json.loads((ROOT / "src" / "i18n" / "zh_CN.json").read_text(encoding="utf-8"))
+    bad = sorted(p for p in used if not any(k.startswith(p) for k in zh_table))
+    check("I18 动态前缀 %d 个全部有实例" % len(used), not bad, "缺实例：%s" % bad)
 
     for obj in (dlg, dlg_zh, wdlg):
         obj.close()

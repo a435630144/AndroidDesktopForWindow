@@ -29,7 +29,7 @@ from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PySide6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
                                QLineEdit, QPushButton,
-                               QScrollArea, QVBoxLayout, QWidget)
+                               QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
 
 from . import i18n
 from . import theme
@@ -40,8 +40,29 @@ from .widget_registry import WidgetSpec
 # 内部标识（筛选状态、计数键）永远用中文常量：显示名可以翻译，落进
 # `storage` 里的值不能（v10 D3 的硬规矩）。
 ALL = "全部"
-CARD_W = 320
+CARD_W = 320        # 2 列时的目标卡宽（可被拉伸）
+CARD_MIN_W = 300    # 卡片最小宽度：再窄就减列，而不是挤卡片（W16）
 CARD_H = 212
+GRID_GAP = 12       # 卡片间距（列判定按它算）
+CARD_MAX_COLS = 2   # 卡片网格最多两列（别叫 MAX_COLS：网格列上限在 grid_metrics）
+COLS = CARD_MAX_COLS  # 旧名兼容
+
+
+def columns_for(width, min_w: int = CARD_MIN_W, gap: int = GRID_GAP) -> int:
+    """响应式列数（纯函数）：放得下几列就几列，上限 `CARD_MAX_COLS`。
+
+    `width` 是卡片区视口宽（不含滚动条）。判据用**最小卡宽**——只有
+    `width >= 2*min_w + gap` 才双列，否则单列拉伸占满。宁可减列也不挤
+    卡片，横向滚动条从根上不会出现（scroll 侧再关一次兜底）。
+    """
+    try:
+        w = int(width)
+    except (TypeError, ValueError):
+        return 1
+    cols = 1
+    while cols < CARD_MAX_COLS and w >= (cols + 1) * min_w + cols * gap:
+        cols += 1
+    return cols
 
 
 class CategoryBar(QWidget):
@@ -127,7 +148,6 @@ class CategoryBar(QWidget):
         for c in self._chips:
             c.setStyleSheet(self._chip_qss(c.property("cat") == self._current))
 PREVIEW_H = 118
-COLS = 2
 # 预览区的宽高比（320×118 ≈ 2.7:1）比组件的默认跨度（≈ 1.6:1）扁得多。
 # 直接按预览区矩形的形状去调 `draw()`，组件会以为自己是"宽版"：监控组件
 # 的 wide 布局把数值挪到右侧一列，2.7:1 下这列只有几十像素，"42%" 直接
@@ -191,7 +211,11 @@ class WidgetCard(QFrame):
         self.spec = spec
         self.layer = layer
         self.owner = owner
-        self.setFixedSize(CARD_W, CARD_H)
+        # W16：卡片不再固定宽——固定 320 在窄窗挤出横向滚动条；现在给
+        # 最小宽 + 高度固定 + 水平可拉伸，1 列时自然"加宽卡片"。
+        self.setMinimumWidth(CARD_MIN_W)
+        self.setFixedHeight(CARD_H)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setStyleSheet(
             "WidgetCard{background: rgba(255,255,255,10);"
             " border: 1px solid rgba(255,255,255,22); border-radius: 14px;}")
@@ -347,13 +371,15 @@ class WidgetCenterPage(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
+        # W16：横向滚动条永不出现——列数不够就减列拉伸，不靠滚动兜底
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet("QScrollArea{background: transparent;}"
                                   " QScrollArea > QWidget > QWidget{background: transparent;}")
         holder = QWidget()
         self.grid = QGridLayout(holder)
         self.grid.setContentsMargins(0, 0, 8, 0)
-        self.grid.setHorizontalSpacing(12)
-        self.grid.setVerticalSpacing(12)
+        self.grid.setHorizontalSpacing(GRID_GAP)
+        self.grid.setVerticalSpacing(GRID_GAP)
         self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.empty_tip = QLabel(i18n.T("widget_center.empty"))
         self.empty_tip.setAlignment(Qt.AlignCenter)
@@ -529,11 +555,16 @@ class WidgetCenterPage(QWidget):
         for card in self.cards:
             self.grid.removeWidget(card)
         self.grid.removeWidget(self.empty_tip)
+        # W16：响应式列数——放得下 2 列才 2 列，否则 1 列卡片拉伸占满
+        cols = columns_for(self.scroll.viewport().width())
+        self._cols = cols
+        for c in range(CARD_MAX_COLS):
+            self.grid.setColumnStretch(c, 1 if c < cols else 0)
         for i, card in enumerate(shown):
-            self.grid.addWidget(card, i // COLS, i % COLS)
+            self.grid.addWidget(card, i // cols, i % cols)
         self.empty_tip.setVisible(not shown)
         if not shown:
-            self.grid.addWidget(self.empty_tip, 0, 0, 1, COLS)
+            self.grid.addWidget(self.empty_tip, 0, 0, 1, cols)
 
         self._visible_types = [c.spec.type for c in shown]
         self.count_label.setText(
@@ -541,6 +572,13 @@ class WidgetCenterPage(QWidget):
 
     def visible_cards(self) -> List[WidgetCard]:
         return [c for c in self.cards if c.isVisible()]
+
+    def resizeEvent(self, e):
+        """W16：窗口宽窄变化导致列数变化时重排（只在跨阈值那一下重排）。"""
+        super().resizeEvent(e)
+        cols = columns_for(self.scroll.viewport().width())
+        if getattr(self, "_cols", None) != cols:
+            self.refresh()
 
     def closeEvent(self, e):
         try:

@@ -198,6 +198,11 @@ pwsh -File scripts/build_portable.ps1
 
 > Ordered by **installer version**, newest first; the parenthesised tag is the internal build label (see `src/version.py`, also shown at the bottom of the right-click menu). More detail in [`docs/release_notes/`](docs/release_notes/).
 
+### 5.0.1 (v10b) · Fixes the UI language not taking effect · Responsive widget library → [notes](docs/release_notes/5.0.1.md)
+
+- **Fixes the mixed-language UI**: the v10a (5.0.0) packages shipped without the translation dictionaries, so lookups fell back to raw keys like `settings.title` across the interface; this build bundles the tables and adds two regression contracts (frozen-build lookup + packaging), and the self-test now reports table sizes and sample strings
+- **Responsive widget library**: two columns only when they fit — a narrow window collapses to a single wider column, no horizontal scrollbar; the Local and Store tabs share the same rules, and the settings window minimum width drops to 600
+
 ### 5.0.0 (v10a) · Widget store · English UI · Bilingual installer · Renamed to PhoneDesktop → [notes](docs/release_notes/5.0.0.md)
 
 - **Widget store**: widgets are no longer bundled wholesale — download what you need, gitee first with github / jsDelivr fallback, every package sha256-verified; the widget library splits into **Local / Store** tabs; first batch ships **world clock** and **countdown**; the 8 built-in seed widgets keep working offline and the store never overwrites built-ins

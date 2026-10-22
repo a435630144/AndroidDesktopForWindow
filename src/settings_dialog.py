@@ -131,7 +131,9 @@ class SettingsDialog(QDialog):
         self.layer = layer
         self.setWindowTitle(i18n.T("settings.title"))
         self.setStyleSheet(theme.settings_qss())
-        self.setMinimumSize(860, 560)
+        # W16：最小宽从 860 降到 600——否则窗口窄不下去，组件库永远到不了
+        # 1 列形态（2×300+12 的列判定在 860 宽下恰好总是双列）。
+        self.setMinimumSize(600, 560)
         self._nav_buttons = []
         self._pages = {}
         self._build()

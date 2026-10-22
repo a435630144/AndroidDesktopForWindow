@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from typing import Dict, Optional
 
 ZH = "zh_CN"
@@ -37,13 +38,27 @@ _current = ZH
 _missing: set = set()
 
 
+def _table_path(lang: str) -> str:
+    """词表文件路径：源码态 `src/i18n/`，冻结态 `_MEIPASS/i18n/`。
+
+    坑 #130（v10a 事故）：`build_portable.ps1` 只 `--add-data` 了 assets，
+    词表没进冻结包；`open` 失败被 `except` 吞成空表 → `T()` 全部回退 key
+    原文（界面满屏 `settings.title`），而 `TL()` 有中文兜底看起来正常——
+    用户看到的"中英混搭"就是这么来的。源码态测试全绿也发现不了，必须
+    由 I16（冻结布局取词）+ I17（打包脚本契约）两条判据钉住。
+    """
+    name = "%s.json" % lang
+    if getattr(sys, "frozen", False):
+        return os.path.join(getattr(sys, "_MEIPASS", ""), "i18n", name)
+    return os.path.join(_HERE, "i18n", name)
+
+
 def _table(lang: str) -> Dict[str, str]:
     if lang not in LANGS:
         lang = ZH
     if lang not in _TABLES:
-        path = os.path.join(_HERE, "i18n", "%s.json" % lang)
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(_table_path(lang), "r", encoding="utf-8") as f:
                 _TABLES[lang] = json.load(f)
         except Exception:
             _TABLES[lang] = {}

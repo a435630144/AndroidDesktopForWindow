@@ -19,10 +19,15 @@ from .storage import entry_app
 
 def collect_info(window, layer) -> dict:
     """采集自测诊断信息。纯读取，不抛异常（脏条目走 entry_app 兜底）。"""
-    from . import win32_layer
+    from . import i18n, win32_layer
     from .win32_layer import diagnose_desktop_layer
 
     layout = window.storage.layout
+    # 坑 #130：i18n 词表没进冻结包时 T() 全部回退 key 原文，源码态测试
+    # 也发现不了。这里把词表规模与抽样译文写进报告——冻结包里 0 条 /
+    # 抽样是 key 原文，就说明词表没打进去。
+    zh = i18n._table(i18n.ZH)
+    en = i18n._table(i18n.EN)
     return {
         "attached_to_desktop": window.attached,
         "native_icons_hidden": win32_layer.native_icons_hidden(),
@@ -33,6 +38,11 @@ def collect_info(window, layer) -> dict:
         "widgets_attached": {wid: getattr(w, "attached", None)
                              for wid, w in layer.widgets.items()},
         "entries": len(layout),
+        "i18n_tables": {"zh_CN": len(zh), "en": len(en)},
+        "i18n_sample": {
+            "settings.title": i18n.T("settings.title"),
+            "button.done": i18n.T("button.done"),
+        },
         "desktop_layer": diagnose_desktop_layer(),
     }
 

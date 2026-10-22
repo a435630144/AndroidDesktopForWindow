@@ -262,6 +262,79 @@ def main(app):
             pass
     QTest.qWait(60)
 
+    # ---------- W16：v10 响应式卡片区（窄 1 列 / 放得下才 2 列 / 无横滚条） ----------
+    from src.widget_center import CARD_MIN_W, GRID_GAP, columns_for
+    check("W16a columns_for 窄视口 1 列", columns_for(500) == 1, columns_for(500))
+    check("W16b columns_for 恰好放下 2 列",
+          columns_for(2 * CARD_MIN_W + GRID_GAP) == 2,
+          columns_for(2 * CARD_MIN_W + GRID_GAP))
+    check("W16c columns_for 差 1px 不够 2 列",
+          columns_for(2 * CARD_MIN_W + GRID_GAP - 1) == 1,
+          columns_for(2 * CARD_MIN_W + GRID_GAP - 1))
+    check("W16d columns_for 宽视口仍最多 2 列", columns_for(4000) == 2,
+          columns_for(4000))
+    check("W16e columns_for 脏值回 1 列",
+          columns_for(0) == 1 and columns_for(-5) == 1, columns_for(0))
+
+    # W13 已把外层 host 连同 center 销毁，这里自建活页面做布局判据
+    host16 = QWidget()
+    host16.resize(900, 620)
+    lay16 = QVBoxLayout(host16)
+    lay16.setContentsMargins(0, 0, 0, 0)
+    page16 = wc.WidgetCenterPage(layer)
+    lay16.addWidget(page16)
+    host16.show()
+    QTest.qWait(80)
+
+    card0 = page16.cards[0]
+    check("W16f 卡片不再固定宽（最小宽 + 可拉伸）",
+          card0.minimumWidth() >= CARD_MIN_W
+          and card0.sizePolicy().horizontalPolicy() != 0,   # 0 = Fixed
+          "min=%d policy=%s" % (card0.minimumWidth(),
+                                card0.sizePolicy().horizontalPolicy()))
+    check("W16g 横向滚动条关闭（不出现横向滚动）",
+          page16.scroll.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff,
+          page16.scroll.horizontalScrollBarPolicy())
+
+    def _used_cols():
+        cols = set()
+        for card in page16.cards:
+            if not card.isVisible():
+                continue
+            idx = page16.grid.indexOf(card)
+            if idx < 0:
+                continue
+            _r, c, _rs, _cs = page16.grid.getItemPosition(idx)
+            cols.add(c)
+        return sorted(cols)
+
+    host16.resize(int(2 * CARD_MIN_W + GRID_GAP + 200), 620)   # 宽：2 列
+    QTest.qWait(80)
+    wide_cols = _used_cols()
+    check("W16h 宽窗放得下 -> 2 列", wide_cols == [0, 1], str(wide_cols))
+    host16.resize(CARD_MIN_W + 60, 620)                        # 窄：1 列
+    QTest.qWait(80)
+    narrow_cols = _used_cols()
+    check("W16i 窄窗 -> 1 列（无横向滚动）", narrow_cols == [0], str(narrow_cols))
+    w1 = page16.cards[0].width()
+    check("W16j 窄窗 1 列卡片加宽（>= 最小宽）", w1 >= CARD_MIN_W, "w=%d" % w1)
+    host16.resize(900, 620)
+    QTest.qWait(80)
+    check("W16k 拉回宽窗恢复 2 列", _used_cols() == [0, 1], str(_used_cols()))
+    host16.close()
+    host16.deleteLater()
+    QTest.qWait(30)
+    # 1 列形态必须可达：设置窗最小宽要窄于双列阈值（侧栏 212 + 页边距 36）
+    dlg16 = sd.open_settings(fw, st, layer, page="widgets")
+    QTest.qWait(40)
+    dlg_min = dlg16.minimumWidth()
+    need_w = 2 * CARD_MIN_W + GRID_GAP + 212 + 36
+    check("W16l 设置窗最小宽让 1 列可达", dlg_min < need_w,
+          "dlg_min=%d need=%d" % (dlg_min, need_w))
+    dlg16.close()
+    dlg16.deleteLater()
+    QTest.qWait(30)
+
     for w in list(layer.widgets.values()):
         try:
             w.close()
