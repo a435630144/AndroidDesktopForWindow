@@ -107,6 +107,7 @@ def _build_registry() -> Dict[str, WidgetSpec]:
     from .widgets.calendar import CalendarWidget, draw_preview as _preview_calendar
     from .widgets.weather import WeatherWidget, draw_preview as _preview_weather
     from .widgets.todo import TodoWidget, draw_preview as _preview_todo
+    from .widgets.music import MusicWidget, draw_preview as _preview_music
 
     specs = [
         WidgetSpec(
@@ -196,6 +197,17 @@ def _build_registry() -> Dict[str, WidgetSpec]:
                           hint="关闭后只显示上次缓存"),
             ),
             preview=_preview_weather,
+        ),
+        WidgetSpec(
+            type="music",
+            name="音乐",
+            summary="控制本机正在播放的音乐，不挑播放器",
+            factory=MusicWidget,
+            spans=((3, 2), (4, 2)),
+            category="媒体",
+            default_anchored=True,
+            multi_instance=False,
+            preview=_preview_music,
         ),
     ]
     return {s.type: s for s in specs}

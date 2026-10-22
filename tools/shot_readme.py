@@ -427,6 +427,7 @@ WIDGET_SHOWCASE = [
     ("calendar", "日历 · 月视图可翻月", 300, 280, {}),
     ("weather", "天气 · 实时 + 缓存降级", 300, 220, {}),
     ("panel", "桌面面板 · 搜索/文件夹/磁盘/下载", 300, 344, {}),
+    ("music", "音乐 · 控制本机正在播放", 300, 220, {}),
 ]
 
 
@@ -443,7 +444,7 @@ def _no_chrome(w):
 
 
 def shot_widgets():
-    """七种小组件，同一套玻璃语言（时钟/便签也在内）。"""
+    """八种小组件，同一套玻璃语言（时钟/便签/音乐也在内）。"""
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QPainter
     from PySide6.QtWidgets import QApplication
@@ -462,6 +463,14 @@ def shot_widgets():
         w.setAttribute(Qt.WA_DontShowOnScreen, True)
         _no_chrome(w)
         w.show()
+    # 音乐组件：截图时给它走一段进度，否则进度条是空的（0% 看着像坏了）。
+    # `advance` 只有演示档才有；`_after_control()` 是点击后回读快照的同一个入口。
+    mus = layer.widgets.get("s_music")
+    if mus is not None:
+        adv = getattr(getattr(mus, "source", None), "advance", None)
+        if callable(adv):
+            adv(78.0)
+            mus._after_control()
     QApplication.processEvents()
 
     # 4 列 × 2 行；框高统一 300，组件在框内垂直居中
@@ -472,7 +481,7 @@ def shot_widgets():
     img = _blank(W, top + (box_h + gap_y) * 2 + 30)
     p = QPainter(img)
     p.setRenderHint(QPainter.Antialiasing, True)
-    _label(p, "七种桌面小组件", pad_x, 40, 27, "#F4F7FD", True)
+    _label(p, "八种桌面小组件", pad_x, 40, 27, "#F4F7FD", True)
     _label(p, "同一套玻璃材质与排版，尺寸随跨度自适应；每个都能单独配背景色 / 透明度 / 文字色",
            pad_x, 82, 14, "#9DAABF", w=1100)
 
