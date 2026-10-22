@@ -16,9 +16,9 @@ from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QTextEdit, QVBoxLayout
 
-from . import theme
-from .widget_glass import GlassWidget
-from .widget_style import DEFAULT_STYLE, Style, of as style_of
+from ... import theme
+from ...widget_glass import GlassWidget
+from ...widget_style import DEFAULT_STYLE, Style, of as style_of
 
 PAD = 18
 HEAD_H = 20        # 标题行高度（本组件自己的；别与 widget_glass.TITLE_H 混用）
@@ -133,11 +133,3 @@ class NotesWidget(GlassWidget):
         只影响鼠标（键盘焦点照旧），退出编辑态后排字行为完全恢复。
         """
         self.edit.setAttribute(Qt.WA_TransparentForMouseEvents, bool(on))
-
-
-def draw_preview(painter: QPainter, rect, dpr: float = 1.0) -> None:
-    """组件库缩略图：玻璃底 + 示例文字。"""
-    from .widget_glass import paint_glass, PREVIEW_RADIUS
-    r = QRectF(rect)
-    paint_glass(painter, r, PREVIEW_RADIUS)
-    draw(painter, r, "18:30 和小林吃饭\n\n· 带伞\n· 买牛奶")
