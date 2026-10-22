@@ -20,9 +20,9 @@ from typing import List, Optional, Tuple
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 
-from . import theme
-from .widget_style import DEFAULT_STYLE, Style
-from .widget_glass import PAD, GlassWidget
+from ... import theme
+from ...widget_style import DEFAULT_STYLE, Style
+from ...widget_glass import PAD, GlassWidget
 
 WEEKDAY_LABELS = ("一", "二", "三", "四", "五", "六", "日")
 CELL_FS_RATIO = 0.44        # 字号 / 格宽
@@ -172,11 +172,6 @@ def draw(p: QPainter, rect, model: CalendarModel, style: Optional[Style] = None)
                 p.setFont(theme.ui_font(L["fs"]))
             p.drawText(cr, Qt.AlignCenter, str(day))
     p.restore()
-
-
-def draw_preview(p: QPainter, rect, dpr: float = 1.0) -> None:
-    now = datetime.date.today()
-    draw(p, rect, build_model(now.year, now.month, 0, today=now))
 
 
 # ---------------------------------------------------------------- 组件

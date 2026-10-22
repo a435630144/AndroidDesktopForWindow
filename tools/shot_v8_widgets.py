@@ -29,7 +29,7 @@ from src import grid_flow
 from src.storage import Storage
 from src.widget_layer import WidgetLayer
 from src import widget_glass as wg
-from src import widgets_calendar as cal
+from src.widgets import calendar as cal
 from src import widgets_todo as todo
 from src import widgets_weather as wx
 from src.widgets import monitor as mon

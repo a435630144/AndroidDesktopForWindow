@@ -59,7 +59,7 @@ def alpha_nonempty(img, step=2):
 
 
 def main(app):
-    from src import widgets_calendar as wc
+    from src.widgets import calendar as wc
 
     # ---------- K1：月矩阵 ----------
     for y, m in ((2026, 10), (2026, 2), (2024, 2), (2026, 1), (2026, 12)):
