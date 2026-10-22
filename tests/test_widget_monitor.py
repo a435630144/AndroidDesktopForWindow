@@ -58,7 +58,7 @@ def alpha_nonempty(img):
 
 
 def main(app):
-    from src import widget_monitor as wm
+    from src.widgets import monitor as wm
 
     # ---------- M1 / M2 / M3：采样 ----------
     s0 = wm.sample()

@@ -129,7 +129,7 @@ COLS = 2
 # 的 wide 布局把数值挪到右侧一列，2.7:1 下这列只有几十像素，"42%" 直接
 # 压出卡片（2026-10-22 出 README 截图时暴露）。所以预览按默认比例收窄
 # 居中渲染，看到的才是真机上那个样子。
-# 取 1.45：必须**低于** widget_monitor.WIDE_RATIO(1.6)，否则监控仍走宽版
+# 取 1.45：必须**低于** widgets.monitor.WIDE_RATIO(1.6)，否则监控仍走宽版
 PREVIEW_ASPECT = 1.45
 
 def _btn_qss() -> str:

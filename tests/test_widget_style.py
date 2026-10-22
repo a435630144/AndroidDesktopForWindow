@@ -116,7 +116,7 @@ def main():
     # ---------- S8 强调色 ----------
     a = ws.resolve({"accent_color": "#22CC55"})
     check("S8a 强调色取配置值", a.accent.name().upper() == "#22CC55", a.accent.name())
-    from src import widget_monitor as mon
+    from src.widgets import monitor as mon
     check("S8b 监控进度色跟随强调色",
           mon.progress_color(10.0, a).name().upper() == "#22CC55",
           mon.progress_color(10.0, a).name())

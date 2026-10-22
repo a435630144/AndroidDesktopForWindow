@@ -25,10 +25,10 @@ from typing import Dict, Optional
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 
-from . import effects
-from . import theme
-from .widget_style import DEFAULT_STYLE, Style
-from .widget_glass import PAD, GlassWidget
+from ... import effects
+from ... import theme
+from ...widget_style import DEFAULT_STYLE, Style
+from ...widget_glass import PAD, GlassWidget
 
 RING_STROKE_RATIO = 0.18      # 环线宽 / 半径
 WIDE_RATIO = 1.6              # 宽高比 >= 此值走宽版（4×2 是 1.69，2×2 是 0.85）
@@ -284,12 +284,6 @@ def draw(p: QPainter, rect, snap: Snapshot, smooth: Optional[Dict] = None, style
                        Qt.AlignLeft | Qt.AlignVCenter,
                        _fmt(None if raw is None else val))
     p.restore()
-
-
-def draw_preview(p: QPainter, rect, dpr: float = 1.0) -> None:
-    """组件库预览：固定示例数据（不采样、不联网、不跑定时器）。"""
-    demo = Snapshot(cpu=42.0, mem=63.0, disk=55.0)
-    draw(p, rect, demo)
 
 
 # ---------------------------------------------------------------- 组件

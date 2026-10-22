@@ -103,7 +103,7 @@ def _build_registry() -> Dict[str, WidgetSpec]:
     from .widgets.clock import ClockWidget, draw_preview as _preview_clock
     from .widgets.notes import NotesWidget, draw_preview as _preview_notes
     from .widgets.panel import DesktopPanel
-    from .widget_monitor import MonitorWidget, draw_preview as _preview_monitor
+    from .widgets.monitor import MonitorWidget, draw_preview as _preview_monitor
     from .widgets_calendar import CalendarWidget, draw_preview as _preview_calendar
     from .widgets_weather import WeatherWidget, draw_preview as _preview_weather
     from .widgets_todo import TodoWidget, draw_preview as _preview_todo

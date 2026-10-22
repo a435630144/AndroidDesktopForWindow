@@ -32,7 +32,7 @@ from src import widget_glass as wg
 from src import widgets_calendar as cal
 from src import widgets_todo as todo
 from src import widgets_weather as wx
-from src import widget_monitor as mon
+from src.widgets import monitor as mon
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
