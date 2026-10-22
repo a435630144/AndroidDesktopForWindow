@@ -37,21 +37,49 @@ OutputBaseFilename={#OutBase}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; v10 D2（反馈 5）：向导外观与语言选择。
+; 图标与产品图都在编译期嵌进 Setup.exe，运行期不需要额外文件。
+WizardSizePercent=120
+; Inno 6 默认跳过欢迎页（DisableWelcomePage=auto）。产品图只挂在欢迎页/完成页上，
+; 所以这里显式打开欢迎页，否则用户永远看不到它。
+DisableWelcomePage=no
+SetupIconFile=..\assets\app_icon.ico
+WizardImageFile=..\assets\wizard.png
+; Inno 6 里没有 DefaultLanguage / ShowLanguageDialog 指令：
+; **多语言时安装包启动即弹语言选择**，[Languages] 第一项 = 默认语言（中文在前）。
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExe}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Languages]
-Name: "chinesesimplified"; MessagesFile: "compiler:Default.isl"
+; Inno 官方不提供简体中文语言包，这里用官方的"多文件覆盖"机制：
+; 先读英文底 Default.isl，再用我们自己的覆盖层盖掉实际会走到的消息。
+Name: "chinesesimplified"; MessagesFile: "compiler:Default.isl,languages\ChineseSimplified.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[CustomMessages]
+; v10 D2（反馈 5）：任务页/完成页的双语文案。{cm:Name} 按当前语言取。
+chinesesimplified.TaskGroup=可选任务：
+chinesesimplified.TaskDesktopIcon=创建桌面快捷方式
+chinesesimplified.TaskAutostart=开机自动启动
+chinesesimplified.TaskClearData=清除旧版本的个人数据（布局与设置）
+chinesesimplified.RunApp=立即运行 PhoneDesktop
+english.TaskGroup=Optional tasks:
+english.TaskDesktopIcon=Create a desktop shortcut
+english.TaskAutostart=Start with Windows
+; 注意：Inno 的 & 是助记符，字面量 & 要写 &&，否则界面里出现下划线（
+; 'layout _settings'）——英文截图目检发现的。
+english.TaskClearData=Delete personal data from a previous version (layout && settings)
+english.RunApp=Launch PhoneDesktop now
 
 [Tasks]
-Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务:"
-Name: "autostart"; Description: "开机自动启动"; GroupDescription: "附加任务:"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:TaskDesktopIcon}"
+Name: "autostart"; Description: "{cm:TaskAutostart}"; Flags: unchecked
 ; v10 A2（反馈 3）：安装器只在卸载时清 %APPDATA%，覆盖安装会继承旧 state.json
 ; —— 用户在旧版里开过「开发者调试网格」，新版就带着满屏网格启动。
 ; 给一个装前清除的选项（默认不勾，避免误删用户布局）。
-Name: "cleardata"; Description: "清除旧版本的个人数据（布局与设置）"; GroupDescription: "附加任务:"; Flags: unchecked
+Name: "cleardata"; Description: "{cm:TaskClearData}"; Flags: unchecked
 
 [Files]
 ; onedir 产物整体拷贝，保留子目录结构（与 build_portable.ps1 -OutName PhoneDesktop_v10 对应）
@@ -74,7 +102,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
     ValueData: """{app}\{#MyAppExe}"""; Tasks: autostart; Flags: uninsdeletevalue
 
 [Run]
-Filename: "{app}\{#MyAppExe}"; Description: "立即运行 {#MyAppName}"; \
+Filename: "{app}\{#MyAppExe}"; Description: "{cm:RunApp}"; \
     Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
@@ -95,7 +123,10 @@ begin
   Wnd := FindWindowByClassName('Qt6103QWindowIcon');
   // 类名随 Qt 版本变化，仅作提示用途：找不到也不拦截
   if Wnd <> 0 then
-    Result := '检测到 PhoneDesktop 可能正在运行，建议先退出再安装。';
+    if ActiveLanguage = 'english' then
+      Result := 'PhoneDesktop appears to be running. Please close it, then continue.'
+    else
+      Result := '检测到 PhoneDesktop 可能正在运行，建议先退出再安装。';
   // v10 A2（反馈 3）：勾选「清除旧版本个人数据」时，装前删掉旧数据目录，
   // 让新版以默认设置启动（否则旧 state.json 的 dev_mode=True 会被继承）。
   if WizardIsTaskSelected('cleardata') then
