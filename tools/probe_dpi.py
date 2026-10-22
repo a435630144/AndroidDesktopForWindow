@@ -18,24 +18,36 @@ state.json（用临时 Storage）、不碰原生桌面图标。
   ① 1920×1080 @ 100%
   ② 2560×1440 @ 125%（逻辑 2048×1152）
 
-**100% 数据不必改系统缩放**（改完还要注销重登）：进程级 DPI 虚拟化可精确模拟——
+**100% 数据不必改系统缩放**（改完还要注销重登，会中断会话）。两条等效路径都实测过：
+
+路径 A · 进程级 DPI 虚拟化（机器 A / 1920×1080 用这条）——
 `SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE)`（=-1）在本进程
-导入 PySide6 **之前**调用，进程视图即变为 dpr=1.0，与真机 100% 配置完全同构
-（cell / chrome / 徽标 / popup 全是逻辑值派生，与 physical 报哪个数无关）。
+导入 PySide6 **之前**调用，进程视图即变为 dpr=1.0。
 2026-10-22 实测 wrapper：
     python -c "import ctypes,runpy,sys; \
 ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-1)); \
 sys.argv=['probe_dpi.py']; \
 runpy.run_path('tools/probe_dpi.py', run_name='__main__')"
-坑：`QT_SCALE_FACTOR=1.0` 在 Qt6 下**无效**（dpr 仍报系统值），别用它。
+注意：DPI 无感知进程拿到的**逻辑视口不变**（系统按缩放折算物理尺寸给它），
+所以它适合做「chrome/cell vs dpr」的 A/B，**不适合**代表真 100% 的几何——
+真 1920×1080@100% 的视口是 1920×1080（22×10），这条路径给的是 1536×864（17×9）。
 
-**已采数据（2026-10-22，本机 1920×1080 面板）**：
-  125% 真机：dpr 1.25 / chrome_scale 1.25 / cell 84×91 / 徽标 21px /
-            popup(9) 269×337 / **chrome/cell 比 1.25**
-  100% 模拟：dpr 1.00 / chrome_scale 1.00 / cell 84×91 / 徽标 17px /
-            popup(9) 269×337 / **chrome/cell 比 1.00**
-  → 比值 = dpr（cell 等效 scale 恒 1.0），与分辨率无关；2560×1440@125% 预期
-    同为 1.25（机制可推，硬件不支持则无需实测，B2 落地后真机复跑验收）。
+路径 B · 缩放乘数（机器 B / 2560×1440 用这条）——
+    QT_SCALE_FACTOR=<1/dpr>  python tools/probe_dpi.py       # 125% → 0.8
+它乘在系统 dpr 上，**不是**"设成 100%"的开关：设 `1.0` 等于不设（dpr 仍报系统值，
+别据此得出"无效"的结论）；要回到 100% 必须设 `1/dpr`。
+另：`QT_SCREEN_SCALE_FACTORS=1` 在 Qt6/Windows 下**不覆盖**系统 DPI，实测输出与基线逐字相同。
+
+**已采数据（2026-10-22，两台机器四格全实测）** —— 完整矩阵见
+`docs/实施计划_v10.md` §B1「B1 实测矩阵」：
+
+  机器 A（1920×1080 面板）  125% 真机 / 100% DPI 无感知视图  → 比 1.25 / 1.00
+  机器 B（2560×1440 面板）  125% 真机 / 100% QT_SCALE_FACTOR=0.8 → 比 1.25 / 1.00
+  → **chrome/cell 比 == dpr**，与分辨率无关；`cell` 四格恒为 84×91 逻辑。
+    徽标物理 17→26（+53%，dpr²）而 cell 物理 84→105（+25%，dpr¹）
+    —— 内层比外层涨得快，就是"长按圆圈变得很大"的量化来源（B2 要收敛它）。
+  另一条 B1 顺带发现：`MAX_COLS=24 / MAX_ROWS=12` 在 2560×1440@100% 会夹紧
+    （自然需求 29×14 → 24×12），100% 的大屏反而铺不满。
 """
 import sys
 import tempfile
