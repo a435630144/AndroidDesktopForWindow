@@ -49,7 +49,9 @@ POSITION_LABELS = (("bottom", "底部"), ("top", "顶部"),
                    ("left", "左侧"), ("right", "右侧"))
 
 # 条带圆角形态（设置 ▸ Dock 栏）。数据自带中文，界面用 `i18n.TL` 兜底。
-RADIUS_LABELS = (("pill", "胶囊"), ("round", "圆角"), ("square", "直角"))
+# 顺序 = 下拉顺序，`round` 排第一因为它是默认值（用户 2026-10-23 反馈
+# "dock 栏的默认 R 角还是太大了"——胶囊形态在 51px 厚的条带上等于半径 25）。
+RADIUS_LABELS = (("round", "圆角"), ("pill", "胶囊"), ("square", "直角"))
 
 # 2026-10-23 反馈 2（v10 A9）：默认样式整体缩小一档——40px 图标 + 5 槽位
 # 的条带在小屏上像"另一条任务栏"，用户原话"默认样式不要加入这么大的"。
@@ -66,11 +68,19 @@ DOCK_MAX_ITEMS = 24     # 上限（再多滚不动，靠拖出/排序管理；
 HOVER_MS = 160          # hover 放大动画时长（spring_curve，禁近似曲线）
 DRAG_OUT_PX = 36        # 拖出多远算"移出 Dock"（松手即移除）
 
-# 条带形状（设置 ▸ Dock 栏 ▸ 圆角形态）。`pill` = 胶囊（默认），
-# `round` = 固定圆角，`square` = 近乎直角——三种都是同一条条带，只改半径。
-RADIUS_MODES = ("pill", "round", "square")
+# 条带形状（设置 ▸ Dock 栏 ▸ 圆角形态）。`round` = 指定半径（**默认**），
+# `pill` = 胶囊（半径 = 厚度的一半），`square` = 近乎直角——三种都是同一条
+# 条带，只改半径。`round` 的半径由 `dock_radius` 单独可调。
+#
+# 2026-10-23 反馈 24（A11）：默认从 `pill` 改成 `round` + 12px。胶囊在 51px
+# 厚的条带上半径 25.5，视觉上像"药丸"；12px 是 macOS Dock 的量级，条带
+# 仍然是圆角矩形但不再抢眼。**老 state 由 schema 3 迁移一起改**（见
+# `storage._migrate`），否则用户本地已落盘的 "pill" 会让这次改动看不见。
+RADIUS_MODES = ("round", "pill", "square")
+DEFAULT_RADIUS_MODE = "round"
 DEFAULT_ALPHA = 0.86
-ROUND_RADIUS = 16
+DEFAULT_RADIUS = 12
+RADIUS_MIN, RADIUS_MAX = 0, 26
 
 
 def setting(storage, key, default):
@@ -88,8 +98,18 @@ def setting(storage, key, default):
 
 
 def normalize_radius_mode(value) -> str:
+    """非法/缺省一律回 `round`（默认形态），不是最圆的 `pill`。"""
     v = str(value or "").strip().lower()
-    return v if v in RADIUS_MODES else "pill"
+    return v if v in RADIUS_MODES else DEFAULT_RADIUS_MODE
+
+
+def radius_px(storage) -> int:
+    """`round` 形态的圆角半径（逻辑 px，100% 缩放基准，夹到 0~26）。"""
+    try:
+        v = int(setting(storage, "dock_radius", DEFAULT_RADIUS))
+    except (TypeError, ValueError):
+        v = DEFAULT_RADIUS
+    return max(RADIUS_MIN, min(RADIUS_MAX, v))
 
 
 def icon_base(storage) -> int:
@@ -618,15 +638,20 @@ class DockWindow(QWidget):
             self._paint_drop_indicator(p)
 
     def _shape_radius(self, rect) -> float:
-        """条带圆角（设置 ▸ Dock 栏 ▸ 圆角形态）。"""
+        """条带圆角（设置 ▸ Dock 栏 ▸ 圆角形态 + 圆角大小）。
+
+        `round` 用 `dock_radius`（默认 12），并夹到厚度的一半——否则半径超过
+        半厚时 Qt 会自己截断，看起来与"胶囊"无异，滑块后半段等于白拖。
+        """
         mode = normalize_radius_mode(
             self.storage.get_setting("dock_radius_mode"))
         short = min(rect.width(), rect.height()) / 2.0
         if mode == "pill":
             return short
         if mode == "square":
-            return min(4.0, short)
-        return min(max(6.0, ROUND_RADIUS * _scale(self.storage.ui_scale())), short)
+            return min(2.0, short)
+        return min(float(radius_px(self.storage)) * _scale(self.storage.ui_scale()),
+                   short)
 
     def _paint_drop_indicator(self, p: QPainter):
         """外部拖入时的插入位置竖线（水平条）／横线（竖向条）。

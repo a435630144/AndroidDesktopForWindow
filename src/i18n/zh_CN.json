@@ -270,7 +270,7 @@
   "settings.dock.alpha.title": "背景不透明度",
   "settings.dock.alpha.hint": "30%~100%，越低越透出壁纸",
   "settings.dock.radius.title": "圆角形态",
-  "settings.dock.radius.hint": "胶囊 = 两端半圆；直角更克制",
+  "settings.dock.radius.hint": "圆角 = 指定半径（默认）；胶囊 = 两端半圆；直角最克制",
   "settings.dock.hover.title": "悬停放大",
   "settings.dock.hover.hint": "关闭后图标不动，相邻图标也不让位",
   "settings.dock.dot.title": "指示小圆点",
@@ -328,5 +328,7 @@
   "shop.days_ago": "{n} 天前",
   "shop.failed": "安装失败",
   "shop.uninstall_title": "卸载组件",
-  "shop.uninstall_confirm": "卸载「{name}」？桌面上的该组件实例会被移除（布局与其它组件不受影响）。"
+  "shop.uninstall_confirm": "卸载「{name}」？桌面上的该组件实例会被移除（布局与其它组件不受影响）。",
+  "settings.dock.radius_px.title": "圆角大小",
+  "settings.dock.radius_px.hint": "0~26 像素（100% 缩放基准）；选「胶囊」或「直角」时固定，此项不生效"
 }

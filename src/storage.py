@@ -125,7 +125,11 @@ DEFAULT_SETTINGS = {
     # v10 A9（反馈 24）：Dock 外观（全部是"全局旋钮"，不进 dock_items）
     "dock_icon": 32,            # 图标逻辑边长 24~56（100% 缩放下的基准）
     "dock_alpha": 0.86,         # 条带背景不透明度 0.30~1.0
-    "dock_radius_mode": "pill",  # pill（胶囊）| round（圆角矩形）| square（直角）
+    "dock_radius_mode": "round",  # round（指定半径，默认）| pill（胶囊）| square（直角）
+    "dock_radius": 12,           # round 形态的半径 0~26（100% 缩放基准）
+    # 一次性迁移标记（v10 A11）：A9 的默认值是 pill，用户只要动过 Dock 设置
+    # 就已经被 `_apply_dock` 落盘成 "pill"——光改默认值看不见效果。
+    "dock_radius_migrated": False,
     "dock_hover": True,         # hover 放大 + 邻近让位
     "dock_dot": True,           # hover 项下方的小圆点
     # v7 反馈 9「仅小组件模式」：开 → 记住当前布局模式并切无界（组件
@@ -304,6 +308,17 @@ class Storage:
             self._data["settings"]["schema_version"] = 2
             self._data["settings"]["hide_native_icons"] = True
             self._data["settings"]["auto_clone_desktop"] = True
+            self.save()
+        # 3. v10 A11：Dock 默认圆角 pill -> round(12px)。只跑一次，且只在
+        #    "从未主动选择过形态"时改（此刻值是 pill 或缺失）——之后用户
+        #    自己选回胶囊不会被再改。
+        st = self._data["settings"]
+        if not st.get("dock_radius_migrated"):
+            if str(st.get("dock_radius_mode") or "").strip().lower() in ("", "pill"):
+                st["dock_radius_mode"] = "round"
+            if st.get("dock_radius") is None:
+                st["dock_radius"] = 12
+            st["dock_radius_migrated"] = True
             self.save()
 
     def save(self):

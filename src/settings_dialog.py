@@ -479,10 +479,13 @@ class SettingsDialog(QDialog):
         if ctl("sld_dock_alpha") is not None:
             self.storage.set_setting(
                 "dock_alpha", round(int(self.sld_dock_alpha.value()) / 100.0, 4))
+        mode = None
         if ctl("cmb_dock_radius") is not None:
+            mode = dock.normalize_radius_mode(self.cmb_dock_radius.currentData())
+            self.storage.set_setting("dock_radius_mode", mode)
+        if ctl("sld_dock_radius") is not None:
             self.storage.set_setting(
-                "dock_radius_mode",
-                dock.normalize_radius_mode(self.cmb_dock_radius.currentData()))
+                "dock_radius", int(self.sld_dock_radius.value()))
         if ctl("chk_dock_hover") is not None:
             self.storage.set_setting("dock_hover",
                                      bool(self.chk_dock_hover.isChecked()))
@@ -496,6 +499,11 @@ class SettingsDialog(QDialog):
             w = ctl(name)
             if w is not None:
                 w.setEnabled(on)
+        # 圆角大小只在「圆角」形态下有效（胶囊/直角是固定几何）
+        if ctl("sld_dock_radius") is not None:
+            self.sld_dock_radius.setEnabled(
+                on and (mode or dock.normalize_radius_mode(
+                    self.storage.get_setting("dock_radius_mode"))) == "round")
         hook = getattr(self.window, "apply_dock_settings", None)
         if hook is not None:
             hook()
@@ -605,6 +613,21 @@ class SettingsDialog(QDialog):
         self.cmb_dock_radius.currentIndexChanged.connect(self._apply_dock)
         self._row(c2, card2, i18n.T("settings.dock.radius.title"),
                   self.cmb_dock_radius, i18n.T("settings.dock.radius.hint"))
+
+        # v10 A11：形态选「圆角」时半径可调（0~26）。胶囊/直角形态下这个
+        # 滑块没有意义——禁用而不是隐藏，避免行高跳动让面板看起来"抖"。
+        self.sld_dock_radius = QSlider(Qt.Horizontal)
+        self.sld_dock_radius.setRange(dock.RADIUS_MIN, dock.RADIUS_MAX)
+        self.sld_dock_radius.setValue(dock.radius_px(self.storage))
+        self.sld_dock_radius.setFixedWidth(150)
+        self.sld_dock_radius.setStyleSheet(theme.SLIDER_QSS)
+        self.sld_dock_radius.setEnabled(
+            on and dock.normalize_radius_mode(
+                self.storage.get_setting("dock_radius_mode")) == "round")
+        self.sld_dock_radius.valueChanged.connect(self._apply_dock)
+        self._row(c2, card2, i18n.T("settings.dock.radius_px.title"),
+                  self.sld_dock_radius,
+                  i18n.T("settings.dock.radius_px.hint"))
 
         self.chk_dock_hover = Switch()
         self.chk_dock_hover.setChecked(dock.hover_enabled(self.storage))

@@ -270,7 +270,7 @@
   "settings.dock.alpha.title": "Background opacity",
   "settings.dock.alpha.hint": "30%–100%; lower shows more wallpaper",
   "settings.dock.radius.title": "Corner shape",
-  "settings.dock.radius.hint": "Pill = fully rounded ends; square is tighter",
+  "settings.dock.radius.hint": "Rounded = custom radius (default); pill = fully rounded ends; square is tightest",
   "settings.dock.hover.title": "Hover zoom",
   "settings.dock.hover.hint": "Off: icons stay put and neighbours do not shift",
   "settings.dock.dot.title": "Indicator dot",
@@ -328,5 +328,7 @@
   "shop.days_ago": "{n} d ago",
   "shop.failed": "Install failed",
   "shop.uninstall_title": "Remove widget",
-  "shop.uninstall_confirm": "Remove “{name}”? Instances on the desktop will be deleted (layout and other widgets are unaffected)."
+  "shop.uninstall_confirm": "Remove “{name}”? Instances on the desktop will be deleted (layout and other widgets are unaffected).",
+  "settings.dock.radius_px.title": "Corner radius",
+  "settings.dock.radius_px.hint": "0–26 px at 100%; fixed when the shape is Pill or Square"
 }

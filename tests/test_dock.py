@@ -30,6 +30,8 @@
   D17 切位置后窗口几何真的换边（开关 + 四向 + 恢复）
   D18 拖入按落点插入（add_item(index) / _insert_index 同口径）
   D19 设置 ▸ Dock 栏分页存在，改旋钮写设置并触发窗口重排
+  D20 默认圆角是「圆角 12px」而不是胶囊（v10 A11 反馈 24）；半径可调且夹紧
+  D21 旧 state（落盘过 pill）一次性迁移成 round，且用户之后选 pill 不被改回
 
 运行：python tests/test_dock.py   （offscreen；判据看退出码）
 """
@@ -360,8 +362,22 @@ def main():
     check("D16 圆角形态归一化", dock.normalize_radius_mode(
         st16.get_setting("dock_radius_mode")) == "square")
     st16.set_setting("dock_radius_mode", "鬼东西")
-    check("D16 非法圆角回退 pill",
-          dock.normalize_radius_mode("鬼东西") == "pill")
+    check("D16 非法圆角回退 round（默认形态）",
+          dock.normalize_radius_mode("鬼东西") == "round",
+          "%s" % dock.normalize_radius_mode("鬼东西"))
+    st16_0 = Storage(path=tmp / "dock16b.json")
+    check("D16 默认形态 = round（v10 A11 不再默认胶囊）",
+          dock.normalize_radius_mode(
+              st16_0.get_setting("dock_radius_mode")) == "round",
+          "%s" % st16_0.get_setting("dock_radius_mode"))
+    check("D16 默认半径 12px", dock.radius_px(st16_0) == 12,
+          "%s" % dock.radius_px(st16_0))
+    st16_0.set_setting("dock_radius", -5)
+    check("D16 半径下限 0", dock.radius_px(st16_0) == 0,
+          "%s" % dock.radius_px(st16_0))
+    st16_0.set_setting("dock_radius", 200)
+    check("D16 半径上限 26", dock.radius_px(st16_0) == dock.RADIUS_MAX,
+          "%s" % dock.radius_px(st16_0))
     st16.set_setting("dock_hover", False)
     check("D16 dock_hover 关闭", dock.hover_enabled(st16) is False)
     st16.set_setting("dock_dot", False)
@@ -459,11 +475,21 @@ def main():
         check("D19 不透明度写设置",
               abs(float(st19.get_setting("dock_alpha")) - 0.6) < 1e-6,
               "%s" % st19.get_setting("dock_alpha"))
+        check("D19 含圆角大小滑块", hasattr(dlg, "sld_dock_radius"),
+              "missing sld_dock_radius")
+        check("D19 默认形态下滑块可用", dlg.sld_dock_radius.isEnabled())
+        dlg.sld_dock_radius.setValue(20)
+        check("D19 圆角大小写设置", st19.get_setting("dock_radius") == 20,
+              "%s" % st19.get_setting("dock_radius"))
         idx = dlg.cmb_dock_radius.findData("square")
         dlg.cmb_dock_radius.setCurrentIndex(idx)
         check("D19 圆角形态写设置",
               st19.get_setting("dock_radius_mode") == "square",
               "%s" % st19.get_setting("dock_radius_mode"))
+        check("D19 非「圆角」形态时滑块禁用（不留无效旋钮）",
+              not dlg.sld_dock_radius.isEnabled())
+        dlg.cmb_dock_radius.setCurrentIndex(dlg.cmb_dock_radius.findData("round"))
+        check("D19 切回「圆角」后滑块恢复", dlg.sld_dock_radius.isEnabled())
         dlg.chk_dock_hover.setChecked(False)
         check("D19 hover 开关写设置", st19.get_setting("dock_hover") is False)
         dlg.chk_dock.setChecked(False)
@@ -471,6 +497,64 @@ def main():
               not dlg.sp_dock_icon.isEnabled() and not dlg.cmb_dock_pos.isEnabled())
         dlg.deleteLater()
 
+
+    # ---------- D20：默认半径 vs 条带厚度（v10 A11 反馈 24） ----------
+    from PySide6.QtCore import QRectF
+    st20 = Storage(path=tmp / "dock20.json")
+    dock.save_items(st20, seed)
+    w20 = dock.DockWindow(st20)
+    w20.apply_geometry((1920, 1080))
+    thick20 = w20.current_metrics().thickness
+    scale20 = dock._scale(st20.ui_scale())
+    rect20 = QRectF(w20.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+    r_def = w20._shape_radius(rect20)
+    check("D20 默认半径 = 12 × ui_scale", abs(r_def - 12 * scale20) < 0.01,
+          "r=%.2f scale=%.2f" % (r_def, scale20))
+    check("D20 默认半径明显小于半厚（不再是药丸）",
+          r_def < thick20 / 2.0 - 4,
+          "r=%.2f half=%.2f" % (r_def, thick20 / 2.0))
+    st20.set_setting("dock_radius", 0)
+    check("D20 半径 0 = 直角", w20._shape_radius(rect20) == 0.0,
+          "r=%.2f" % w20._shape_radius(rect20))
+    st20.set_setting("dock_radius", 99)
+    check("D20 半径超过半厚时夹到半厚（滑块后半段不虚设）",
+          abs(w20._shape_radius(rect20) - thick20 / 2.0) < 0.51,
+          "r=%.2f half=%.2f" % (w20._shape_radius(rect20), thick20 / 2.0))
+    st20.set_setting("dock_radius_mode", "pill")
+    check("D20 胶囊 = 半厚（保留给愿意要药丸的人）",
+          abs(w20._shape_radius(rect20) - thick20 / 2.0) < 0.51,
+          "r=%.2f" % w20._shape_radius(rect20))
+    st20.set_setting("dock_radius_mode", "square")
+    check("D20 直角形态 <= 2px", w20._shape_radius(rect20) <= 2.0,
+          "r=%.2f" % w20._shape_radius(rect20))
+    w20.close()
+
+    # ---------- D21：旧 state 的一次性迁移（v10 A11） ----------
+    import json
+    legacy = tmp / "dock21.json"
+    legacy.write_text(json.dumps({
+        "settings": {"schema_version": 2, "dock_enabled": True,
+                     "dock_radius_mode": "pill"},
+        "layout": [], "widgets": [],
+    }, ensure_ascii=False), encoding="utf-8")
+    st21 = Storage(path=legacy)
+    check("D21 旧 state 的 pill 迁移成 round",
+          st21.get_setting("dock_radius_mode") == "round",
+          "%s" % st21.get_setting("dock_radius_mode"))
+    check("D21 迁移同时补默认半径 12", st21.get_setting("dock_radius") == 12,
+          "%s" % st21.get_setting("dock_radius"))
+    check("D21 迁移标记已落盘",
+          json.loads(legacy.read_text(encoding="utf-8"))["settings"].get(
+              "dock_radius_migrated") is True, "not saved")
+    # 用户迁移之后主动选回胶囊：再启动不能被改
+    st21.set_setting("dock_radius_mode", "pill")
+    st21.save()
+    st21b = Storage(path=legacy)
+    check("D21 用户主动选 pill 不被二次迁移",
+          st21b.get_setting("dock_radius_mode") == "pill",
+          "%s" % st21b.get_setting("dock_radius_mode"))
+    check("D21 迁移只跑一次（标记仍在）",
+          st21b.get_setting("dock_radius_migrated") is True)
 
     print("")
     if failures:
