@@ -237,6 +237,22 @@ def check_abs_paths() -> None:
 
 TEST_REF_RX = re.compile(r"tests/(test_[A-Za-z0-9_]+\.py)")
 
+# v10 实施计划里**已规划但尚未落地**的测试文件（A/B/C/D 四批逐张卡建）。
+# 落在计划里不是"写错"，所以白名单放行；**文件一建出来就从这个集合里删掉**，
+# 否则真漏建会被这条检查永久掩盖。
+PLANNED_TESTS = {
+    "test_dock.py": "C3 Dock 栏",
+    "test_dpi_scale.py": "B2 DPI 单一旋钮",
+    "test_i18n.py": "D3 英文适配",
+    "test_longpress_select.py": "A3 长按自动勾选",
+    "test_opacity_setting.py": "A8 悬浮不透明度",
+    "test_page_flip.py": "B3 轮播式翻页",
+    "test_select_badge.py": "B4 长按徽标尺寸",
+    "test_storage_paths.py": "D1 改名数据目录",
+    "test_widget_bulk.py": "A7 批量显隐入口",
+    "test_widget_music.py": "C2 音乐组件",
+}
+
 
 def check_test_refs() -> None:
     seen: dict[str, str] = {}
@@ -246,10 +262,13 @@ def check_test_refs() -> None:
             if "xxx" in name or "*" in name:  # 文档里的占位示例
                 continue
             seen.setdefault(name, rel(path))
-    missing = [n for n in sorted(seen) if not os.path.exists(os.path.join(ROOT, "tests", n))]
+    missing = [n for n in sorted(seen)
+               if not os.path.exists(os.path.join(ROOT, "tests", n))
+               and n not in PLANNED_TESTS]
     for name in missing:
         warn(f"{seen[name]}: 引用了 tests/{name}，但文件不存在（计划中？写错？）")
-    print(f"[6] 引用测试文件 {len(seen)} 个，缺失 {len(missing)} 个")
+    print(f"[6] 引用测试文件 {len(seen)} 个，缺失 {len(missing)} 个"
+          f"（另有 {len(PLANNED_TESTS)} 个为 v10 计划待建，白名单放行）")
 
 
 # ---------------------------------------------------------------- 检查 7：版本号一致
