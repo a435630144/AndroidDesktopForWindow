@@ -69,6 +69,7 @@ from src import autostart                          # noqa: E402
 from src import win32_layer                        # noqa: E402
 from src.add_apps_dialog import AddAppsDialog      # noqa: E402
 from src.desktop_window import DesktopWindow       # noqa: E402
+from src.dock import DockWindow, seed_from_layout  # noqa: E402
 from src.paths import asset_path, ensure_app_dirs  # noqa: E402
 from src.settings_dialog import SettingsDialog, open_settings   # noqa: E402
 from src import widget_plugin                     # noqa: E402
@@ -114,6 +115,13 @@ def main() -> int:
     layer = WidgetLayer(storage)
     # M6：翻页时组件与图标联动滑动（sync_page）
     window.set_widget_layer(layer)
+
+    # v10 C3（反馈 17）：Dock 栏。首次启用用桌面上现成的应用填一次
+    # （`dock_seeded` 只填一次——用户手动清空后不会被重新塞满），
+    # 再交给窗口接线：`set_dock` 会按条带 inset 重算网格并重排图标。
+    seed_from_layout(storage)
+    dock_bar = DockWindow(storage)
+    window.set_dock(dock_bar)
     # 锚定小组件是网格一等公民：占位变化（落定/移动）时挤走被压住的图标
     layer.gridChanged.connect(window.on_widget_grid_changed)
     # M4：组件拖动实时预览（hover 按新占位矩形实时挤走图标，松手回退）

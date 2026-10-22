@@ -52,6 +52,22 @@ def _clamp(v: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, v))
 
 
+def _parse_inset(inset) -> Tuple[int, int, int, int]:
+    """可用区四边内缩 (left, top, right, bottom)；非法/None -> 全 0。
+
+    v10 C3：Dock 栏把条带扣掉时只传这个四元组——`grid_metrics` 不认识
+    Dock，也不该认识（否则"可用区"会有第二份定义）。
+    """
+    if not inset:
+        return (0, 0, 0, 0)
+    try:
+        l, t, r, b = (int(inset[0]), int(inset[1]),
+                      int(inset[2]), int(inset[3]))
+    except (TypeError, ValueError, IndexError):
+        return (0, 0, 0, 0)
+    return (max(0, l), max(0, t), max(0, r), max(0, b))
+
+
 def _manual_columns(storage, columns_override) -> Optional[int]:
     """解析手动列数覆盖：columns_override 参数优先于 settings["columns"]。
 
@@ -77,8 +93,14 @@ def _manual_columns(storage, columns_override) -> Optional[int]:
 
 
 def compute(storage, screen_size: Tuple[int, int],
-            columns_override=None, native_px=None) -> GridMetrics:
+            columns_override=None, native_px=None,
+            inset=None) -> GridMetrics:
     """按工作区尺寸计算网格几何（四边等距、精确铺满）。
+
+    inset：可用区四边内缩 `(left, top, right, bottom)`（v10 C3，Dock 栏）。
+    扣除后网格在**剩余区域**内居中，并把原点加回内缩量——这样 Dock 在
+    顶部/左侧时网格整体下移/右移，与"贴边条带让位"语义一致。
+    默认 `(0,0,0,0)` 时与不传完全等价（旧调用点零改动）。
 
     native_px：资源管理器当前桌面图标边长（逻辑 px）。给定且
     settings["icon_match_native"] 为真（默认）时走 **v7 两层模型**：
@@ -102,7 +124,9 @@ def compute(storage, screen_size: Tuple[int, int],
     """
     from . import grid_sizing  # 延迟导入：cell 公式的唯一实现，避免重复
 
-    W, H = int(screen_size[0]), int(screen_size[1])
+    il, it, ir, ib = _parse_inset(inset)
+    W = max(1, int(screen_size[0]) - il - ir)
+    H = max(1, int(screen_size[1]) - it - ib)
     chrome = float(storage.ui_scale())
     edge_x = int(round(26 * chrome))
     edge_y = int(round(22 * chrome))
@@ -114,7 +138,7 @@ def compute(storage, screen_size: Tuple[int, int],
     if native:
         d = grid_sizing.solve_dims(W, H, native, cols=cols_req, rows=rows_req,
                                    origin=origin, edge_x=edge_x, edge_y=edge_y)
-        return GridMetrics(d.cols, d.rows, d.ox, d.oy, d.cw, d.ch,
+        return GridMetrics(d.cols, d.rows, d.ox + il, d.oy + it, d.cw, d.ch,
                            d.cols_auto, d.rows_auto)
 
     # ---- 兜底路径（读不到原生图标尺寸）：v6 屏幕驱动公式 ----
@@ -132,7 +156,7 @@ def compute(storage, screen_size: Tuple[int, int],
     else:
         ox = _clamp(int(origin[0]), 0, max(0, W - cols * cw))
         oy = _clamp(int(origin[1]), 0, max(0, H - rows * ch))
-    return GridMetrics(cols, rows, max(0, ox), max(0, oy), cw, ch,
+    return GridMetrics(cols, rows, max(0, ox + il), max(0, oy + it), cw, ch,
                        cols_auto, rows_auto)
 
 

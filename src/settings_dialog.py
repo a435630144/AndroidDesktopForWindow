@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame,
                                QStackedWidget, QVBoxLayout, QWidget)
 
 from . import autostart
+from . import dock
 from . import grid_flow
 from . import interaction
 from . import page_rules
@@ -373,7 +374,43 @@ class SettingsDialog(QDialog):
         btn_show_all.clicked.connect(self._show_all_widgets)
         # v10 A4（反馈 10 规则 3）：hint 原是按钮名的同义复读，删。
         self._row(c, card, "恢复组件", btn_show_all)
+
+        # v10 C3（反馈 17）：Dock 栏——开关 + 位置四选一。
+        # 两者都只写设置、再由 window.apply_dock_settings() 重排（唯一入口：
+        # 先让 Dock 自己落位，再 refresh_grid 用新 inset 重算行列）。
+        self.chk_dock = Switch()
+        self.chk_dock.setChecked(bool(self.storage.get_setting("dock_enabled")))
+        self.chk_dock.toggled.connect(self._apply_dock)
+        self._row(c, card, "Dock 栏", self.chk_dock,
+                  "底部一排应用快捷方式；开启后网格自动让位")
+
+        self.cmb_dock_pos = ComboBox()
+        for label, pos in dock.POSITION_LABELS:
+            self.cmb_dock_pos.addItem(label, pos)
+        self.cmb_dock_pos.setCurrentIndex(max(0, self.cmb_dock_pos.findData(
+            dock.normalize_position(self.storage.get_setting("dock_position")))))
+        self.cmb_dock_pos.setEnabled(self.chk_dock.isChecked())
+        self.cmb_dock_pos.currentIndexChanged.connect(self._apply_dock)
+        self._row(c, card, "Dock 位置", self.cmb_dock_pos,
+                  "切换后网格重新计算行列")
         lay.addWidget(card)
+
+    def _apply_dock(self, *_):
+        """Dock 开关 / 位置（v10 C3）：写设置 -> 交给窗口重排（唯一入口）。
+
+        窗口是唯一写者：`apply_dock_settings()` 内部先让 Dock 落位、再
+        `refresh_grid()` 用新 inset 重算行列。窗口不可用（探针 / 替身）时
+        只落设置，下次启动生效——绝不在这里自己算一遍几何（双源）。
+        """
+        on = bool(self.chk_dock.isChecked())
+        pos = dock.normalize_position(self.cmb_dock_pos.currentData())
+        self.storage.set_setting("dock_enabled", on)
+        self.storage.set_setting("dock_position", pos)
+        self.storage.save()
+        self.cmb_dock_pos.setEnabled(on)
+        hook = getattr(self.window, "apply_dock_settings", None)
+        if hook is not None:
+            hook()
 
     def _show_all_widgets(self):
         """一键恢复全部被隐藏的组件（v10 A7-1）。没有 layer（测试/异常）时静默跳过。"""

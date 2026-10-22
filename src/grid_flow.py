@@ -557,11 +557,15 @@ def apply_order(entries: Sequence[dict], order: Sequence[str]) -> None:
 _current_metrics = None  # 当前 GridMetrics 快照（M1：几何确定后由 set_grid 写入）
 
 
-def set_grid(storage, screen_size):
+def set_grid(storage, screen_size, inset=None):
     """重算并缓存当前网格几何（M1，指导文档 §1：网格自适应铺满）。
 
     DesktopWindow 在启动 / 窗口几何变化 / DPI·分辨率·任务栏变化后调用。
     screen_size：availableGeometry 的 (W, H)。返回 GridMetrics 快照。
+
+    inset：可用区四边内缩 `(left, top, right, bottom)`（v10 C3，Dock 栏）。
+    由 `dock.storage_inset(storage)` 算出来——**本模块不认识 Dock**，
+    只把四元组透传给 `grid_metrics.compute`（"可用区"只有一处定义）。
 
     2026-10-19（反馈 4）：settings["icon_match_native"] 开启时先把资源
     管理器**当前桌面图标边长**读出来传给 grid_metrics——网格与图标尺寸
@@ -577,7 +581,7 @@ def set_grid(storage, screen_size):
     except Exception:
         native = None
     _current_metrics = grid_metrics.compute(storage, screen_size,
-                                            native_px=native)
+                                            native_px=native, inset=inset)
     return _current_metrics
 
 

@@ -91,6 +91,8 @@ class DesktopWindow(QWidget):
         self._swipe_moved = False
         self._drag_active = False   # QDrag 进行中：命中测试临时全窗口接收
         self._drag_entry_id = None  # 当前正在拖的条目（多选拖动时判成员）
+        # v10 C3：Dock 栏（独立分层窗，由 main.py 注入；None = 未启用/测试）
+        self._dock = None
         self._ole_active = False    # 外部文件 OLE 拖入进行中（拖放目标全窗口）
         self._band_start = None     # 橡皮筋起点（控件坐标）
         self._band_rect = None
@@ -717,6 +719,18 @@ class DesktopWindow(QWidget):
     def _cell(self):
         return grid_flow.cell_size(self.storage)
 
+    def _dock_inset(self):
+        """Dock 条带占用的四边内缩 (l,t,r,b)——网格可用区的唯一扣除入口。
+
+        Dock 关闭 / 模块异常时一律全 0（网格恢复满工作区，绝不因 Dock
+        出问题把桌面布局搞坏）。
+        """
+        from . import dock as dock_mod
+        try:
+            return dock_mod.storage_inset(self.storage)
+        except Exception:      # noqa: BLE001
+            return (0, 0, 0, 0)
+
     def _origin(self):
         return grid_flow.origin()
 
@@ -737,8 +751,14 @@ class DesktopWindow(QWidget):
         不走本路径，实例保留语义不受影响）。
         """
         before = grid_flow.current_metrics()
-        grid_flow.set_grid(self.storage, (self.width(), self.height()))
+        # v10 C3：Dock 条带从可用区里扣掉——inset 是唯一扣除入口，
+        # 具体四元组由 dock.storage_inset() 算（本类不认识 Dock 尺寸模型）
+        grid_flow.set_grid(self.storage, (self.width(), self.height()),
+                           inset=self._dock_inset())
         after = grid_flow.current_metrics()
+        if self._dock is not None:
+            # 条带贴边 + 沿副轴居中，窗口尺寸变了要跟着重排（幂等）
+            self._dock.apply_geometry((self.width(), self.height()))
         self._clamp_page()
         layout = self._icon_layout()
         if layout != self._icon_layout_sig:
@@ -1023,6 +1043,61 @@ class DesktopWindow(QWidget):
     def set_widget_layer(self, layer):
         """注入 WidgetLayer（main.py 装配）：翻页时组件与图标联动滑动。"""
         self._widget_layer = layer
+
+    # ---------- v10 C3：Dock 栏接线 ----------
+    def set_dock(self, dock_window):
+        """注入 Dock 窗口（main.py 装配）。
+
+        Dock 是**独立分层窗**，不参与图标/组件的布局；它只通过
+        `dock.storage_inset()` 影响网格可用区。这里挂引用是为了三件事：
+        拖入判定（落点是否在条带内）、设置变更后重排、关闭时清理。
+        """
+        self._dock = dock_window
+        if dock_window is not None:
+            dock_window.apply_geometry((self.width(), self.height()))
+        self.refresh_grid()
+
+    def apply_dock_settings(self):
+        """Dock 开关 / 位置 / 图标缩放过变化：重排条带 + 重算网格。
+
+        唯一入口（设置页只调它）：先让 Dock 自己落位（它读 storage 的
+        enabled/position），再 `refresh_grid()` 用新的 inset 重算几何。
+        顺序不能反——先 refresh 会拿到旧条带厚度。
+        """
+        if self._dock is not None:
+            self._dock.apply_geometry((self.width(), self.height()))
+        self.refresh_grid()
+
+    def _dock_hit(self, pos) -> bool:
+        """窗口坐标 pos 是否落在 Dock 条带上（屏幕/全局坐标换算后比较）。"""
+        d = self._dock
+        if d is None:
+            return False
+        try:
+            if not d.is_visible_bar():
+                return False
+            g = d.geometry()
+            p = self.mapToGlobal(pos)
+        except (RuntimeError, AttributeError):
+            return False
+        return g.contains(p)
+
+    def _dock_accepts_drop(self, entry_id: str) -> bool:
+        """把一条桌面条目塞进 Dock（拖放/转发共用）；返回是否被接收。"""
+        d = self._dock
+        if d is None:
+            return False
+        try:
+            from . import dock as dock_mod
+            entry = self.storage.find_entry(entry_id)
+            if not dock_mod.entry_is_app(entry):
+                return False
+            if not d.add_item(dock_mod.item_from_entry(entry)):
+                return False
+            self.storage.save()
+            return True
+        except Exception:      # noqa: BLE001 —— 拖放失败不该炸桌面
+            return False
 
     def _clamp_page(self):
         """总页数变少（DPI/分辨率变化、条目减少）后把越界当前页夹回。"""
@@ -1642,8 +1717,15 @@ class DesktopWindow(QWidget):
         if not e.mimeData().hasFormat(MIME_TYPE):
             return
         e.acceptProposedAction()
-        self._drag_move_at(e.mimeData().data(MIME_TYPE).data().decode(),
-                           e.position().toPoint())
+        pos = e.position().toPoint()
+        # v10 C3：拖到 Dock 条带上——交给 Dock 亮边框，网格不做让位预览
+        # （两套"落点"同时亮会让用户以为会落两处）
+        if self._dock is not None:
+            on_dock = self._dock_hit(pos)
+            self._dock.set_drop_highlight(on_dock)
+            if on_dock:
+                return
+        self._drag_move_at(e.mimeData().data(MIME_TYPE).data().decode(), pos)
 
     def _drag_move_at(self, dragged: str, pos):
         """dragMove 主体：边缘翻页检测 + 落点红框 + 让位预览。
@@ -2861,6 +2943,8 @@ class DesktopWindow(QWidget):
 
     def dragLeaveEvent(self, e):
         self._ole_active = False
+        if self._dock is not None:
+            self._dock.set_drop_highlight(False)
         # 反馈 7：拖影从桌面（让位区）滑到目标图标核心区的瞬间，合成
         # dragLeave 先落到本窗口——此刻必须撤销已武装的推让，否则
         # 700ms 后目标会在「松手合并」提示亮着的时候被挤走（F3 病根
@@ -2873,10 +2957,23 @@ class DesktopWindow(QWidget):
 
     def dropEvent(self, e):
         md = e.mimeData()
+        pos = e.position().toPoint()
         if md.hasFormat(MIME_TYPE):
-            self._drop_internal(md.data(MIME_TYPE).data().decode(), e.position().toPoint())
+            payload = md.data(MIME_TYPE).data().decode()
+            # v10 C3：落在 Dock 条带上 -> 入 Dock（只收应用，Q2 拍板）。
+            # 被拒（文件/文件夹/组件，或已在 Dock 里）则继续走常规落点语义，
+            # **不吞事件**——用户拖到 Dock 上发现不收，松手仍应回原位。
+            if self._dock is not None and self._dock_hit(pos):
+                self._dock.set_drop_highlight(False)
+                if self._dock_accepts_drop(payload):
+                    e.acceptProposedAction()
+                    self._drag_active = False
+                    self._drag_multi = False
+                    self._ole_active = False
+                    return
+            self._drop_internal(payload, pos)
         elif md.hasUrls():
-            self._drop_files(md.urls(), e.position().toPoint())
+            self._drop_files(md.urls(), pos)
         e.acceptProposedAction()
         # 无论内部拖拽的 dragFinished 信号是否送达（拖拽源可能已被
         # rebuild 删除），drop 完成后拖动状态一律复位

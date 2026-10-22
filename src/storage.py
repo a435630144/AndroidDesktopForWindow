@@ -104,6 +104,13 @@ DEFAULT_SETTINGS = {
                                # （设置高级选项，rows 始终自动）
     "opacity": 0.95,           # 整理窗口不透明度 0.5 ~ 1.0
     "show_widgets": True,      # 是否显示桌面小组件
+    # ---- v10 C3（反馈 17）：Dock 栏 ----
+    # 默认开启：用户点名要的新功能，装上就该看到；关闭时 inset 全 0，
+    # 网格立刻恢复满工作区（`dock.storage_inset` 是唯一扣除入口）。
+    "dock_enabled": True,
+    "dock_position": "bottom",  # bottom（默认）| top | left | right
+    "dock_items": [],           # [{"name","target","icon_path"}]，规范化见 dock.py
+    "dock_seeded": False,       # 首次启用是否已用桌面现成应用填过（只填一次）
     # v7 反馈 9「仅小组件模式」：开 → 记住当前布局模式并切无界（组件
     # 不占格 = 组件无界）、隐藏全部图标、停画页点/空态提示；关 → 恢复
     # 记住的模式与图标。托盘/右键里的小组件模式开关同步下线，入口唯一

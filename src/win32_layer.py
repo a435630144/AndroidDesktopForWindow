@@ -228,6 +228,7 @@ _BAND_HWNDS = []
 # 时才动 z-order（正常情况零操作，不再抖）。
 BAND_LAYER_DESKTOP = 10   # 全屏整理窗口（图标层）
 BAND_LAYER_WIDGET = 20    # 小组件（必须在图标层之上，否则整窗 HTCLIENT 会吞事件）
+BAND_LAYER_DOCK = 25      # Dock 栏（v10 C3：压住组件，但被文件夹幕布/弹窗盖住）
 BAND_LAYER_SCRIM = 30     # 文件夹幕布
 BAND_LAYER_POPUP = 40     # 文件夹弹窗（带内最顶）
 
