@@ -26,7 +26,7 @@
 | 🤏 滑动让位 | 拖动图标时相邻图标弹性滑动让位（真弹簧物理曲线），落点精确到目标格，可取消滑回 |
 | 📂 拖拽合并 | 图标拖到图标上悬停即合并成文件夹；文件夹弹窗为液态玻璃材质 + 涌现开合动画，成员可拖出/移出 |
 | 🖱️ 批量操作 | 橡皮筋框选 + 多选整体拖动 |
-| 🧩 桌面小组件 | 时钟 / 便签（可编辑）/ 桌面面板（搜索 · 快捷文件夹 · 磁盘 · 最近下载 · 天气）/ **系统监控**（CPU · 内存 · 磁盘）/ **待办清单**（可多实例）/ **日历**（月视图，翻月记忆）/ **天气**（实时 + 缓存降级）；支持**锚定（非悬浮）**模式，融入网格成为一等公民，可拖拽缩放、与图标互相让位 |
+| 🧩 桌面小组件 | 时钟 / 便签（可编辑）/ 桌面面板（搜索 · 快捷文件夹 · 磁盘 · 最近下载 · 天气）/ **系统监控**（CPU · 内存 · 磁盘）/ **待办清单**（可多实例）/ **日历**（月视图，翻月记忆）/ **天气**（实时 + 缓存降级）/ **音乐**（控制本机正在播放，不挑播放器）；支持**锚定（非悬浮）**模式，融入网格成为一等公民，可拖拽缩放、与图标互相让位 |
 | 🧩 组件库 | 设置面板里的独立分页：按分类浏览、搜索、四态卡片（未添加 / 已隐藏 / 显示中 / 已添加）与**实时预览**（预览与桌面渲染同一个 `draw()`）；支持导入 / 卸载第三方组件 zip，改了外观也能立即生效 |
 | 🔀 双模式 | **整理模式**（隐藏原生图标、接管桌面渲染）/ **原生模式**（无界自由摆放）：一键切换，两种布局**各自独立保存**，互不清空 |
 | 🚀 Dock 栏 | 底部一排应用快捷方式（可切顶部/左侧/右侧、可关闭）：hover 弹簧放大、拖入追加、拖动排序、拖出移除；开启后**网格自动让出条带并重算行列** |
@@ -41,9 +41,9 @@
 
 > 下面每一张都由 [`tools/shot_readme.py`](tools/shot_readme.py) 从**真实控件离屏渲染**生成——桌面网格、玻璃组件、右键菜单走的是产品里同一份绘制代码，不是设计稿；两段动图由 [`tools/make_readme_anim.py`](tools/make_readme_anim.py) 用同一批素材逐帧录制（HTML 时间轴 + headless 截图 + Pillow 合成）。
 
-**七种小组件**：时钟 / 便签 / 系统监控 / 待办清单 / 日历 / 天气 / 桌面面板，同一套玻璃材质与排版，尺寸跟着跨度自适应
+**八种小组件**：时钟 / 便签 / 系统监控 / 待办清单 / 日历 / 天气 / 桌面面板 / 音乐，同一套玻璃材质与排版，尺寸跟着跨度自适应
 
-<p align="center"><img src="docs/images/02-widgets.png" width="900" alt="七种桌面小组件"></p>
+<p align="center"><img src="docs/images/02-widgets.png" width="900" alt="八种桌面小组件"></p>
 
 **外观自定义**：同一个时钟三种皮肤。背景色、不透明度、文字色、强调色、圆角都能单独调，留空即跟随主题；字段对所有组件统一生效（包括自己写的插件组件）
 
@@ -138,9 +138,10 @@ PhoneDesktopForWindow/
 │   │   ├── folder_popup.py / folder_tint.py    # 文件夹弹窗与图标底色
 │   │   ├── widget_base.py / widget_layer.py    # 组件基类与注册
 │   │   ├── dock.py             # Dock 栏（纯函数 inset/hit_index + DockWindow）
-│   │   └── widgets/           # 内置组件一组件一目录（clock/notes/panel/monitor/todo/calendar/weather）
+│   │   └── widgets/           # 内置组件一组件一目录（clock/notes/panel/monitor/todo/calendar/weather/music）
 │   └── 基础设施
 │       ├── storage.py / paths.py / version.py
+│       ├── media_session.py    # 播放会话抽象（媒体键 + 演示态降级）
 │       ├── appsource.py / desktop_watch.py / shell_new.py
 │       ├── effects.py / theme.py
 │       └── settings_dialog.py / add_apps_dialog.py / tray.py / autostart.py
@@ -149,7 +150,7 @@ PhoneDesktopForWindow/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip（需 pwsh 7）
 │   ├── installer.iss        # Inno Setup 6 安装包（必须 UTF-8 BOM）
 │   └── check_docs.py        # 文档一致性自检（死链/重复章节/文档与代码数值漂移）
-├── tests/                   # 83 个独立可跑脚本（无 pytest），判据看退出码
+├── tests/                   # 84 个独立可跑脚本（无 pytest），判据看退出码
 │   ├── smoke_test.py        # 无头逻辑回归（存储/克隆/布局）
 │   └── test_*.py            # 每条契约一份：让位引擎、双模式、命中、弹窗、组件…
 └── tools/                   # 运行态探针 probe*.py + 打包验证 verify_*.py
@@ -161,7 +162,7 @@ PhoneDesktopForWindow/
 # 无头逻辑回归
 python tests/smoke_test.py
 
-# 全量单测：49 个独立脚本，无 pytest；判据只看退出码
+# 全量单测：84 个独立脚本，无 pytest；判据只看退出码
 Get-ChildItem tests/test_*.py | ForEach-Object {
     python $_.FullName
     if ($LASTEXITCODE -ne 0) { "FAILED: $($_.Name)" }

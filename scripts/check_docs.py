@@ -246,7 +246,6 @@ TEST_REF_RX = re.compile(r"tests/(test_[A-Za-z0-9_]+\.py)")
 PLANNED_TESTS = {
     "test_i18n.py": "D3 英文适配",
     "test_storage_paths.py": "D1 改名数据目录",
-    "test_widget_music.py": "C2 音乐组件",
 }
 
 

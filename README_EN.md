@@ -26,7 +26,7 @@ Despite the name, this is **far past the prototype stage**: installer, tray resi
 | 🤏 Slide-to-rearrange | Neighboring icons elastically slide aside while you drag (true spring physics curve), snap precisely to the target cell, and slide back on cancel |
 | 📂 Drag-to-merge | Drag an icon onto another to merge into a folder; folder popup uses liquid-glass material with an emergence open/close animation; members can be dragged out / removed |
 | 🖱️ Batch operations | Rubber-band multi-select + whole-group dragging |
-| 🧩 Desktop widgets | Clock / Sticky notes (editable) / Desktop panel (search · quick folders · disks · recent downloads · weather) / **System monitor** (CPU · memory · disk) / **To-do list** (multi-instance) / **Calendar** (month view with remembered month) / **Weather** (live with cache fallback); supports **anchored (non-floating)** mode where widgets join the grid as first-class citizens, with drag-resize and icon mutual displacement |
+| 🧩 Desktop widgets | Clock / Sticky notes (editable) / Desktop panel (search · quick folders · disks · recent downloads · weather) / **System monitor** (CPU · memory · disk) / **To-do list** (multi-instance) / **Calendar** (month view with remembered month) / **Weather** (live with cache fallback) / **Music** (controls whatever is playing on this PC, player-agnostic); supports **anchored (non-floating)** mode where widgets join the grid as first-class citizens, with drag-resize and icon mutual displacement |
 | 🧩 Widget library | A page inside the settings panel: browse widgets by category, search, and see four-state cards (not added / hidden / on desktop / added) with **live previews rendered by the very same `draw()`** used on the desktop; import or uninstall third-party widget zips, and appearance edits apply immediately |
 | 🔀 Two modes | **Organizer mode** (native icons hidden, desktop rendering taken over) / **native mode** (free-floating): one-click switch, and each mode **keeps its own layout** independently |
 | 🚀 Dock | A row of app shortcuts, bottom by default (top / left / right, toggleable): spring-scaled hover, drop to append, drag to reorder, drag out to remove; the **grid automatically yields the strip and recomputes columns/rows** |
@@ -41,9 +41,9 @@ Despite the name, this is **far past the prototype stage**: installer, tray resi
 
 > Every image below is rendered off-screen from the **real widgets** by [`tools/shot_readme.py`](tools/shot_readme.py) — the grid, the glass widgets and the context menus all go through the same drawing code the product runs. No mock-ups. The two animated clips are recorded frame by frame from that same material by [`tools/make_readme_anim.py`](tools/make_readme_anim.py) (HTML timeline + headless screenshots + Pillow).
 
-**Seven desktop widgets**: clock / sticky notes / system monitor / to-do / calendar / weather / desktop panel — one glass material and one typographic scale, sized by grid span
+**Eight desktop widgets**: clock / sticky notes / system monitor / to-do / calendar / weather / desktop panel / music — one glass material and one typographic scale, sized by grid span
 
-<p align="center"><img src="docs/images/02-widgets.png" width="900" alt="The seven desktop widgets"></p>
+<p align="center"><img src="docs/images/02-widgets.png" width="900" alt="The eight desktop widgets"></p>
 
 **Per-widget appearance**: the same clock in three skins. Background colour, opacity, text colour, accent colour and corner radius are all configurable; leave a field empty to follow the theme. The fields apply to every widget, including third-party plugins
 
@@ -138,7 +138,7 @@ PhoneDesktopForWindow/
 │   │   ├── folder_popup.py / folder_tint.py    # Folder popup & icon tint
 │   │   ├── widget_base.py / widget_layer.py    # Widget base & registry
 │   │   ├── dock.py             # Dock (pure inset/hit_index + DockWindow)
-│   │   └── widgets/           # Built-in widgets, one directory per widget (clock/notes/panel/monitor/todo/calendar/weather)
+│   │   └── widgets/           # Built-in widgets, one directory per widget (clock/notes/panel/monitor/todo/calendar/weather/music)
 │   └── Infrastructure
 │       ├── storage.py / paths.py / version.py
 │       ├── appsource.py / desktop_watch.py / shell_new.py
@@ -149,7 +149,7 @@ PhoneDesktopForWindow/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip (needs pwsh 7)
 │   ├── installer.iss        # Inno Setup 6 installer (must be UTF-8 BOM)
 │   └── check_docs.py        # Docs consistency check (dead links / duplicate sections / doc-vs-code drift)
-├── tests/                   # 83 standalone scripts (no pytest); judge by exit code
+├── tests/                   # 84 standalone scripts (no pytest); judge by exit code
 │   ├── smoke_test.py        # Headless logic regression (storage/clone/layout)
 │   └── test_*.py            # One per contract: reflow, dual mode, hit-testing, popup, widgets…
 └── tools/                   # Runtime probes probe*.py + packaged-build verification verify_*.py
@@ -161,7 +161,7 @@ PhoneDesktopForWindow/
 # Headless logic regression
 python tests/smoke_test.py
 
-# Full suite: 82 standalone scripts, no pytest; judge by exit code only
+# Full suite: 84 standalone scripts, no pytest; judge by exit code only
 Get-ChildItem tests/test_*.py | ForEach-Object {
     python $_.FullName
     if ($LASTEXITCODE -ne 0) { "FAILED: $($_.Name)" }
