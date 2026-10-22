@@ -17,9 +17,9 @@
 from PySide6.QtCore import (Property, QElapsedTimer, QEasingCurve,
                             QPropertyAnimation, Qt, QTimer)
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame,
-                               QHBoxLayout, QLabel, QMessageBox, QPushButton,
-                               QScrollArea, QSizePolicy, QSlider,
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog,
+                               QFrame, QHBoxLayout, QLabel, QMessageBox,
+                               QPushButton, QScrollArea, QSizePolicy, QSlider,
                                QStackedWidget, QVBoxLayout, QWidget)
 
 from . import autostart
@@ -308,15 +308,81 @@ class SettingsDialog(QDialog):
         return scroll
 
     def _page_widgets(self):
-        """组件库分页（v9 V2：原独立窗口）。"""
+        """组件库分页（v10 A10：本地组件 + 商店 两个页签）。
+
+        v9 时这里只有"本地组件"（原独立窗口融合进来）；v10 A10 起组件可以
+        从商店下载，两个列表的语义完全不同（一个管桌面上的，一个管能装
+        什么的），所以拆成页签而不是硬塞进一张列表。
+        """
         if self.layer is None:
             from PySide6.QtWidgets import QLabel as _QL
             tip = _QL(i18n.T("settings.widgets.unavailable"))
             tip.setObjectName("rowHint")
             return tip
         from . import widget_center
+        from . import widget_shop
+
+        holder = QWidget()
+        lay = QVBoxLayout(holder)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
+
+        tabs = QHBoxLayout()
+        tabs.setSpacing(6)
+        self.btn_tab_local = QPushButton(i18n.T("widget_center.tab_local"))
+        self.btn_tab_shop = QPushButton(i18n.T("widget_center.tab_shop"))
+        group = QButtonGroup(self)
+        group.setExclusive(True)
+        for btn in (self.btn_tab_local, self.btn_tab_shop):
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setFixedHeight(28)
+            btn.setStyleSheet(
+                "QPushButton{background: transparent; border: none;"
+                " border-radius: 8px; padding: 4px 14px; color: %s;"
+                " font-size: 13px;}"
+                "QPushButton:checked{background: rgba(255,255,255,0.10);"
+                " color: %s;}" % (theme.rgba(theme.TEXT_DIM),
+                                   theme.rgba(theme.TEXT)))
+            group.addButton(btn)
+            tabs.addWidget(btn)
+        tabs.addStretch(1)
+        lay.addLayout(tabs)
+
+        self.widget_stack = QStackedWidget()
         self.center_page = widget_center.WidgetCenterPage(self.layer, self)
-        return self.center_page
+        self.shop_page = widget_shop.WidgetShopPage(self.layer, self)
+        self.shop_page.installedChanged.connect(self._on_widget_installed)
+        self.widget_stack.addWidget(self.center_page)
+        self.widget_stack.addWidget(self.shop_page)
+        lay.addWidget(self.widget_stack, 1)
+
+        self.btn_tab_local.setChecked(True)
+        self.btn_tab_local.clicked.connect(lambda: self._show_widget_tab(0))
+        self.btn_tab_shop.clicked.connect(lambda: self._show_widget_tab(1))
+        return holder
+
+    def _show_widget_tab(self, index: int):
+        """切页签；商店第一次打开才去拉清单（不给没兴趣的人加一次网络请求）。"""
+        self.widget_stack.setCurrentIndex(index)
+        if index == 1:
+            self.btn_tab_shop.setChecked(True)
+            if not self.shop_page.cards():
+                self.shop_page.refresh()
+        else:
+            self.btn_tab_local.setChecked(True)
+
+    def _on_widget_installed(self):
+        """商店装/卸了组件：本地列表要立刻反映（新增卡片 / 卸载消失）。"""
+        try:
+            self.center_page.refresh()
+        except Exception:      # noqa: BLE001
+            pass
+
+    def select_widget_tab(self, which: str) -> None:
+        """按名字切组件库页签（`local` / `shop`）；托盘/外部入口可用。"""
+        self.select_page("widgets")
+        self._show_widget_tab(1 if str(which).lower() == "shop" else 0)
 
     def select_page(self, key):
         """按 key 切到某一分页（托盘/桌面右键用它定位到「组件库」）。"""

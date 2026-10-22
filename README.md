@@ -4,7 +4,7 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前版本 **v9a**（安装包 4.0.0，v9 迭代第一个包），**88 个测试文件 / 约 2100 条断言全绿**；v7 的 39 条实机反馈与 v8 的组件中心全部闭环。v9 首批带来**全组件外观自定义**（背景色/透明度/文字色/强调色）、**组件插件平台**（写一个目录或 zip 就能装进桌面，见 [docs/组件开发指南.md](docs/组件开发指南.md)）、**组件库并入设置面板**、**每页独立排序规则**，以及**手机式双交互**（单击启动 / 长按菜单 / 多选批量 / 滑动翻页）。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v9.md](docs/指导文档_v9.md)，实施计划见 [docs/实施计划_v9.md](docs/实施计划_v9.md)。
+> 🚧 **项目处于活跃开发中**：当前版本 **v9a**（安装包 4.0.0，v9 迭代第一个包），**89 个测试文件 / 约 2150 条断言全绿**；v7 的 39 条实机反馈与 v8 的组件中心全部闭环。v9 首批带来**全组件外观自定义**（背景色/透明度/文字色/强调色）、**组件插件平台**（写一个目录或 zip 就能装进桌面，见 [docs/组件开发指南.md](docs/组件开发指南.md)）、**组件库并入设置面板**、**每页独立排序规则**，以及**手机式双交互**（单击启动 / 长按菜单 / 多选批量 / 滑动翻页）。问题与想法欢迎 Issues —— 当前规格见 [docs/指导文档_v9.md](docs/指导文档_v9.md)，实施计划见 [docs/实施计划_v9.md](docs/实施计划_v9.md)。
 
 [![release](https://img.shields.io/badge/release-v4.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-79%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
@@ -12,7 +12,7 @@
 
 一款**界面语言与操作逻辑都走手机路线**的第三方桌面美化整理软件：它在桌面之上挂载一层自有网格，把原生图标替换为完全可控的渲染层——位置、动效、文件夹、小组件，全部由你定义。
 
-开发深度上它**早已不是原型 Demo**：安装包 + 托盘常驻 + 崩溃日志 + 单实例 + 自动重挂守护，**88 个测试文件 / 约 2100 条断言**，外加完整的开发日志与接手手册（见 [DEVLOG.md](DEVLOG.md) / [HANDOVER.md](HANDOVER.md)）。v10 起产品名统一为 **PhoneDesktop**（exe 名、安装目录、`%APPDATA%` 数据目录一起改；老用户的数据目录在首次启动时**一次性自动迁移**，布局与设置不丢）。
+开发深度上它**早已不是原型 Demo**：安装包 + 托盘常驻 + 崩溃日志 + 单实例 + 自动重挂守护，**89 个测试文件 / 约 2150 条断言**，外加完整的开发日志与接手手册（见 [DEVLOG.md](DEVLOG.md) / [HANDOVER.md](HANDOVER.md)）。v10 起产品名统一为 **PhoneDesktop**（exe 名、安装目录、`%APPDATA%` 数据目录一起改；老用户的数据目录在首次启动时**一次性自动迁移**，布局与设置不丢）。
 
 <p align="center"><img src="docs/images/01-desktop.png" width="900" alt="桌面总览：安卓式网格图标 + 锚定小组件"></p>
 
@@ -150,7 +150,7 @@ PhoneDesktopForWindow/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip（需 pwsh 7）
 │   ├── installer.iss        # Inno Setup 6 安装包（必须 UTF-8 BOM）
 │   └── check_docs.py        # 文档一致性自检（死链/重复章节/文档与代码数值漂移）
-├── tests/                   # 88 个独立可跑脚本（无 pytest），判据看退出码
+├── tests/                   # 89 个独立可跑脚本（无 pytest），判据看退出码
 │   ├── smoke_test.py        # 无头逻辑回归（存储/克隆/布局）
 │   └── test_*.py            # 每条契约一份：让位引擎、双模式、命中、弹窗、组件…
 └── tools/                   # 运行态探针 probe*.py + 打包验证 verify_*.py
@@ -162,7 +162,7 @@ PhoneDesktopForWindow/
 # 无头逻辑回归
 python tests/smoke_test.py
 
-# 全量单测：88 个独立脚本，无 pytest；判据只看退出码
+# 全量单测：89 个独立脚本，无 pytest；判据只看退出码
 Get-ChildItem tests/test_*.py | ForEach-Object {
     python $_.FullName
     if ($LASTEXITCODE -ne 0) { "FAILED: $($_.Name)" }

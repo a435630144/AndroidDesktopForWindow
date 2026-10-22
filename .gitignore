@@ -37,3 +37,7 @@ desktop.ini
 
 # ---- README 动图的中间产物（tools/make_readme_anim.py 生成）----
 tools/_anim/
+
+# ---- 组件仓库（独立 git 仓库 + 独立远端，见 Component/README.md）----
+# 不随主仓库提交：它有自己的历史与发布节奏（gitee 主 / github 兜底）。
+Component/
