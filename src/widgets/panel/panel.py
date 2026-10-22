@@ -21,9 +21,9 @@ from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QFileIconProvider, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem, QScrollArea, QToolButton, QVBoxLayout, QWidget)
 
-from . import appsource
-from . import theme
-from .widget_base import FloatingWidget
+from ... import appsource
+from ... import theme
+from ...widget_base import FloatingWidget
 
 _FONT_CSS = ", ".join('"%s"' % f for f in theme.FONT_FAMILIES)
 _ICON_PROVIDER = QFileIconProvider()

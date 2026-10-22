@@ -102,7 +102,7 @@ def _build_registry() -> Dict[str, WidgetSpec]:
     # 方法内延迟引用 widget_catalog → 本模块。函数内导入让模块级依赖保持单向。
     from .widgets.clock import ClockWidget, draw_preview as _preview_clock
     from .widgets.notes import NotesWidget, draw_preview as _preview_notes
-    from .widgets_panel import DesktopPanel
+    from .widgets.panel import DesktopPanel
     from .widget_monitor import MonitorWidget, draw_preview as _preview_monitor
     from .widgets_calendar import CalendarWidget, draw_preview as _preview_calendar
     from .widgets_weather import WeatherWidget, draw_preview as _preview_weather
