@@ -29,6 +29,7 @@
 | 🧩 桌面小组件 | 时钟 / 便签（可编辑）/ 桌面面板（搜索 · 快捷文件夹 · 磁盘 · 最近下载 · 天气）/ **系统监控**（CPU · 内存 · 磁盘）/ **待办清单**（可多实例）/ **日历**（月视图，翻月记忆）/ **天气**（实时 + 缓存降级）；支持**锚定（非悬浮）**模式，融入网格成为一等公民，可拖拽缩放、与图标互相让位 |
 | 🧩 组件库 | 设置面板里的独立分页：按分类浏览、搜索、四态卡片（未添加 / 已隐藏 / 显示中 / 已添加）与**实时预览**（预览与桌面渲染同一个 `draw()`）；支持导入 / 卸载第三方组件 zip，改了外观也能立即生效 |
 | 🔀 双模式 | **整理模式**（隐藏原生图标、接管桌面渲染）/ **原生模式**（无界自由摆放）：一键切换，两种布局**各自独立保存**，互不清空 |
+| 🚀 Dock 栏 | 底部一排应用快捷方式（可切顶部/左侧/右侧、可关闭）：hover 弹簧放大、拖入追加、拖动排序、拖出移除；开启后**网格自动让出条带并重算行列** |
 | 📑 分页 | 图标溢出自动分页，页点 + 滚轮翻页，拖到屏幕边缘翻页 |
 | 🔄 桌面同步 | 监听桌面目录增删改（1s debounce），新文件自动入场、删除项自动清理 |
 | 🪄 全量接管 | 隐藏原生图标、按桌面文件夹克隆渲染，彻底掌控位置与样式（路线 A）；也可切回仅动效模式 |
@@ -136,6 +137,7 @@ PhoneDesktopForWindow/
 │   ├── UI 部件
 │   │   ├── folder_popup.py / folder_tint.py    # 文件夹弹窗与图标底色
 │   │   ├── widget_base.py / widget_layer.py    # 组件基类与注册
+│   │   ├── dock.py             # Dock 栏（纯函数 inset/hit_index + DockWindow）
 │   │   └── widgets/           # 内置组件一组件一目录（clock/notes/panel/monitor/todo/calendar/weather）
 │   └── 基础设施
 │       ├── storage.py / paths.py / version.py
@@ -147,7 +149,7 @@ PhoneDesktopForWindow/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip（需 pwsh 7）
 │   ├── installer.iss        # Inno Setup 6 安装包（必须 UTF-8 BOM）
 │   └── check_docs.py        # 文档一致性自检（死链/重复章节/文档与代码数值漂移）
-├── tests/                   # 81 个独立可跑脚本（无 pytest），判据看退出码
+├── tests/                   # 82 个独立可跑脚本（无 pytest），判据看退出码
 │   ├── smoke_test.py        # 无头逻辑回归（存储/克隆/布局）
 │   └── test_*.py            # 每条契约一份：让位引擎、双模式、命中、弹窗、组件…
 └── tools/                   # 运行态探针 probe*.py + 打包验证 verify_*.py

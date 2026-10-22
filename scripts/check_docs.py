@@ -244,7 +244,6 @@ TEST_REF_RX = re.compile(r"tests/(test_[A-Za-z0-9_]+\.py)")
 # test_widget_center.py（W15）、test_opacity_setting.py，计划文档引用点已同步，
 # 白名单条目随之删除（B/C/D 批的 7 个仍在）。
 PLANNED_TESTS = {
-    "test_dock.py": "C3 Dock 栏",
     "test_i18n.py": "D3 英文适配",
     "test_page_flip.py": "B3 轮播式翻页",
     "test_storage_paths.py": "D1 改名数据目录",
