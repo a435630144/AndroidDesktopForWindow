@@ -131,6 +131,32 @@ def bg_alpha(storage) -> float:
     return max(0.30, min(1.0, v))
 
 
+# ---- 边框（v10 反馈 27：粗细与颜色可调）----
+BORDER_MIN, BORDER_MAX = 0, 4
+DEFAULT_BORDER_WIDTH = 1
+DEFAULT_BORDER_COLOR = ""       # 空 = 跟随主题 BORDER
+
+
+def border_width(storage) -> int:
+    """条带边框粗细（0 = 不画边框；夹到 0~4）。"""
+    try:
+        v = int(setting(storage, "dock_border_width", DEFAULT_BORDER_WIDTH))
+    except (TypeError, ValueError):
+        v = DEFAULT_BORDER_WIDTH
+    return max(BORDER_MIN, min(BORDER_MAX, v))
+
+
+def border_color(storage) -> QColor:
+    """条带边框颜色；空/非法一律回退主题 BORDER（不留下透明边框）。"""
+    raw = str(setting(storage, "dock_border_color",
+                      DEFAULT_BORDER_COLOR) or "").strip()
+    if raw:
+        c = QColor(raw)
+        if c.isValid():
+            return c
+    return QColor(theme.BORDER)
+
+
 def hover_enabled(storage) -> bool:
     return bool(setting(storage, "dock_hover", True))
 
@@ -643,10 +669,21 @@ class DockWindow(QWidget):
         bg = QColor(theme.SURFACE)
         bg.setAlphaF(bg_alpha(self.storage))
         p.fillPath(path, bg)
-        border = QColor(theme.BORDER)
-        border.setAlphaF(min(1.0, 0.55 + bg_alpha(self.storage) * 0.45))
-        p.setPen(QPen(border, 1))
-        p.drawPath(path)
+        # 边框（v10 反馈 27）：粗细 0~4 + 颜色可调。路径按 粗细/2 内缩，
+        # 否则粗边框有一半画到窗口外被裁掉，看起来比设置值细。
+        bw = border_width(self.storage)
+        if bw > 0:
+            border = border_color(self.storage)
+            border.setAlphaF(min(1.0, 0.55 + bg_alpha(self.storage) * 0.45))
+            half = max(0.5, bw / 2.0)
+            edge = QRectF(self.rect()).adjusted(half, half, -half, -half)
+            r_edge = max(0.0, radius - (half - 0.5))
+            edge_path = QPainterPath()
+            edge_path.addRoundedRect(edge, r_edge, r_edge)
+            p.setPen(QPen(border, bw))
+            p.setBrush(Qt.NoBrush)
+            p.drawPath(edge_path)
+            p.setBrush(Qt.NoBrush)
 
         if not self._items:
             self._paint_empty_hint(p, rect)

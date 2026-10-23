@@ -17,8 +17,8 @@
 from PySide6.QtCore import (Property, QElapsedTimer, QEasingCurve,
                             QPropertyAnimation, Qt, QTimer)
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog,
-                               QFrame, QHBoxLayout, QLabel, QMessageBox,
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QComboBox,
+                               QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
                                QPushButton, QScrollArea, QSizePolicy, QSlider,
                                QStackedWidget, QVBoxLayout, QWidget)
 
@@ -136,6 +136,12 @@ class SettingsDialog(QDialog):
         self.setMinimumSize(600, 560)
         self._nav_buttons = []
         self._pages = {}
+        # Dock 外观滑条的落盘去抖（v10 反馈 27）：拖滑条时每个像素都会
+        # 写设置，若同步 save() 就是"每帧一次磁盘 IO + 全量重建图标"，
+        # 主线程直接被拖死（用户实测卡到崩溃）。250ms 合并成一次写盘。
+        self._dock_save_timer = QTimer(self)
+        self._dock_save_timer.setSingleShot(True)
+        self._dock_save_timer.timeout.connect(self._flush_storage)
         self._build()
         if page:
             self.select_page(page)
@@ -459,6 +465,100 @@ class SettingsDialog(QDialog):
         # 塞在通用页的一张卡里既放不下也不好找。
         lay.addWidget(card)
 
+    def _flush_storage(self):
+        """去抖落盘：设置层 save 失败不该弹窗/炸面板。"""
+        try:
+            self.storage.save()
+        except Exception:      # noqa: BLE001
+            pass
+
+    def _apply_dock_style(self, *_):
+        """Dock **外观**改动（透明度 / 圆角 / 边框 / hover / dot）。
+
+        v10 反馈 27：这里只写设置 + 让 Dock 重绘，**绝不调
+        `apply_dock_settings()`**——那条路径会 `refresh_band()`（win32
+        重挂 + 层序归位）再 `refresh_grid()`（删掉重建全部图标 QWidget）。
+        拖滑条时每像素走一次，就是用户看到的"每帧全屏重渲染"以及崩溃。
+
+        落盘走 250ms 去抖（`_dock_save_timer`），松手后写一次。
+        """
+        ctl = lambda name: getattr(self, name, None)  # noqa: E731
+        if ctl("sld_dock_alpha") is not None:
+            self.storage.set_setting(
+                "dock_alpha", round(int(self.sld_dock_alpha.value()) / 100.0, 4))
+        mode = None
+        if ctl("cmb_dock_radius") is not None:
+            mode = dock.normalize_radius_mode(self.cmb_dock_radius.currentData())
+            self.storage.set_setting("dock_radius_mode", mode)
+        if ctl("sld_dock_radius") is not None:
+            self.storage.set_setting(
+                "dock_radius", int(self.sld_dock_radius.value()))
+        if ctl("sld_dock_border") is not None:
+            self.storage.set_setting(
+                "dock_border_width", int(self.sld_dock_border.value()))
+        if ctl("chk_dock_hover") is not None:
+            self.storage.set_setting("dock_hover",
+                                     bool(self.chk_dock_hover.isChecked()))
+        if ctl("chk_dock_dot") is not None:
+            self.storage.set_setting("dock_dot",
+                                     bool(self.chk_dock_dot.isChecked()))
+        if ctl("chk_dock_border_auto") is not None:
+            self._dock_border_color = (
+                "" if self.chk_dock_border_auto.isChecked()
+                else str(getattr(self, "_dock_border_color", "") or ""))
+            self.storage.set_setting("dock_border_color",
+                                     self._dock_border_color)
+            self._sync_dock_border_btn()
+        hook = getattr(self.window, "apply_dock_style", None)
+        if hook is not None:
+            hook()
+        # 圆角大小只在「圆角」形态下有效（胶囊/直角是固定几何）
+        if ctl("sld_dock_radius") is not None:
+            self.sld_dock_radius.setEnabled(
+                bool(self.chk_dock.isChecked())
+                and (mode or dock.normalize_radius_mode(
+                    self.storage.get_setting("dock_radius_mode"))) == "round")
+        self._dock_save_timer.start(250)
+
+    def _sync_dock_border_btn(self):
+        """颜色按钮：色块显示当前边框色；跟随主题时禁用并写「跟随主题」。"""
+        raw = str(getattr(self, "_dock_border_color", "") or "").strip()
+        c = QColor(raw) if raw else dock.border_color(self.storage)
+        if not c.isValid():
+            c = dock.border_color(self.storage)
+        fg = "#101216" if c.lightness() > 150 else "#f2f5fa"
+        btn = self.btn_dock_border_color
+        btn.setText(i18n.T("dock.border.auto") if not raw else c.name().upper())
+        btn.setStyleSheet(
+            "QPushButton{background-color:%s;color:%s;border:1px solid %s;"
+            "border-radius:6px;padding:4px 8px;font-size:12px;}"
+            "QPushButton:disabled{color:%s;}"
+            % (c.name(), fg, theme.rgba(theme.BORDER),
+               theme.rgba(theme.TEXT_FAINT)))
+        btn.setEnabled(bool(self.chk_dock.isChecked())
+                       and not self.chk_dock_border_auto.isChecked())
+
+    def _on_border_auto_toggled(self, checked):
+        """从「跟随主题」切到自定义时，以主题描边色作为起点（不跳到纯黑）。"""
+        if not checked and not str(self._dock_border_color or "").strip():
+            self._dock_border_color = dock.border_color(self.storage).name()
+        self._sync_dock_border_btn()
+        self._apply_dock_style()
+
+    def _pick_dock_border_color(self):
+        raw = str(getattr(self, "_dock_border_color", "") or "").strip()
+        start = QColor(raw) if raw else dock.border_color(self.storage)
+        if not start.isValid():
+            start = QColor(theme.BORDER)
+        c = QColorDialog.getColor(start, self,
+                                  i18n.T("settings.dock.border_color.title"),
+                                  QColorDialog.DontUseNativeDialog)
+        if not c.isValid():
+            return
+        self._dock_border_color = c.name()
+        self._sync_dock_border_btn()
+        self._apply_dock_style()
+
     def _apply_dock(self, *_):
         """Dock 开关 / 位置 / 外观（v10 A9）：写设置 -> 交给窗口重排。
 
@@ -494,13 +594,25 @@ class SettingsDialog(QDialog):
         if ctl("chk_dock_dot") is not None:
             self.storage.set_setting("dock_dot",
                                      bool(self.chk_dock_dot.isChecked()))
+        if ctl("sld_dock_border") is not None:
+            self.storage.set_setting(
+                "dock_border_width", int(self.sld_dock_border.value()))
+        if ctl("chk_dock_border_auto") is not None:
+            self._dock_border_color = (
+                "" if self.chk_dock_border_auto.isChecked()
+                else str(getattr(self, "_dock_border_color", "") or ""))
+            self.storage.set_setting("dock_border_color",
+                                     self._dock_border_color)
         self.storage.save()
         # 关掉 Dock 时，子控件一并禁用（不留"能点但无效"的旋钮）
         for name in ("cmb_dock_pos", "sp_dock_icon", "sld_dock_alpha",
-                     "cmb_dock_radius", "chk_dock_hover", "chk_dock_dot"):
+                     "cmb_dock_radius", "chk_dock_hover", "chk_dock_dot",
+                     "sld_dock_border", "chk_dock_border_auto"):
             w = ctl(name)
             if w is not None:
                 w.setEnabled(on)
+        if ctl("btn_dock_border_color") is not None:
+            self._sync_dock_border_btn()
         # 圆角大小只在「圆角」形态下有效（胶囊/直角是固定几何）
         if ctl("sld_dock_radius") is not None:
             self.sld_dock_radius.setEnabled(
@@ -600,7 +712,8 @@ class SettingsDialog(QDialog):
         self.sld_dock_alpha.setFixedWidth(150)
         self.sld_dock_alpha.setStyleSheet(theme.SLIDER_QSS)
         self.sld_dock_alpha.setEnabled(on)
-        self.sld_dock_alpha.valueChanged.connect(self._apply_dock)
+        self.sld_dock_alpha.valueChanged.connect(self._apply_dock_style)
+        self.sld_dock_alpha.sliderReleased.connect(self._flush_storage)
         self._row(c2, card2, i18n.T("settings.dock.alpha.title"),
                   self.sld_dock_alpha, i18n.T("settings.dock.alpha.hint"))
 
@@ -626,22 +739,58 @@ class SettingsDialog(QDialog):
         self.sld_dock_radius.setEnabled(
             on and dock.normalize_radius_mode(
                 self.storage.get_setting("dock_radius_mode")) == "round")
-        self.sld_dock_radius.valueChanged.connect(self._apply_dock)
+        self.sld_dock_radius.valueChanged.connect(self._apply_dock_style)
+        self.sld_dock_radius.sliderReleased.connect(self._flush_storage)
         self._row(c2, card2, i18n.T("settings.dock.radius_px.title"),
                   self.sld_dock_radius,
                   i18n.T("settings.dock.radius_px.hint"))
 
+        # v10 反馈 27：边框粗细（0 = 不画）+ 颜色（可跟随主题）
+        self.sld_dock_border = QSlider(Qt.Horizontal)
+        self.sld_dock_border.setRange(dock.BORDER_MIN, dock.BORDER_MAX)
+        self.sld_dock_border.setValue(dock.border_width(self.storage))
+        self.sld_dock_border.setFixedWidth(150)
+        self.sld_dock_border.setStyleSheet(theme.SLIDER_QSS)
+        self.sld_dock_border.setEnabled(on)
+        self.sld_dock_border.valueChanged.connect(self._apply_dock_style)
+        self.sld_dock_border.sliderReleased.connect(self._flush_storage)
+        self._row(c2, card2, i18n.T("settings.dock.border_w.title"),
+                  self.sld_dock_border, i18n.T("settings.dock.border_w.hint"))
+
+        self._dock_border_color = str(
+            self.storage.get_setting("dock_border_color") or "")
+        self.btn_dock_border_color = QPushButton()
+        self.btn_dock_border_color.setFixedWidth(96)
+        self.btn_dock_border_color.setCursor(Qt.PointingHandCursor)
+        self.btn_dock_border_color.clicked.connect(self._pick_dock_border_color)
+
+        self.chk_dock_border_auto = QCheckBox(
+            i18n.T("dock.border.auto"))
+        self.chk_dock_border_auto.setChecked(not self._dock_border_color.strip())
+        self.chk_dock_border_auto.setEnabled(on)
+        self.chk_dock_border_auto.toggled.connect(self._on_border_auto_toggled)
+
+        wrap = QWidget()
+        hwrap = QHBoxLayout(wrap)
+        hwrap.setContentsMargins(0, 0, 0, 0)
+        hwrap.setSpacing(8)
+        hwrap.addWidget(self.btn_dock_border_color)
+        hwrap.addWidget(self.chk_dock_border_auto)
+        self._sync_dock_border_btn()
+        self._row(c2, card2, i18n.T("settings.dock.border_color.title"), wrap,
+                  i18n.T("settings.dock.border_color.hint"))
+
         self.chk_dock_hover = Switch()
         self.chk_dock_hover.setChecked(dock.hover_enabled(self.storage))
         self.chk_dock_hover.setEnabled(on)
-        self.chk_dock_hover.toggled.connect(self._apply_dock)
+        self.chk_dock_hover.toggled.connect(self._apply_dock_style)
         self._row(c2, card2, i18n.T("settings.dock.hover.title"),
                   self.chk_dock_hover, i18n.T("settings.dock.hover.hint"))
 
         self.chk_dock_dot = Switch()
         self.chk_dock_dot.setChecked(dock.dot_enabled(self.storage))
         self.chk_dock_dot.setEnabled(on)
-        self.chk_dock_dot.toggled.connect(self._apply_dock)
+        self.chk_dock_dot.toggled.connect(self._apply_dock_style)
         self._row(c2, card2, i18n.T("settings.dock.dot.title"),
                   self.chk_dock_dot, i18n.T("settings.dock.dot.hint"))
         lay.addWidget(card2)

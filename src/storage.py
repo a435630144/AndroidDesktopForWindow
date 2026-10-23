@@ -132,6 +132,9 @@ DEFAULT_SETTINGS = {
     "dock_radius_migrated": False,
     "dock_hover": True,         # hover 放大 + 邻近让位
     "dock_dot": True,           # hover 项下方的小圆点
+    # v10 反馈 27：边框可调（0 = 不画边框；颜色空 = 跟随主题 BORDER）
+    "dock_border_width": 1,     # 0~4 逻辑像素
+    "dock_border_color": "",    # "#rrggbb" / ""（跟随主题）
     # v7 反馈 9「仅小组件模式」：开 → 记住当前布局模式并切无界（组件
     # 不占格 = 组件无界）、隐藏全部图标、停画页点/空态提示；关 → 恢复
     # 记住的模式与图标。托盘/右键里的小组件模式开关同步下线，入口唯一

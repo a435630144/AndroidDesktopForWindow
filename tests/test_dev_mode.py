@@ -229,7 +229,40 @@ def main(app):
           n11 * 8 < max(1, n10), "off=%d on=%d" % (n11, n10))
     w11.close()
 
-    # ---------- D6：设置对话框开关 ----------
+    # ---------- D12：组件真实窗口矩形（v10 反馈 27 盲区诊断） ----------
+    # 红底画的是**推算**的 span 盒，窗口才是 Qt 实际摆出来的地。两者不一致
+    # （历史 span 残留 / 编辑态外扩没收回 / 悬浮组件）时，多出来的透明区会
+    # 吞点击——用户"没有红底却点不动"。D12 锁住：真实窗口能被取到，且与
+    # card_size 一致；不一致时调试信息要能报出来。
+    from src.widget_layer import WidgetLayer
+    st12 = _mk_widget_state(True)
+    w12 = DesktopWindow(st12)
+    w12.resize(W, H)
+    w12._update_grid_metrics()
+    layer12 = WidgetLayer(st12)
+    w12.set_widget_layer(layer12)
+    app.processEvents()
+    rows12 = w12._widget_window_rects()
+    check("D12a 取到组件真实窗口", len(rows12) == 1, "n=%d" % len(rows12))
+    if rows12:
+        _wid12, win12, card12, anch12 = rows12[0]
+        check("D12b 锚定组件的窗口 == 卡片尺寸",
+              win12.width() == card12[0] and win12.height() == card12[1],
+              "win=%dx%d card=%dx%d" % (win12.width(), win12.height(),
+                                        card12[0], card12[1]))
+        check("D12c 是锚定组件", anch12 is True)
+        img12 = render_window(w12)
+        filled12 = _count(img12, 0, 0, W, H, lambda c: c.alpha() > 0)
+        check("D12d 带真实窗口/图标框的调试绘制不抛且非空",
+              filled12 > 1000, str(filled12))
+    for w_ in list(getattr(layer12, "widgets", {}).values()):
+        try:
+            w_.close()
+        except Exception:      # noqa: BLE001
+            pass
+    w12.close()
+
+    # ---------- D11：dev_mode 关 -> 同区域无调试色 ----------
     st = make_state(dev=True, native=True)
     fake = SimpleNamespace(updates=0, rebuilds=0)
 

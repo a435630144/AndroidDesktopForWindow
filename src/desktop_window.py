@@ -1088,6 +1088,23 @@ class DesktopWindow(QWidget):
                 self._dock = None
         self.refresh_grid()
 
+    def apply_dock_style(self):
+        """只刷新 Dock **外观**：重绘条带，不碰网格。
+
+        v10 反馈 27：设置页拖透明度/圆角/边框滑条时走这里。旧路径一律调
+        `apply_dock_settings()`，于是每个 valueChanged 都
+        `refresh_band()`（win32 重挂 + 层序归位）+ `refresh_grid()`（删掉
+        重建全部图标 QWidget）——主线程被拖死，还会在重建过程中崩溃。
+        外观不改变条带几何，重绘一帧就够。
+        """
+        d = self._dock
+        if d is None:
+            return
+        try:
+            d.update()
+        except (RuntimeError, AttributeError):
+            self._dock = None
+
     def _dock_hit(self, pos) -> bool:
         """窗口坐标 pos 是否落在 Dock 条带上（屏幕/全局坐标换算后比较）。"""
         d = self._dock
@@ -1411,6 +1428,22 @@ class DesktopWindow(QWidget):
                    "帧 %.0ffps  均 %.1fms  峰 %.1fms  上次绘制 %.1f万px"
                    % (st["fps"], st["avg_ms"], st["max_ms"],
                       st["last_area"] / 10000.0))
+        # v10 反馈 27：组件真实窗口 vs 卡片尺寸。不一致 = 盒外有一圈吞点击
+        # 的透明区（用户"没有红底却点不动"的直接证据），红字报出来。
+        rows = self._widget_window_rects()
+        bad = [r for r in rows
+               if r[3] and (r[1].width() != r[2][0] or r[1].height() != r[2][1])]
+        if bad:
+            p.setPen(QPen(QColor(255, 96, 96, 240), 1))
+            txt = "组件窗口异常 %d/%d：" % (len(bad), len(rows)) + "  ".join(
+                "%s %dx%d(应%dx%d)" % (r[0], r[1].width(), r[1].height(),
+                                       r[2][0], r[2][1]) for r in bad[:3])
+        else:
+            p.setPen(QPen(QColor(0, 255, 170, 200), 1))
+            txt = ("组件窗口 %d/%d 与卡片一致 · 图标 %d"
+                   % (len(rows), len(rows), len(self.icons)))
+        p.drawText(QRect(x0 + 6, y0 + 42, 700, 18),
+                   Qt.AlignLeft | Qt.AlignVCenter, txt)
         p.end()
 
     # ---------- 组件碰撞可视化（v10 反馈 26） ----------
@@ -1439,6 +1472,37 @@ class DesktopWindow(QWidget):
             out.append((QRect(int(x), int(y), int(bw), int(bh)), (cs, rs)))
         return out
 
+    def _widget_window_rects(self) -> list:
+        """组件**真实窗口**矩形（本窗口坐标）+ 应有卡片尺寸 + 是否锚定。
+
+        v10 反馈 27 第三条（"没有红底却点不动"）：红底画的是**推算**出来的
+        span 盒，窗口却是 Qt 实际摆出来的那块地。两者不一致时（历史 span
+        残留、编辑态外扩没收回、悬浮组件的自由像素尺寸），多出来的透明区
+        就是吞点击的盲区。调试画真实窗口，让偏差可视化——别再靠推算自证。
+        """
+        from . import widget_geom
+        out = []
+        layer = getattr(self, "_widget_layer", None)
+        widgets = getattr(layer, "widgets", None) if layer is not None else None
+        if not widgets:
+            return out
+        for entry in self.storage.widgets:
+            w = widgets.get(entry.get("id"))
+            if w is None:
+                continue
+            try:
+                if not w.isVisible():
+                    continue
+                g = w.geometry()
+                tl = self.mapFromGlobal(w.mapToGlobal(QPoint(0, 0)))
+                cs, rs = grid_flow.widget_span(self.storage, entry)
+                card = widget_geom.card_size(self.storage, (cs, rs))
+            except (RuntimeError, AttributeError, TypeError, ValueError):
+                continue
+            out.append((entry.get("id"), QRect(tl, g.size()), card,
+                        bool(entry.get("anchored"))))
+        return out
+
     def _paint_widget_collision(self, p: QPainter):
         """调试模式：给组件碰撞体积铺半透明红底 + 画卡片边框。
 
@@ -1446,11 +1510,21 @@ class DesktopWindow(QWidget):
         `widget_fill` 居中缩小，**卡片与 span 盒之间的缝隙**才是命中/避让
         的真实边界。红底铺满 span 盒 = 组件真正"占的地"；卡片边框画出视觉
         边界——两者差多少，一眼可见。
+
+        v10 反馈 27 追加：再画**真实窗口矩形**（橙实线）。用户遇到"没有
+        红底却点不动"——那块地不属于 span 盒，只能是某个窗口在吞点击。
+        真实窗口比推算的卡片更可信：窗口一旦大于卡片（历史 span 残留 /
+        编辑态没收回 / 悬浮组件），多出来的透明区就是盲区本身。两者尺寸
+        不一致时窗口框画成红色并计入调试信息。
         """
         from . import widget_geom
         red_fill = QColor(255, 56, 56, 64)
         red_edge = QColor(255, 56, 56, 170)
         card_edge = QColor(255, 160, 60, 220)
+        win_ok = QColor(255, 176, 64, 235)      # 窗口与卡片一致：橙实线
+        win_bad = QColor(255, 48, 48, 255)      # 不一致：刺眼红实线
+        float_edge = QColor(190, 120, 255, 220)  # 悬浮组件：紫框（无 span 盒）
+        icon_edge = QColor(0, 210, 255, 110)    # 图标窗口：淡青细框
         p.save()
         p.setRenderHint(QPainter.Antialiasing, False)
         try:
@@ -1475,8 +1549,35 @@ class DesktopWindow(QWidget):
                            Qt.AlignLeft | Qt.AlignTop,
                            "%d×%d 盒 %dx%d" % (span[0], span[1],
                                                rect.width(), rect.height()))
+            # 真实窗口矩形（v10 反馈 27）：与卡片一致才画橙线
+            p.setFont(theme.ui_font(9))
+            for _wid, win, card_size, anchored in self._widget_window_rects():
+                same = (win.width() == card_size[0]
+                        and win.height() == card_size[1])
+                col = (win_ok if same else win_bad) if anchored else float_edge
+                p.setBrush(Qt.NoBrush)
+                p.setPen(QPen(col, 2 if not same else 1))
+                p.drawRect(win)
+                p.setPen(QPen(col, 1))
+                p.drawText(QRect(win.x() + 3, win.y() + 15,
+                                 max(60, win.width() - 6), 14),
+                           Qt.AlignLeft | Qt.AlignTop,
+                           "%s win %dx%d" % ("悬浮" if not anchored else "窗口",
+                                             win.width(), win.height()))
+            # 图标窗口矩形：淡青细框——"点不动"时先看图标窗口在哪
+            p.setPen(QPen(icon_edge, 1))
+            for icon in self.icons.values():
+                try:
+                    if not icon.isVisible():
+                        continue
+                    g = icon.geometry()
+                    p.drawRect(QRect(self.mapFromGlobal(icon.mapToGlobal(QPoint(0, 0))),
+                                     g.size()))
+                except (RuntimeError, AttributeError):
+                    continue
         finally:
             p.restore()
+
 
     # ---------- 重建 ----------
     def _icon_size(self):

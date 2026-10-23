@@ -43,6 +43,10 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from PySide6.QtGui import QColor, QImage
+
+from src import theme
+
 failures = []
 
 
@@ -582,6 +586,105 @@ def main():
     check("D24f 普通应用条目不受影响", dock.entry_is_app(real) is True)
     wd = {"type": "widget", "id": "w1", "app": {"name": "x", "target": "y"}}
     check("D24g 组件条目仍拒", dock.entry_is_app(wd) is False)
+
+    # ---------- D25：拖外观滑条不重排网格（v10 反馈 27 卡顿/崩溃） ----------
+    # 病根：滑条 valueChanged -> _apply_dock -> apply_dock_settings，
+    # 后者 refresh_band()（win32 重挂）+ refresh_grid()（删掉重建全部图标）
+    # 每个像素走一次 —— 主线程拖死，重建过程中还会崩。
+    st25 = Storage(path=tmp / "dock25.json")
+    st25.set_setting("dock_enabled", True)
+
+    class FakeWin25:
+        def __init__(self):
+            self.layout_calls = 0
+            self.style_calls = 0
+
+        def apply_dock_settings(self):
+            self.layout_calls += 1
+
+        def apply_dock_style(self):
+            self.style_calls += 1
+
+    fw25 = FakeWin25()
+    dlg25 = settings_dialog.SettingsDialog(fw25, st25, None)
+    base25 = fw25.layout_calls
+    for v in (10, 14, 18, 24, 26):
+        dlg25.sld_dock_radius.setValue(v)
+    check("D25a 拖圆角滑条不触发网格重排",
+          fw25.layout_calls == base25, "layout=%d" % fw25.layout_calls)
+    check("D25b 拖圆角滑条走轻量外观刷新",
+          fw25.style_calls >= 3, "style=%d" % fw25.style_calls)
+    check("D25c 滑条仍写设置", st25.get_setting("dock_radius") == 26,
+          "%s" % st25.get_setting("dock_radius"))
+    for v in (40, 55, 70):
+        dlg25.sld_dock_alpha.setValue(v)
+    check("D25d 拖透明度滑条也不重排",
+          fw25.layout_calls == base25, "layout=%d" % fw25.layout_calls)
+    check("D25e 透明度写设置",
+          abs(float(st25.get_setting("dock_alpha")) - 0.70) < 1e-6,
+          "%s" % st25.get_setting("dock_alpha"))
+    check("D25f 落盘走 250ms 去抖（定时器在跑）",
+          dlg25._dock_save_timer.isActive(),
+          "active=%s" % dlg25._dock_save_timer.isActive())
+    dlg25.sp_dock_icon.setValue(40)
+    check("D25g 改图标尺寸仍要重排（外观路径不背这个锅）",
+          fw25.layout_calls > base25, "layout=%d" % fw25.layout_calls)
+
+    # ---------- D26：边框粗细 / 颜色可调（v10 反馈 27） ----------
+    check("D26a 边框默认 1px（细描边）",
+          dock.border_width(Storage(path=tmp / "dock26a.json")) == 1,
+          str(dock.border_width(Storage(path=tmp / "dock26a.json"))))
+    st26 = Storage(path=tmp / "dock26.json")
+    st26.set_setting("dock_border_width", 99)
+    check("D26b 边框粗细上夹到 4", dock.border_width(st26) == 4,
+          str(dock.border_width(st26)))
+    st26.set_setting("dock_border_width", -3)
+    check("D26c 边框粗细下夹到 0", dock.border_width(st26) == 0,
+          str(dock.border_width(st26)))
+    st26.set_setting("dock_border_width", "脏值")
+    check("D26d 脏值回退默认 1", dock.border_width(st26) == 1,
+          str(dock.border_width(st26)))
+    st26.set_setting("dock_border_color", "not-a-color")
+    check("D26e 非法颜色回退主题 BORDER",
+          dock.border_color(st26).name() == QColor(theme.BORDER).name(),
+          dock.border_color(st26).name())
+    check("D26f 空颜色 = 跟随主题",
+          dock.border_color(Storage(path=tmp / "dock26f.json")).name()
+          == QColor(theme.BORDER).name())
+
+    # 像素判据：3px 纯红边框，条带四边必须有红像素；宽度 0 则没有
+    st26b = Storage(path=tmp / "dock26b.json")
+    st26b.set_setting("dock_items", [])
+    st26b.set_setting("dock_border_width", 3)
+    st26b.set_setting("dock_border_color", "#ff0000")
+    d26 = dock.DockWindow(st26b)
+    d26.resize(400, 60)
+    img26 = QImage(400, 60, QImage.Format_ARGB32)
+    img26.fill(0)
+    d26.render(img26)
+
+    def _red_px(im):
+        n = 0
+        for yy in range(im.height()):
+            for xx in range(im.width()):
+                c = im.pixelColor(xx, yy)
+                if c.red() > 140 and c.red() - c.green() > 60 and c.red() - c.blue() > 60:
+                    n += 1
+        return n
+
+    n26 = _red_px(img26)
+    check("D26g 3px 红边框画出红色像素", n26 > 200, "red=%d" % n26)
+    st26b.set_setting("dock_border_width", 0)
+    d26b = dock.DockWindow(st26b)
+    d26b.resize(400, 60)
+    img26b = QImage(400, 60, QImage.Format_ARGB32)
+    img26b.fill(0)
+    d26b.render(img26b)
+    n26b = _red_px(img26b)
+    check("D26h 宽度 0 时不画边框（无红像素）", n26b == 0, "red=%d" % n26b)
+    d26.close()
+    d26b.close()
+    dlg25.deleteLater()
 
     # ---------- D22：分页点不被 Dock 遮挡（v10 反馈 25） ----------
     from src.desktop_window import DesktopWindow
