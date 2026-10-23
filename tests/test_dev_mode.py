@@ -72,6 +72,12 @@ def _is_green(px: QColor) -> bool:
             and px.green() - px.blue() > 30)
 
 
+def _is_debug_red(px: QColor) -> bool:
+    """调试红底签名：红显著占优于绿/蓝（25% 红叠深/浅底都成立）。"""
+    return (px.red() > 90 and px.red() - px.green() > 25
+            and px.red() - px.blue() > 15)
+
+
 def _is_pink(px: QColor) -> bool:
     return px.red() > 200 and px.blue() > 100 and px.green() < 120
 
@@ -174,6 +180,54 @@ def main(app):
         np_ = _count(img2, x0, y0, x1, y1, _is_pink)
         check("D5 %s无调试色" % name, ng == 0 and np_ == 0,
               "green=%d pink=%d" % (ng, np_))
+
+    # ---------- D10/D11：组件碰撞体积可视化（v10 反馈 26） ----------
+    # 用户要的是"能看见组件占了哪块地"：组件卡片按 fill 居中缩小，四周留缝，
+    # 缝隙到底算不算组件领地、命中有没有偏差——调试模式用半透明红底把
+    # **span 盒**（碰撞/占位的唯一形状，见 widget_geom 模块头）画出来。
+    def _mk_widget_state(dev):
+        s = make_state(dev=dev, native=True)
+        s._data["widgets"] = [{"id": "wm1", "type": "monitor", "hidden": False,
+                               "anchored": True, "col": 0, "row": 0,
+                               "colspan": 2, "rowspan": 2}]
+        s.save()
+        return s
+
+    from src import widget_geom
+
+    st10 = _mk_widget_state(True)
+    w10 = DesktopWindow(st10)
+    w10.resize(W, H)
+    w10._update_grid_metrics()
+    rects10 = w10._widget_collision_rects()
+    check("D10a 有组件的碰撞矩形（1 个组件）", len(rects10) == 1, "n=%d" % len(rects10))
+    if rects10:
+        r10, span10 = rects10[0]
+        bw10, bh10 = widget_geom.span_box(st10, span10)
+        check("D10b 碰撞盒 = 跨度 × 格子（不是卡片尺寸）",
+              r10.width() == bw10 and r10.height() == bh10,
+              "%dx%d vs %dx%d" % (r10.width(), r10.height(), bw10, bh10))
+        cx10, cy10 = grid_flow.cell_pos(st10, 0, 0)
+        check("D10c 碰撞盒贴合格点原点",
+              r10.x() == cx10 and r10.y() == cy10,
+              "(%d,%d) vs (%d,%d)" % (r10.x(), r10.y(), cx10, cy10))
+        img10 = render_window(w10)
+        n10 = _count(img10, r10.x() + 3, r10.y() + 3,
+                     r10.right() - 3, r10.bottom() - 3, _is_debug_red)
+        check("D10d 碰撞盒内有红色半透明底", n10 > 200, "red_px=%d" % n10)
+    w10.close()
+
+    st11 = _mk_widget_state(False)
+    w11 = DesktopWindow(st11)
+    w11.resize(W, H)
+    w11._update_grid_metrics()
+    r11, _sp11 = w11._widget_collision_rects()[0]
+    img11 = render_window(w11)
+    n11 = _count(img11, r11.x() + 3, r11.y() + 3,
+                 r11.right() - 3, r11.bottom() - 3, _is_debug_red)
+    check("D11 dev_mode 关闭时不画红底（相对判据）",
+          n11 * 8 < max(1, n10), "off=%d on=%d" % (n11, n10))
+    w11.close()
 
     # ---------- D6：设置对话框开关 ----------
     st = make_state(dev=True, native=True)

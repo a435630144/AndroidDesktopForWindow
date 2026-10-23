@@ -1374,6 +1374,9 @@ class DesktopWindow(QWidget):
         x1, y1 = m.ox + m.cols * m.cw, m.oy + m.rows * m.ch
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        # v10 反馈 26：组件碰撞体积红底先铺（最底层）——网格线/信息文字
+        # 叠在它上面才看得见；反过来会把网格线染成红绿混色。
+        self._paint_widget_collision(p)
         # 外边界
         p.setPen(QPen(green, 2))
         p.setBrush(Qt.NoBrush)
@@ -1409,6 +1412,71 @@ class DesktopWindow(QWidget):
                    % (st["fps"], st["avg_ms"], st["max_ms"],
                       st["last_area"] / 10000.0))
         p.end()
+
+    # ---------- 组件碰撞可视化（v10 反馈 26） ----------
+    def _widget_collision_rects(self) -> list:
+        """当前页锚定组件的**碰撞矩形**（span 盒，非卡片矩形）。
+
+        返回 `[(QRect, (cs, rs)), …]`，窗口坐标。供调试红底与判据共用——
+        几何一律走 `grid_flow.cell_pos` + `widget_geom.span_box`，不在这里
+        重新推导（三矩形唯一换算层，见 widget_geom 模块头）。
+        """
+        from . import widget_geom
+        out = []
+        page = grid_flow.current_page()
+        for entry in self.storage.widgets:
+            if not entry.get("anchored") or entry.get("hidden"):
+                continue
+            try:
+                if grid_flow.entry_page(self.storage, entry) != page:
+                    continue
+                cs, rs = grid_flow.widget_span(self.storage, entry)
+                x, y = grid_flow.cell_pos(self.storage, int(entry.get("col", 0)),
+                                          int(entry.get("row", 0)))
+                bw, bh = widget_geom.span_box(self.storage, (cs, rs))
+            except (TypeError, ValueError, AttributeError):
+                continue        # 脏条目跳过，别让调试绘制炸掉桌面
+            out.append((QRect(int(x), int(y), int(bw), int(bh)), (cs, rs)))
+        return out
+
+    def _paint_widget_collision(self, p: QPainter):
+        """调试模式：给组件碰撞体积铺半透明红底 + 画卡片边框。
+
+        为什么值得画（用户反馈"四周交互还是有问题"）：组件卡片按
+        `widget_fill` 居中缩小，**卡片与 span 盒之间的缝隙**才是命中/避让
+        的真实边界。红底铺满 span 盒 = 组件真正"占的地"；卡片边框画出视觉
+        边界——两者差多少，一眼可见。
+        """
+        from . import widget_geom
+        red_fill = QColor(255, 56, 56, 64)
+        red_edge = QColor(255, 56, 56, 170)
+        card_edge = QColor(255, 160, 60, 220)
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing, False)
+        try:
+            for rect, span in self._widget_collision_rects():
+                p.setPen(QPen(red_edge, 1))
+                p.setBrush(red_fill)
+                p.drawRect(rect)
+                # 卡片矩形（视觉边界）：与碰撞盒的差 = fill 留出的缝隙
+                try:
+                    cw, ch = widget_geom.card_size(self.storage, span)
+                    dx, dy = widget_geom.box_inset(self.storage, span)
+                    card = QRect(rect.x() + dx, rect.y() + dy, cw, ch)
+                    p.setBrush(Qt.NoBrush)
+                    p.setPen(QPen(card_edge, 1, Qt.DashLine))
+                    p.drawRect(card)
+                except (TypeError, ValueError, AttributeError):
+                    pass
+                # 左上角标注：格数与盒尺寸（多组件并排时定位用）
+                p.setPen(QPen(QColor(255, 200, 200, 230), 1))
+                p.setFont(theme.ui_font(10))
+                p.drawText(QRect(rect.x() + 4, rect.y() + 2, rect.width() - 8, 14),
+                           Qt.AlignLeft | Qt.AlignTop,
+                           "%d×%d 盒 %dx%d" % (span[0], span[1],
+                                               rect.width(), rect.height()))
+        finally:
+            p.restore()
 
     # ---------- 重建 ----------
     def _icon_size(self):

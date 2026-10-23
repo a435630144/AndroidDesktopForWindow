@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 
 from ... import effects
 from ... import theme
@@ -173,11 +173,58 @@ RING_KEYS = ("cpu", "mem", "disk")
 RING_LABELS = {"cpu": "CPU", "mem": "内存", "disk": "磁盘"}
 
 
+def _wide_slots(inner: QRectF) -> Dict:
+    """宽版（4×2）三列的列矩形与列内纵向槽位。
+
+    v10 反馈 26 重构：旧版是"左 56% 三个小环 + 右侧一列数值文字"，
+    宽幅下左重右轻、环与数字各说一半，用户评"太丑"。新版三列等分——
+    每列自上而下「标签 / 大数值 / 进度条 / 容量明细」，重心均匀，宽度
+    铺满 inner，读数一眼扫过。
+
+    纯算术：固定 px 间距在跨度变化时会把内容挤成一坨，所以剩余空间按
+    比例均分成四段间距（标签上 / 标签-数值 / 数值-进度条 / 进度条-明细）。
+    高度不足 130px（组件库缩略图）时明细行高度为 0，直接不画。
+    """
+    h = max(1.0, inner.height())
+    gap = max(6.0, inner.width() * 0.02)
+    col_w = max(1.0, (inner.width() - gap * 2.0) / 3.0)
+    label_h = max(11.0, min(20.0, h * 0.15))
+    value_h = max(20.0, min(68.0, h * 0.42))
+    bar_h = max(4.0, min(9.0, h * 0.035))
+    detail_h = 0.0 if h < 130.0 else max(12.0, min(18.0, h * 0.12))
+    spare = max(0.0, h - (label_h + value_h + bar_h + detail_h))
+    if detail_h > 0.0:
+        y_above, g_label, g_bar, g_detail = (spare * 0.40, spare * 0.12,
+                                             spare * 0.28, spare * 0.20)
+    else:
+        # 没有明细行时把它那份留白还给上下两段，别让进度条孤零零贴底
+        y_above, g_label, g_bar, g_detail = (spare * 0.52, spare * 0.12,
+                                             spare * 0.36, 0.0)
+    cols = []
+    for i, key in enumerate(RING_KEYS):
+        col_x = inner.left() + (col_w + gap) * i
+        y = inner.top() + y_above
+        label = QRectF(col_x, y, col_w, label_h)
+        y += label_h + g_label
+        value = QRectF(col_x, y, col_w, value_h)
+        y += value_h + g_bar
+        bar_w = col_w * 0.74
+        bar = QRectF(col_x + (col_w - bar_w) / 2.0, y, bar_w, bar_h)
+        y += bar_h + g_detail
+        detail = QRectF(col_x, y, col_w, detail_h)
+        cols.append({"key": key, "rect": QRectF(col_x, inner.top(), col_w, h),
+                     "label": label, "value": value, "bar": bar,
+                     "detail": detail})
+    return {"cols": cols, "gap": gap}
+
+
 def layout(rect) -> Dict:
-    """算出三个环的位置与文字列。纯算术，任意 rect 都不许抛。
+    """算出三列的槽位（宽版）或三个环的位置（2×2）。
+
+    纯算术，任意 rect 都不许抛。
 
     row（近方形，2×2）：三环横排，环下标签，环心偏上留出标签区；
-    wide（4×2 宽版）：环集中在左侧 56%，右侧一列大号数值。
+    wide（4×2 宽版）：三列等分，每列「标签 / 大数值 / 进度条 / 明细」。
     """
     rect = QRectF(rect)
     w = max(1.0, rect.width())
@@ -187,17 +234,8 @@ def layout(rect) -> Dict:
     wide = w >= h * WIDE_RATIO
     rings = []
     if wide:
-        area_w = inner.width() * 0.56
-        cell_w = area_w / 3.0
-        diameter = max(4.0, min(cell_w - 8.0, inner.height() * 0.66))
-        cy = inner.center().y()
-        for i, key in enumerate(RING_KEYS):
-            cx = inner.left() + cell_w * (i + 0.5)
-            r = diameter / 2.0
-            rings.append({"key": key, "rect": QRectF(cx - r, cy - r, diameter, diameter)})
-        return {"mode": "wide", "rings": rings,
-                "value_x": inner.left() + area_w + 4.0,
-                "value_w": inner.width() - area_w - 4.0,
+        slots = _wide_slots(inner)
+        return {"mode": "wide", "cols": slots["cols"], "gap": slots["gap"],
                 "inner": inner}
     cell_w = inner.width() / 3.0
     diameter = max(4.0, min(cell_w - 6.0, inner.height() * 0.50))
@@ -215,6 +253,59 @@ def _fmt(value: Optional[float]) -> str:
     return "--" if value is None else "%d%%" % int(round(value))
 
 
+def _draw_pct(p: QPainter, rect: QRectF, text: str, color: QColor) -> None:
+    """居中画「大数字 + 小号 %」：两者共享基线，读起来是一个数。
+
+    宽版的核心读数。整串同一字号时百分号会把数字挤窄、显得笨（旧版
+    右列就是这种"表格感"），分级字号是这类仪表盘的通行做法。
+    """
+    num = text[:-1] if text.endswith("%") else text
+    suf = "%" if text.endswith("%") else ""
+    fs = max(12, int(rect.height() * 0.78))
+    f_num = theme.ui_font(fs, bold=True)
+    f_suf = theme.ui_font(max(9, int(fs * 0.52)), bold=True)
+    fm_num = QFontMetricsF(f_num)
+    fm_suf = QFontMetricsF(f_suf)
+    w_num = fm_num.horizontalAdvance(num)
+    w_suf = fm_suf.horizontalAdvance(suf) if suf else 0.0
+    x = rect.center().x() - (w_num + w_suf) / 2.0
+    baseline = rect.center().y() + (fm_num.ascent() - fm_num.descent()) / 2.0
+    p.setFont(f_num)
+    p.setPen(QPen(color))
+    p.drawText(QPointF(x, baseline), num)
+    if suf:
+        p.setFont(f_suf)
+        c = QColor(color)
+        c.setAlpha(205)
+        p.setPen(QPen(c))
+        p.drawText(QPointF(x + w_num, baseline), suf)
+
+
+def _detail_text(key: str, snap: Snapshot) -> str:
+    """宽版每列的副行文字：内存/磁盘给容量，CPU 给负载档位。
+
+    CPU 没有第二个量纲可显示，留空会让第三列底下缺一块（三列不齐）；
+    用档位词补位——信息不多，但正好和另两列的"容量有余量"形成同一层
+    语义（都在回答"还有多少空间"）。
+    """
+    if key == "cpu":
+        if snap.cpu is None:
+            return ""
+        if snap.cpu >= DANGER_AT:
+            return "过载"
+        if snap.cpu >= WARN_AT:
+            return "偏高"
+        return "正常"
+    if key == "mem":
+        if snap.mem_used_gb is not None and snap.mem_total_gb:
+            return "%.1f / %.0f GB" % (snap.mem_used_gb, snap.mem_total_gb)
+    elif key == "disk":
+        if snap.disk_free_gb is not None and snap.disk_total_gb:
+            return "剩 %.0f / %.0f GB" % (snap.disk_free_gb, snap.disk_total_gb)
+        return str(snap.disk_letter or "")
+    return ""
+
+
 def draw(p: QPainter, rect, snap: Snapshot, smooth: Optional[Dict] = None, style: Optional[Style] = None) -> None:
     """把快照画进 rect。`smooth` 传动画中的插值（缺省用原始值）。"""
     st = style or DEFAULT_STYLE
@@ -226,7 +317,7 @@ def draw(p: QPainter, rect, snap: Snapshot, smooth: Optional[Dict] = None, style
     p.save()
     p.setRenderHint(QPainter.Antialiasing, True)
 
-    for ring in L["rings"]:
+    for ring in L.get("rings") or []:
         key = ring["key"]
         box = ring["rect"]
         raw = getattr(snap, key)
@@ -266,23 +357,50 @@ def draw(p: QPainter, rect, snap: Snapshot, smooth: Optional[Dict] = None, style
                         cell_w, max(10.0, L["label_h"]))
             p.drawText(lr, Qt.AlignHCenter | Qt.AlignTop, RING_LABELS[key])
     else:
-        # 右侧数值列：三行「CPU 42%」，行距 = 可用高度 / 3
-        col_x = L["value_x"]
-        col_w = max(10.0, L["value_w"])
-        row_h = L["inner"].height() / 3.0
-        for i, key in enumerate(RING_KEYS):
-            y = L["inner"].top() + row_h * i
-            p.setFont(theme.ui_font(max(8, int(min(row_h * 0.30, 13)))))
-            p.setPen(QColor(theme.TEXT_DIM))
-            p.drawText(QRectF(col_x, y, col_w, row_h * 0.45),
-                       Qt.AlignLeft | Qt.AlignVCenter, RING_LABELS[key])
+        # 宽版三列（v10 反馈 26 重构）：标签 / 大数值 / 进度条 / 容量明细
+        for col in L["cols"]:
+            key = col["key"]
             raw = getattr(snap, key)
             val = raw if raw is None else _clamp(sm.get(key, raw))
-            p.setFont(theme.ui_font(max(11, int(min(row_h * 0.52, 30))), bold=True))
-            p.setPen(QColor(st.text) if val is None else progress_color(val, st))
-            p.drawText(QRectF(col_x, y + row_h * 0.38, col_w, row_h * 0.62),
-                       Qt.AlignLeft | Qt.AlignVCenter,
-                       _fmt(None if raw is None else val))
+            color = QColor(st.text) if val is None else progress_color(val, st)
+
+            p.setFont(theme.ui_font(max(9, int(col["label"].height() * 0.78))))
+            p.setPen(QColor(theme.TEXT_DIM))
+            p.drawText(col["label"], Qt.AlignHCenter | Qt.AlignVCenter,
+                       RING_LABELS[key])
+
+            _draw_pct(p, col["value"], _fmt(None if raw is None else val), color)
+
+            bar = col["bar"]
+            radius = bar.height() / 2.0
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 255, 255, 26))
+            p.drawRoundedRect(bar, radius, radius)
+            if val is not None and val > 0.0:
+                p.setBrush(color)
+                p.drawRoundedRect(
+                    QRectF(bar.x(), bar.y(),
+                           max(bar.height(), bar.width() * val / 100.0),
+                           bar.height()), radius, radius)
+            p.setBrush(Qt.NoBrush)
+
+            if col["detail"].height() > 0:
+                detail = _detail_text(key, snap)
+                if detail:
+                    p.setFont(theme.ui_font(
+                        max(9, int(col["detail"].height() * 0.72))))
+                    p.setPen(QColor(theme.TEXT_FAINT))
+                    p.drawText(col["detail"], Qt.AlignHCenter | Qt.AlignVCenter,
+                               detail)
+
+        # 列分隔线（很淡）：高瘦预览里省掉，避免三条竖线把版面切碎
+        if L["inner"].height() >= 110.0:
+            p.setPen(QPen(QColor(255, 255, 255, 20), 1))
+            top = L["inner"].top() + L["inner"].height() * 0.16
+            bottom = L["inner"].bottom() - L["inner"].height() * 0.16
+            for i in (0, 1):
+                x = L["cols"][i]["rect"].right() + L["gap"] / 2.0
+                p.drawLine(QPointF(x, top), QPointF(x, bottom))
     p.restore()
 
 

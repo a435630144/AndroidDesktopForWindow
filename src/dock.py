@@ -31,6 +31,7 @@ dpr 由 Qt 用一次）。条带厚度预留了 hover 放大空间，所以 hove
 """
 from __future__ import annotations
 
+import os
 from typing import NamedTuple
 
 from PySide6.QtCore import (QEasingCurve, QPoint, QPropertyAnimation, QRect,
@@ -314,10 +315,36 @@ def normalize_items(raw) -> list:
     return out
 
 
-def entry_is_app(entry) -> bool:
-    """桌面布局条目能否进 Dock（Q2：只有应用能）。
+# 可"启动"的文件扩展名（v10 反馈 26）。
+# 桌面上的图标绝大多数是 `desktop_file_entry()` 产出的 kind="file" 克隆，
+# 而快捷方式（.lnk/.url）天生就是 kind="file"——旧判据把 kind=file 一刀
+# 拒掉，用户桌面上几乎全是快捷方式，于是"Dock 拖不进"100% 复现。
+# Dock 是启动器，判据应该是"**能不能启动**"，不是"是不是扫描来的 app"。
+LAUNCHABLE_SUFFIXES = (".lnk", ".url", ".exe", ".bat", ".cmd", ".com",
+                       ".msc", ".appref-ms", ".pif")
 
-    - `type == "app"` 且 `app.kind != "file"`（桌面文件/文件夹克隆是 kind=file）
+
+def _is_launchable_file(target: str) -> bool:
+    """kind=file 的条目能否当应用启动：按扩展名白名单，目录一律不行。"""
+    t = str(target or "").strip()
+    if not t:
+        return False
+    if not t.lower().endswith(LAUNCHABLE_SUFFIXES):
+        return False
+    try:
+        if os.path.isdir(t):    # 名叫 "xxx.exe" 的文件夹也要拦住
+            return False
+    except OSError:
+        pass
+    return True
+
+
+def entry_is_app(entry) -> bool:
+    """桌面布局条目能否进 Dock（只有"能启动的"才能）。
+
+    - `type == "app"` 且 `app.kind != "file"`（扫描来的应用）→ 收
+    - `app.kind == "file"` → **按可启动性判定**：.lnk/.url/.exe/.bat 等收，
+      普通文档与文件夹拒（Dock 是启动器，不是收藏夹）
     - 文件夹（type=folder）、组件（type=widget）一律拒
     """
     if not isinstance(entry, dict):
@@ -327,9 +354,11 @@ def entry_is_app(entry) -> bool:
     app = entry.get("app")
     if not isinstance(app, dict):
         return False
-    if str(app.get("kind") or "app") == "file":
+    if not (app.get("name") and app.get("target")):
         return False
-    return bool(app.get("name") and app.get("target"))
+    if str(app.get("kind") or "app") == "file":
+        return _is_launchable_file(app.get("target"))
+    return True
 
 
 def item_from_entry(entry) -> dict:

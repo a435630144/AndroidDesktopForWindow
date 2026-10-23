@@ -556,6 +556,33 @@ def main():
     check("D21 迁移只跑一次（标记仍在）",
           st21b.get_setting("dock_radius_migrated") is True)
 
+    # ---------- D24：快捷方式可进 Dock（v10 反馈 26） ----------
+    # 病根：桌面 .lnk/.url 全部由 desktop_file_entry() 标成 kind="file"，
+    # 而 entry_is_app 一律拒绝 kind=file —— 用户桌面上几乎全是快捷方式克隆，
+    # 于是"拖不进 Dock"100% 复现。语义修正：可启动的**文件**（快捷方式/
+    # 可执行）算应用，普通文档与文件夹仍拒（Dock 是启动器，不是收藏夹）。
+    lnk = {"type": "app", "id": "df:1", "app": {"name": "微信", "kind": "file",
+           "target": r"C:\Users\u\Desktop\WeChat.lnk",
+           "icon_path": r"C:\Users\u\Desktop\WeChat.lnk"}}
+    check("D24a .lnk 快捷方式可进 Dock", dock.entry_is_app(lnk) is True)
+    url = {"type": "app", "id": "df:2", "app": {"name": "Steam", "kind": "file",
+           "target": "https://store.steampowered.com/x.url"}}
+    check("D24b .url 快捷方式可进 Dock", dock.entry_is_app(url) is True)
+    exe = {"type": "app", "id": "df:3", "app": {"name": "Game", "kind": "file",
+           "target": r"D:\Games\a.exe"}}
+    check("D24c .exe 可进 Dock", dock.entry_is_app(exe) is True)
+    doc = {"type": "app", "id": "df:4", "app": {"name": "笔记", "kind": "file",
+           "target": r"C:\Users\u\Desktop\note.txt"}}
+    check("D24d .txt 文档不进 Dock", dock.entry_is_app(doc) is False)
+    folder = {"type": "app", "id": "df:5", "app": {"name": "项目", "kind": "file",
+              "target": r"C:\Users\u\Desktop\proj"}}
+    check("D24e 文件夹不进 Dock", dock.entry_is_app(folder) is False)
+    real = {"type": "app", "id": "a:1", "app": {"name": "记事本",
+            "target": "notepad.exe"}}
+    check("D24f 普通应用条目不受影响", dock.entry_is_app(real) is True)
+    wd = {"type": "widget", "id": "w1", "app": {"name": "x", "target": "y"}}
+    check("D24g 组件条目仍拒", dock.entry_is_app(wd) is False)
+
     # ---------- D22：分页点不被 Dock 遮挡（v10 反馈 25） ----------
     from src.desktop_window import DesktopWindow
     from PySide6.QtWidgets import QApplication as _QA

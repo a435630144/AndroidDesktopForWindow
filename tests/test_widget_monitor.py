@@ -97,10 +97,34 @@ def main(app):
 
     W = wm.layout(QRectF(0, 0, 480, 284))
     check("M5 宽版 layout mode = wide", W["mode"] == "wide", W["mode"])
-    check("M5b 宽版环集中在左半区",
-          all(r["rect"].center().x() < 480 * 0.62 for r in W["rings"]),
-          str([round(r["rect"].center().x(), 1) for r in W["rings"]]))
-    check("M5c 宽版有数值文字列", bool(W.get("value_x") is not None))
+    # v10 反馈 26 重构：宽版不再"左环 + 右数字列"，改成三列等分
+    # （每列：标签 / 大数值 / 进度条 / 容量明细），宽度铺满、重心均匀。
+    check("M13 宽版三列等分", len(W.get("cols") or []) == 3,
+          "cols=%d" % len(W.get("cols") or []))
+    if W.get("cols"):
+        cw13 = [c["rect"].width() for c in W["cols"]]
+        check("M13b 三列等宽（差 <= 1px）", max(cw13) - min(cw13) <= 1.0,
+              str([round(x, 1) for x in cw13]))
+        inside13 = all(W["inner"].left() - 0.5 <= c["rect"].left()
+                       and c["rect"].right() <= W["inner"].right() + 0.5
+                       for c in W["cols"])
+        check("M13c 三列都在内边距内", inside13)
+        no_over13 = all(W["cols"][i]["rect"].right()
+                        <= W["cols"][i + 1]["rect"].left()
+                        for i in range(2))
+        check("M13d 列之间不重叠", no_over13)
+        first13 = W["cols"][0]["rect"]
+        last13 = W["cols"][2]["rect"]
+        check("M13e 铺满可用宽度（首列贴左 / 末列贴右）",
+              abs(first13.left() - W["inner"].left()) <= 1.0
+              and abs(last13.right() - W["inner"].right()) <= 1.0,
+              "%.1f/%.1f vs %.1f/%.1f" % (first13.left(), last13.right(),
+                                          W["inner"].left(), W["inner"].right()))
+
+    check("M5b 宽版不再有右侧数值列（v10 重构）",
+          "value_x" not in W, str(W.get("value_x")))
+    check("M5c 宽版每列有完整的纵向槽位（标签/数值/进度条）",
+          all({"label", "value", "bar"} <= set(c) for c in (W.get("cols") or [])))
 
     # ---------- M6 / M7 / M9 / M10：绘制 ----------
     img = canvas(240, 284)
