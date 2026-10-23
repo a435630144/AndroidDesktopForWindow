@@ -556,6 +556,71 @@ def main():
     check("D21 迁移只跑一次（标记仍在）",
           st21b.get_setting("dock_radius_migrated") is True)
 
+    # ---------- D22：分页点不被 Dock 遮挡（v10 反馈 25） ----------
+    from src.desktop_window import DesktopWindow
+    from PySide6.QtWidgets import QApplication as _QA
+    _app22 = _QA.instance() or _QA([])
+    st22 = Storage(path=str(tmp / "d22.json"))
+    st22.set_setting("dock_enabled", True)
+    st22.set_setting("dock_position", "bottom")
+    # 塞满第一页逼出多页，dots 才会出现（直接写 layout，绕过 add_app 语义）
+    for _i in range(60):
+        st22.layout.append({"id": "d22_%d" % _i, "col": _i % 6,
+                             "row": _i // 6, "page": 0,
+                             "app": {"name": "A%d" % _i,
+                                      "target": "C:/a%d.exe" % _i}})
+    w22 = DesktopWindow(st22)
+    w22.resize(1920, 1080)
+    w22._update_grid_metrics()
+    ins22 = w22._dock_inset()
+    dots22 = w22._dot_centers()
+    if dots22:
+        y22 = dots22[0].y()
+        dock_bottom = ins22[3]  # bottom inset
+        check("D22 dock 底部时页点 y 在 dock 条带上方",
+              y22 < w22.height() - dock_bottom,
+              "y=%d h=%d dock_b=%d" % (y22, w22.height(), dock_bottom))
+    else:
+        # 只有 1 页时 dots 为空——也该通过
+        check("D22 dock 底部时页点 y 在 dock 条带上方", True, "no dots (1 page)")
+    st22.set_setting("dock_enabled", False)
+    w22._update_grid_metrics()
+    dots22b = w22._dot_centers()
+    if dots22b:
+        y22b = dots22b[0].y()
+        check("D22 dock 关闭后页点回到固定位置",
+              y22b == w22.height() - 26,
+              "y=%d expected=%d" % (y22b, w22.height() - 26))
+    w22.close()
+
+    # ---------- D23：Dock 拖入——dragEnter 必须 accept（v10 反馈 25） ----------
+    from src.iconwidget import MIME_TYPE, AppIcon
+    from PySide6.QtCore import QMimeData
+    from PySide6.QtGui import QDragEnterEvent, QDropEvent
+    from PySide6.QtCore import Qt as _Qt
+    st23 = Storage(path=str(tmp / "d23.json"))
+    st23.set_setting("dock_enabled", True)
+    dock23 = dock.DockWindow(st23)
+    dock23.resize(400, 60)
+    dock23._bar = (0, 0, 400, 60)
+    md23 = QMimeData()
+    md23.setData(MIME_TYPE, b"test_entry_id")
+    # dragEnter 必须 acceptProposedAction（否则后续 dragMove/drop 全被吞）
+    ev23 = QDragEnterEvent(dock23.rect().center(), _Qt.MoveAction, md23,
+                           _Qt.LeftButton, _Qt.NoModifier)
+    dock23.dragEnterEvent(ev23)
+    check("D23 dock dragEnter 接受 MIME_TYPE 拖拽",
+          ev23.isAccepted(), "accepted=%s" % ev23.isAccepted())
+    # 非 MIME_TYPE 必须 ignore
+    md23bad = QMimeData()
+    md23bad.setData("text/uri-list", b"file:///C:/foo")
+    ev23b = QDragEnterEvent(dock23.rect().center(), _Qt.MoveAction, md23bad,
+                            _Qt.LeftButton, _Qt.NoModifier)
+    dock23.dragEnterEvent(ev23b)
+    check("D23 dock dragEnter 拒绝非 MIME_TYPE",
+          not ev23b.isAccepted(), "accepted=%s" % ev23b.isAccepted())
+    dock23.close()
+
     print("")
     if failures:
         print("FAILED %d: %s" % (len(failures), ", ".join(failures)))

@@ -1305,14 +1305,20 @@ class DesktopWindow(QWidget):
             icon.setVisible(grid_flow.entry_page(self.storage, entry) == page)
 
     def _dot_centers(self):
-        """页点圆心列表（底部居中；只有 1 页时返回空——不画点）。"""
+        """页点圆心列表（底部居中；只有 1 页时返回空——不画点）。
+
+        v10 反馈 25：Dock 启用时底部条带（~51px）盖住 y=height-26 的页点。
+        修：y 扣掉 Dock 底部 inset——页点画在可用区底部，不再被条带遮挡。
+        Dock 在顶部时 dots 在底部不受影响；左右时 dots 居中也不受影响。
+        """
         total = grid_flow.page_count(self.storage)
         if total <= 1:
             return []
         r, gap = 4, 14
         total_w = total * 2 * r + (total - 1) * gap
         x0 = (self.width() - total_w) // 2
-        y = self.height() - 26
+        ins = self._dock_inset()   # (left, top, right, bottom)
+        y = self.height() - 26 - ins[3]   # 扣底部 Dock 占位
         return [QPoint(x0 + i * (2 * r + gap) + r, y) for i in range(total)]
 
     def _dots_rect(self):
@@ -2149,9 +2155,17 @@ class DesktopWindow(QWidget):
         self._animate_icons_to_layout(moves, sync_all=True)
 
     def _on_widget_drop(self, widget_id: str, gx: int, gy: int):
-        """组件松手：预览态回退到快照（组件自身吸附落定后的
-        gridChanged 会按最终占位做正式 displace + 动画）。
-        组件没动（拖回原地）时也走这里——快照回退即原位。"""
+        """组件松手：预览态回退到快照，然后**同步**做 displace + 动画。
+
+        v10 反馈 25：旧实现回退快照后立刻 _sync_icons 把被挤图标
+        **动画弹回原格**，然后 gridChanged 异步触发 on_widget_grid_changed
+        才 displace + 动画到终位——肉眼看到"先漂回冲突格再让位"两段动画。
+
+        修：数据回退后**不调 _sync_icons**，直接同步调
+        on_widget_grid_changed() 做 displace + animate_to——从预览位
+        一次性滑到终位。组件没动时 displace 返回空，补一次 _sync_icons
+        让图标回原位（单段动画，不回漂）。
+        """
         if self._widget_snap is not None:
             self._restore_snap(self._widget_snap)
         self._widget_snap = None
@@ -2160,7 +2174,14 @@ class DesktopWindow(QWidget):
         self._hl_cell = None
         self._hl_span = (1, 1)
         self.update()
-        self._sync_icons()
+        # 同步 displace：从预览位直接滑到终位，不回漂
+        moved = self._displace_from_widgets()
+        if moved:
+            self.storage.save()
+            self._animate_icons_to_layout(moved)
+        else:
+            # 组件没动（拖回原地）：图标回原位，单段动画
+            self._sync_icons()
 
     def _reflow_preview(self, dragged_id: str, cell):
         """实时让位预览（2026-10-18 M2：iOS 局部让位，reflow_moves）。

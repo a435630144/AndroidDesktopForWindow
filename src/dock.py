@@ -871,6 +871,7 @@ class DockWindow(QWidget):
     # ---------- 外部拖入（从网格拖应用进来） ----------
     def dragEnterEvent(self, e):
         if not e.mimeData().hasFormat(MIME_TYPE):
+            e.ignore()       # 明确拒绝，避免合成事件路径下状态不确定
             return
         self._drop_highlight = True
         self.update()

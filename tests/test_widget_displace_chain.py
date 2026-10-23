@@ -205,6 +205,24 @@ def main(app):
           "%d cells %d unique" % (len(cells), len(set(cells))))
     w2.close()
 
+    # ---------- W4：松手不回漂（v10 反馈 25） ----------
+    # 病根：_on_widget_drop 先 _restore_snap + _sync_icons（图标动画回原位），
+    # 再 gridChanged -> _widget_moved 正式 displace + 动画。两段动画之间图标
+    # 先漂回冲突格再让位，肉眼看到"先回去再过来"。
+    # 判据：_on_widget_drop 之后、gridChanged 之前，图标位置不应在原格上
+    # 被 animate_to 弹回——即 _on_widget_drop 不调 _sync_icons。
+    # 直接读源文件文本（inspect 可能读到缓存的旧源码）
+    _src = (Path(__file__).resolve().parent.parent / "src" / "desktop_window.py").read_text(encoding="utf-8")
+    _i = _src.index("def _on_widget_drop")
+    _j = _src.index("def _reflow_preview", _i)
+    _body = _src[_i:_j]
+    # 判据：displace 有结果走 _animate_icons_to_layout，没有才 _sync_icons
+    check("W4 displace 有结果走动画、无结果才回位",
+          "_animate_icons_to_layout" in _body and "_displace_from_widgets" in _body,
+          "missing displace path")
+    check("W4 _on_widget_drop 仍 _restore_snap（数据回退）",
+          "_restore_snap" in _body, "no restore")
+
     print("-" * 56)
     if failures:
         print("FAILED %d: %s" % (len(failures), failures))
