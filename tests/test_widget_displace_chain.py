@@ -51,6 +51,16 @@ def settle(app, ms=600):
     loop.exec()
 
 
+def QTest_qWait(ms):
+    """无 QTest 依赖的小等待（泵事件，让动画计时器跑起来）。"""
+    end = QTimer()
+    end.setSingleShot(True)
+    loop = QEventLoop()
+    end.timeout.connect(loop.quit)
+    end.start(ms)
+    loop.exec()
+
+
 def make_state(cols_cells):
     """cols_cells: [(id, col, row)] 图标；固定一个 2×2 锚定组件在 (0,0)。"""
     if STATE.exists():
@@ -222,6 +232,73 @@ def main(app):
           "missing displace path")
     check("W4 _on_widget_drop 仍 _restore_snap（数据回退）",
           "_restore_snap" in _body, "no restore")
+
+    # ---------- W5：松手瞬间图标不动，落定后只动一次（v10 反馈 28） ----------
+    # 病根是**时机**：widget_base 的 anchorDrop.emit() 排在 _snap_to_grid()
+    # 之前（931/932 行），松手回调里 entry.col/row 还是旧格——按旧占位算
+    # displace 必然为空，接着 _sync_icons 把预览挪走的图标**动画送回原位**，
+    # 等 gridChanged 到了再挤一次 = 用户看到的"先漂回冲突格再让位"。
+    # 判据：松手前后**视觉位置逐图标相等**（旧实现必红）。
+    st5 = make_state([("a", 2, 0), ("b", 3, 0), ("c", 2, 1), ("d", 3, 1),
+                      ("e", 5, 0), ("f", 5, 1)])
+    w5 = DesktopWindow(st5)
+    w5.resize(W, H)
+    w5._update_grid_metrics()
+    settle(app, 200)
+
+    hover(w5, st5, 2, 0)              # 预览：组件压到 (2,0) 一带，a~d 被挤走
+    settle(app, 300)
+    check("W5a 预览后持有拖动快照", w5._widget_snap is not None,
+          str(w5._widget_snap))
+    before5 = snapshot(w5)
+
+    # 松手（真实顺序：此时 entry 仍是旧格 (0,0)，落定在 _snap_to_grid 之后）
+    w5._on_widget_drop("clock", 0, 0)
+    QTest_qWait(40)
+    after5 = snapshot(w5)
+    moved5 = {k: (before5[k], after5.get(k)) for k in before5
+              if after5.get(k) != before5[k]}
+    check("W5b 松手瞬间图标视觉位置不变（不回漂）", not moved5,
+          "%s" % list(moved5.items())[:2])
+    check("W5c 松手不清快照（等落定再算）", w5._widget_snap is not None,
+          str(w5._widget_snap))
+
+    # 模拟组件真正落定：entry 写到最终格，再发 gridChanged
+    for e in st5.widgets:
+        if e.get("id") == "clock":
+            e["col"], e["row"] = 2, 0
+    st5.save()
+    w5.on_widget_grid_changed()
+    settle(app, 600)
+    check("W5d 落定后消费掉快照", w5._widget_snap is None, str(w5._widget_snap))
+    inside5 = [eid for eid, c in cells_of(st5).items()
+               if c in widget_rect(st5, 2, 0)]
+    check("W5e 被压图标最终不在组件占位上", not inside5, "%s" % inside5)
+    mism5 = [(eid, (w5.icons[eid].x(), w5.icons[eid].y()), w5._entry_pos(e))
+             for e in st5.layout if e.get("id") in w5.icons
+             for eid in [e.get("id")]
+             if (w5.icons[eid].x(), w5.icons[eid].y()) != w5._entry_pos(e)]
+    check("W5f 全部图标滑到最终布局位置（一次到位）", not mism5,
+          "%s" % mism5[:2])
+
+    # W5g：组件拖回原格（最终没压人）——落定后图标回原位，单段动画
+    st5b = make_state([("a", 2, 0), ("b", 3, 0), ("e", 5, 0)])
+    w5b = DesktopWindow(st5b)
+    w5b.resize(W, H)
+    w5b._update_grid_metrics()
+    settle(app, 200)
+    hover(w5b, st5b, 2, 0)
+    settle(app, 300)
+    w5b._on_widget_drop("clock", 0, 0)
+    w5b.on_widget_grid_changed()      # entry 仍是 (0,0) = 拖回原格
+    settle(app, 600)
+    back5 = [(eid, (w5b.icons[eid].x(), w5b.icons[eid].y()), w5b._entry_pos(e))
+             for e in st5b.layout if e.get("id") in w5b.icons
+             for eid in [e.get("id")]
+             if (w5b.icons[eid].x(), w5b.icons[eid].y()) != w5b._entry_pos(e)]
+    check("W5g 拖回原格：预览挪走的图标回原位", not back5, "%s" % back5[:2])
+    w5.close()
+    w5b.close()
 
     print("-" * 56)
     if failures:

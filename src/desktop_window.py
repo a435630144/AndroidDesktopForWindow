@@ -2186,7 +2186,14 @@ class DesktopWindow(QWidget):
         widget 松手吸附后 gridChanged -> 这里 displace -> 图标滑走。
         2026-10-18 M4：位移走弹簧动画（_animate_icons_to_layout），
         不再 rebuild——被挤图标只是换格子，实例/悬停态/动画全部保留。
+
+        v10 反馈 28：这里优先消费拖动快照。`anchorDrop` 早于 `_snap_to_grid`
+        发射，松手瞬间拿不到最终占位；真正的一次性收尾都放在
+        `_settle_widget_snap()`（组件落定后按最终 entry 算）。
         """
+        if self._widget_snap is not None:
+            self._settle_widget_snap()
+            return
         moved = self._displace_from_widgets()
         if moved:
             self.storage.save()
@@ -2324,33 +2331,57 @@ class DesktopWindow(QWidget):
         self._animate_icons_to_layout(moves, sync_all=True)
 
     def _on_widget_drop(self, widget_id: str, gx: int, gy: int):
-        """组件松手：预览态回退到快照，然后**同步**做 displace + 动画。
+        """组件松手：**只撤预览装饰，一个图标都不动**。
 
-        v10 反馈 25：旧实现回退快照后立刻 _sync_icons 把被挤图标
-        **动画弹回原格**，然后 gridChanged 异步触发 on_widget_grid_changed
-        才 displace + 动画到终位——肉眼看到"先漂回冲突格再让位"两段动画。
+        v10 反馈 25/28（两次都报"松手先漂回冲突格再让位"）：根因是**时机**。
+        `widget_base` 里 `anchorDrop.emit()` 排在 `_snap_to_grid()` **之前**
+        （见 widget_base 931/932 行），所以到这里组件的 `entry.col/row` 还是
+        旧格，`_displace_from_widgets()` 只能按旧占位算——拖到冲突格时它算出
+        "没有图标需要挪"（图标此刻在预览后的空格里），于是走 `_sync_icons()`
+        把图标**动画送回原位**（正是用户看到的"漂回冲突格"）；等吸附动画结束、
+        `_write_occupancy` 无条件发 `gridChanged`，才再挤一次——两段动画。
 
-        修：数据回退后**不调 _sync_icons**，直接同步调
-        on_widget_grid_changed() 做 displace + animate_to——从预览位
-        一次性滑到终位。组件没动时 displace 返回空，补一次 _sync_icons
-        让图标回原位（单段动画，不回漂）。
+        现在这里只做**数据**回退（`_restore_snap` 只改 entry.col/row，不动
+        视觉），还原后的挤位交给 `_settle_widget_snap()`：gridChanged 到达时
+        （或 450ms 兜底）那时 entry 已是最终落点，一次算准、一次动画。
+        数据必须立刻回退（T7 契约：drop 后 cells 与预览前一致），只是不再
+        顺手 `_sync_icons()` 把视觉也弹回去。
         """
         if self._widget_snap is not None:
-            self._restore_snap(self._widget_snap)
-        self._widget_snap = None
+            self._restore_snap(self._widget_snap)   # 数据回退，视觉留在预览位
         self._widget_preview_rect = None
         # 反馈 5：红框是组件拖动期间画的，松手必须撤（否则留在桌面上）
         self._hl_cell = None
         self._hl_span = (1, 1)
         self.update()
-        # 同步 displace：从预览位直接滑到终位，不回漂
+        if self._widget_snap is not None:
+            # 兜底：组件落回原格时 gridChanged 也会发（_write_occupancy 里
+            # `changed or anchored`），但低版本组件/异常路径可能不发——450ms
+            # 后仍未消费就自己收尾（吸附动画 240ms + 余量）。
+            QTimer.singleShot(450, self._settle_widget_snap)
+
+    def _settle_widget_snap(self):
+        """组件**落定后**收尾：按最终占位一次性还原 + 挤位（幂等）。
+
+        只有一次 `_animate_icons_to_layout` 调用，targets 来自最终布局；
+        预览已经把图标摆到位的那些 start == end，`animate_to` 早退，所以
+        不会出现"先回去再出来"的第二段动画。
+        """
+        snap = self._widget_snap
+        if snap is None:
+            return
+        self._widget_snap = None
+        self._restore_snap(snap)          # 数据回到拖动前（视觉仍在预览位）
         moved = self._displace_from_widgets()
         if moved:
             self.storage.save()
-            self._animate_icons_to_layout(moved)
-        else:
-            # 组件没动（拖回原地）：图标回原位，单段动画
-            self._sync_icons()
+            # sync_all=True 必不可少：预览里被挪走、但最终落点不再需要它的
+            # 图标不在 moved 里，不补动画就会停在预览时的空格上（数据在
+            # 原位、视觉在别处），下一次 sync 才跳回去——W2 判据当场抓到。
+            self._animate_icons_to_layout(moved, sync_all=True)
+            return
+        # 最终落点没压到任何图标（含"拖回原地"）：预览挪走的图标滑回原位
+        self._sync_icons()
 
     def _reflow_preview(self, dragged_id: str, cell):
         """实时让位预览（2026-10-18 M2：iOS 局部让位，reflow_moves）。

@@ -86,7 +86,7 @@ def main():
         print("FATAL: Component/index.json 为空，先跑 tools/build.py")
         return 1
     first = idx["widgets"][0]
-    pkg_file = REPO / "dist" / first["package"]
+    pkg_file = REPO / first["package"]   # package 已是 dist/xxx.zip
     check("S0b 清单里的包真实存在", pkg_file.is_file(), str(pkg_file))
 
     # ---------- S1：镜像顺序 ----------
@@ -246,6 +246,61 @@ def main():
           dlg.center_page is not None and len(dlg.center_page.cards) > 0,
           "%d 张" % len(getattr(dlg.center_page, "cards", [])))
     dlg.deleteLater()
+
+    # ---------- S11：清单少写目录前缀 -> 客户端兜底（v10 反馈 28） ----------
+    # 实机事故：仓库 zip 在 dist/ 下，index.json 只写了文件名，于是
+    # raw/master/countdown-1.0.0.zip 一路 404，三条线路全灭。
+    import urllib.error
+
+    def serve_404(monkey_map):
+        """命中返回内容；未命中抛真 404（而非连接错误）——才能走到候选兜底。"""
+        def fake(url, timeout=None):
+            for suffix, path in monkey_map.items():
+                if url.endswith(suffix):
+                    return Path(path).read_bytes()
+            raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
+        return fake
+
+    loose = dict(first)
+    loose["package"] = Path(first["package"]).name        # 只留文件名
+    widget_store._http_get = serve_404({
+        "dist/" + loose["package"]: pkg_file,            # 只有 dist/ 下真实存在
+    })
+    ok11, err11 = False, ""
+    try:
+        tmp11 = widget_store.download(loose)
+        ok11 = os.path.getsize(tmp11) > 0
+        os.unlink(tmp11)
+    except Exception as exc:      # noqa: BLE001
+        err11 = str(exc)
+    check("S11 清单少写 dist/ 前缀时自动在 dist/ 兜底", ok11, err11[:120])
+
+    seen11 = []
+
+    def spy11(url, timeout=None):
+        seen11.append(url)
+        return Path(pkg_file).read_bytes()
+
+    widget_store._http_get = spy11
+    tmp11b = widget_store.download(first)                 # package = dist/xxx.zip
+    os.unlink(tmp11b)
+    check("S11b 已带目录的清单不额外猜路径",
+          len(seen11) == 1 and "dist/" in seen11[0], str(seen11))
+
+    # 全线失败：消息要能操作（说人话 + 给手动安装这条路）
+    widget_store._http_get = serve_404({})
+    err11c = ""
+    try:
+        widget_store.download(loose)
+    except Exception as exc:      # noqa: BLE001
+        err11c = str(exc)
+    check("S11c 全线 404 时明说包不存在",
+          "不存在（404）" in err11c, err11c[:140])
+    check("S11d 提示里带手动安装兜底", "导入组件" in err11c, err11c[-90:])
+    check("S11e 错误消息不含原始 WinError 文本",
+          "WinError" not in err11c, err11c[:80])
+    check("S11f 提示里不出现 sha256 期望/实际长串细节（人话优先）",
+          "期望" not in err11c, err11c[:80])
 
     print("")
     if failures:

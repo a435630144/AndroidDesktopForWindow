@@ -129,21 +129,22 @@ def fetch_index(force: bool = False) -> dict:
         try:
             raw = _http_get(url)
         except Exception as exc:      # noqa: BLE001 —— 逐个镜像降级
-            errors.append("%s: %s" % (name, exc))
+            errors.append("%s：%s" % (name, _friendly_net(exc)))
             continue
         try:
             data = json.loads(raw.decode("utf-8"))
         except Exception as exc:      # noqa: BLE001
-            errors.append("%s: 清单不是合法 JSON（%s）" % (name, exc))
+            errors.append("%s：清单不是合法 JSON（%s）" % (name, exc))
             continue
         if not isinstance(data, dict) or not isinstance(data.get("widgets"), list):
-            errors.append("%s: 清单缺 widgets 数组" % name)
+            errors.append("%s：清单缺 widgets 数组" % name)
             continue
         data["_mirror"] = name
         _save_cache({"mirror": name, "fetched_at": time.time(),
                      "index": {k: v for k, v in data.items() if k != "_mirror"}})
         return data
-    raise StoreError("商店暂时打不开：\n" + "\n".join(errors or ["无可用镜像"]))
+    raise StoreError("商店暂时打不开（还在用上次缓存的清单）：\n· "
+                     + "\n· ".join(errors or ["无可用镜像"]))
 
 
 def cached_index() -> dict:
@@ -187,36 +188,106 @@ def package_url(entry: dict, base: str) -> str:
     return "%s/%s" % (base.rstrip("/"), name.lstrip("/"))
 
 
+# 清单里的 `package` 是"仓库内相对路径"。历史上出现过两种写法：只写文件名
+# （zip 实际在 dist/ 下 → 根目录 404）和写 packages/ 子目录。客户端每个都
+# 试一遍——为一次清单书写错误让用户买不了组件不值得（v10 反馈 28）。
+PACKAGE_PREFIXES = ("", "dist/", "packages/")
+
+
+def package_urls(entry: dict, base: str) -> List[str]:
+    """一条线路上依次尝试的候选 URL（保序去重）。
+
+    路径里已带目录（新清单写 `dist/x.zip`）时不再拼前缀——那是作者明确的
+    位置，乱猜只会多打三次 404。
+    """
+    name = str(entry.get("package") or "").strip().lstrip("/")
+    if not name:
+        raise StoreError("清单条目缺 package 字段：%s" % entry.get("type"))
+    base = base.rstrip("/")
+    cands = ["%s/%s" % (base, name)]
+    if "/" not in name:
+        for pre in PACKAGE_PREFIXES[1:]:
+            cands.append("%s/%s%s" % (base, pre, name))
+    return cands
+
+
+def _friendly_net(exc) -> str:
+    """把 urllib 的原始异常翻成用户能懂的一句话。
+
+    旧实现把 `WinError 10054 远程主机强迫关闭了一个现有的连接` 原样糊在
+    对话框里——用户看不出"是网络还是软件坏了"。
+    """
+    reason = getattr(exc, "reason", None)
+    text = str(reason if reason is not None else exc)
+    low = text.lower()
+    if any(k in low for k in ("10054", "10053", "connection reset",
+                              "connection aborted", "远程主机强迫")):
+        return "连接被重置（网络或代理受限）"
+    if "timed out" in low or "timeout" in low:
+        return "连接超时"
+    if "certificate" in low or "ssl" in low or "tls" in low:
+        return "TLS 握手失败（可能被拦截）"
+    if "getaddrinfo" in low or "name or service" in low:
+        return "域名解析失败（可能没联网）"
+    if "404" in low:
+        return "清单指向的组件包不存在（仓库未同步）"
+    return text
+
+
 def download(entry: dict) -> str:
-    """下载组件包到临时目录并校验 sha256；返回本地路径（调用方负责清理）。"""
+    """下载组件包到临时目录并校验 sha256；返回本地路径（调用方负责清理）。
+
+    v10 反馈 28：旧实现每个镜像只试**一个** URL，清单里 package 少写
+    `dist/` 就全线 404。现在每条线路按 `package_urls` 的候选依次试，
+    只有"每个候选都 404"才判定该镜像没有这个包。
+    """
     want = str(entry.get("sha256") or "").strip().lower()
     errors = []
     for name, base in mirror_order():
         try:
-            url = package_url(entry, base)
-            data = _http_get(url, timeout=max(TIMEOUT, 20.0))
-        except Exception as exc:      # noqa: BLE001
-            errors.append("%s: %s" % (name, exc))
-            continue
-        fd, tmp = tempfile.mkstemp(prefix="pd_pkg_", suffix=".zip")
-        os.close(fd)
-        try:
-            with open(tmp, "wb") as f:
-                f.write(data)
-            got = _sha256(tmp)
-            if want and got != want:
-                errors.append("%s: sha256 不符（期望 %s…，实际 %s…）"
-                              % (name, want[:12], got[:12]))
-                os.unlink(tmp)
-                continue
-            return tmp
-        except Exception as exc:      # noqa: BLE001
-            errors.append("%s: %s" % (name, exc))
+            urls = package_urls(entry, base)
+        except StoreError:
+            raise
+        all_404 = True
+        net_err = ""
+        for url in urls:
             try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-    raise StoreError("组件包下载失败：\n" + "\n".join(errors or ["无可用镜像"]))
+                data = _http_get(url, timeout=max(TIMEOUT, 20.0))
+            except Exception as exc:      # noqa: BLE001
+                code = getattr(exc, "code", None)
+                if code == 404:
+                    continue              # 换个候选路径再试
+                net_err = _friendly_net(exc)
+                all_404 = False
+                break
+            all_404 = False
+            fd, tmp = tempfile.mkstemp(prefix="pd_pkg_", suffix=".zip")
+            os.close(fd)
+            try:
+                with open(tmp, "wb") as f:
+                    f.write(data)
+                got = _sha256(tmp)
+                if want and got != want:
+                    errors.append("%s：包已损坏/版本不符（sha256 校验失败）" % name)
+                    os.unlink(tmp)
+                    break
+                return tmp
+            except Exception as exc:      # noqa: BLE001
+                errors.append("%s：%s" % (name, _friendly_net(exc)))
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                break
+        if all_404:
+            errors.append("%s：清单指向的组件包在仓库里不存在（404）" % name)
+        elif net_err:
+            errors.append("%s：%s" % (name, net_err))
+    raise StoreError(
+        "组件包下载失败（三条线路都没成功）：\n· "
+        + "\n· ".join(errors or ["无可用镜像"])
+        + "\n\n可尝试：① 检查网络/代理后点「刷新」重试；"
+          "② 到组件仓库手动下载 zip，用「导入组件…」安装。")
 
 
 def install(entry: dict):
