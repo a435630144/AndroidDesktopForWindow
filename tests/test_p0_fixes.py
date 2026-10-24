@@ -4,7 +4,8 @@
 背景见 `docs/反馈研判_v7_1.md` §3：17 条里真正"坏了"的只有几条，
 其余是 v7 尚未开工的 B2/B3/B4/B6 批次。本文件只锁 P0 这五条：
 
-  F1 网格原点属**开发者功能**：控件在设置页「高级」页，且 dev_mode 关闭时不可配置
+  F1 网格原点属**开发者功能**：控件在设置页「开发者」页（v11 反馈 32 从
+     「高级」搬过去），且 dev_mode 关闭时不可配置
   F2 桌面右键不再提供：原点两项 / 「添加应用…」 / 版本号
   F3 版本号改挂设置页「关于」（v6c 跑错包事故的取证设施，不能直接删）
   F4 行内输入框：**点别处即提交**（不必按 Enter；NOACTIVATE 桌面带里焦点不转移，
@@ -90,11 +91,13 @@ def test_settings(st):
     check("F1 原点控件齐全", all(getattr(dlg, n, None) is not None for n in names),
           "%s" % [n for n in names if getattr(dlg, n, None) is None])
 
-    adv = dlg._pages.get("advanced")
+    # v11 反馈 32：开发者选项单独成页，网格原点随整组搬过去（「高级」只留
+    # 维护 / 更新 / 关于）。断言随之改成"在开发者页、且不在其它页"。
+    dev_page = dlg._pages.get("developer")
     layout_page = dlg._pages.get("layout")
-    if adv is not None and getattr(dlg, "chk_origin", None) is not None:
-        check("F1 原点控件在「高级」页",
-              adv.isAncestorOf(dlg.chk_origin),
+    if dev_page is not None and getattr(dlg, "chk_origin", None) is not None:
+        check("F1 原点控件在「开发者」页",
+              dev_page.isAncestorOf(dlg.chk_origin),
               "parent=%s" % type(dlg.chk_origin.parent()).__name__)
         check("F1 原点控件不在「布局与网格」页",
               layout_page is None or not layout_page.isAncestorOf(dlg.chk_origin))
@@ -127,7 +130,7 @@ def test_settings(st):
               st.grid_origin_mode() in ("auto", "manual"),
               st.grid_origin_mode())
     else:
-        check("F1 设置页取不到 advanced 页或原点控件", False, "%s" % (adv,))
+        check("F1 设置页取不到 developer 页或原点控件", False, "%s" % (dev_page,))
 
     # F3 版本号落在设置页「关于」
     got = getattr(dlg, "lbl_about_version", None)

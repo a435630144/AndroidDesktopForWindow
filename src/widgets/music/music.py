@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""音乐控制器组件（v10 C2，反馈 9）。
+"""音乐控制器组件（v10 C2 起，v11 接通真实媒体信息 + 可拖动进度条）。
 
 三层分离（规格 §2.2）：
     MediaInfo（`media_session.py`） → 纯数据快照
@@ -8,14 +8,21 @@
     MusicWidget(GlassWidget)       → 只管定时器 + 点击命中 + 把三者接起来
 
 **它不是播放器**：控制的是本机正在放的应用（媒体键），数据源见
-`media_session` 模块头部——本轮是降级档（演示态 + 真媒体键），
-`MediaInfo.demo=True` 时界面必须明示「未检测到播放器信息」。
+`media_session` 模块头部——SMTC 侧车（真实曲名/进度/可 seek）> 窗口标题
+（只有曲名）> 演示态。三种档位都必须在界面上可区分：
+  真会话      → 正常曲名 + 进度 + 剩余时间
+  仅标题档    → 曲名 + 「仅曲名 · 播放器未提供进度」（`partial`）
+  演示态      → 「未检测到播放器信息」（`demo`）
+
+v11（反馈 30）追加：**进度条可拖**。按住进度条左右拖 = 预览位置，松手
+才落 seek（拖动过程中不打断播放器）；拖动时右侧读数变成目标时间。
 
 按钮图形走 `QPainterPath` 自绘（三角/双竖条），不用字体图标：
 ⏮⏯⏭ 这类码位在 Windows 某些字体里会画成豆腐块，自绘零风险。
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Dict, Optional
 
@@ -23,14 +30,17 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
 
 from ... import theme
-from ...media_session import MediaInfo, MediaSessionSource, create_source
+from ...media_session import (MediaInfo, MediaSessionSource, create_source,
+                              fmt_time)
 from ...widget_glass import PAD, GlassWidget
 from ...widget_style import DEFAULT_STYLE, Style
 
-TICK_MS = 500           # 进度条刷新（也驱动演示态的进度）
+TICK_MS = 500           # 进度条刷新（真实会话靠 position_at 插值，不必更快）
 DIM_ALPHA = 150         # 封面底色 / 次文字的弱化程度
 BAR_H = 4               # 进度条厚度
+BAR_HIT_PAD = 8         # 进度条命中区上下外扩（4px 的条太难抓）
 MARQUEE_PX_S = 18.0     # 长标题滚动速度（px/s）
+SEEK_HANDLE = 5.0       # 拖动时进度条上的圆点半径
 
 
 # ---------------------------------------------------------------- 纯算术
@@ -99,6 +109,19 @@ def layout(rect, info: Optional[MediaInfo] = None) -> Dict:
     }
 
 
+def bar_hit_rect(bar) -> QRectF:
+    """进度条命中区：上下各外扩 `BAR_HIT_PAD`（4px 的条抓不住）。"""
+    return QRectF(bar).adjusted(-2, -BAR_HIT_PAD, 2, BAR_HIT_PAD)
+
+
+def frac_at(bar, x: float) -> float:
+    """横坐标 -> 进度 0..1（夹紧；宽度为 0 时回 0）。"""
+    rect = QRectF(bar)
+    if rect.width() <= 0:
+        return 0.0
+    return max(0.0, min(1.0, (float(x) - rect.left()) / rect.width()))
+
+
 def marquee_offset(text: str, font: QFont, box_w: float, scroll: float) -> float:
     """长标题的横向偏移（px）。
 
@@ -123,10 +146,11 @@ def marquee_offset(text: str, font: QFont, box_w: float, scroll: float) -> float
 
 # ---------------------------------------------------------------- 纯绘制
 
-def _round_bar(p: QPainter, box: QRectF, frac: float, style: Style) -> None:
+def _round_bar(p: QPainter, box: QRectF, frac: float, style: Style,
+               dim: bool = False, handle: bool = False) -> None:
     r = box.height() / 2.0
     p.setPen(Qt.NoPen)
-    p.setBrush(QColor(255, 255, 255, 34))
+    p.setBrush(QColor(255, 255, 255, 22 if dim else 34))
     p.drawRoundedRect(box, r, r)
     frac = max(0.0, min(1.0, float(frac)))
     if frac <= 0:
@@ -134,6 +158,11 @@ def _round_bar(p: QPainter, box: QRectF, frac: float, style: Style) -> None:
     w = max(box.height(), box.width() * frac)
     p.setBrush(QColor(style.accent))
     p.drawRoundedRect(QRectF(box.left(), box.top(), w, box.height()), r, r)
+    if handle:
+        # 拖动中：端点画一颗圆点（"你抓的就是这里"）
+        p.setBrush(QColor(255, 255, 255, 240))
+        p.drawEllipse(QPointF(box.left() + w, box.center().y()),
+                      SEEK_HANDLE, SEEK_HANDLE)
 
 
 def _note_glyph(p: QPainter, box: QRectF, color: QColor) -> None:
@@ -187,8 +216,13 @@ def _button_icon(p: QPainter, box: QRectF, kind: str, color: QColor,
 
 
 def draw(p: QPainter, rect, info: Optional[MediaInfo] = None,
-         style: Optional[Style] = None, scroll: float = 0.0) -> None:
-    """画媒体卡内容（不含玻璃底：底色由 `GlassWidget` 负责）。"""
+         style: Optional[Style] = None, scroll: float = 0.0,
+         now: Optional[float] = None, seek_frac: Optional[float] = None) -> None:
+    """画媒体卡内容（不含玻璃底：底色由 `GlassWidget` 负责）。
+
+    - `now`：当前位置的插值基准（`time.monotonic()`）；缺省不插值。
+    - `seek_frac`：拖动进度条时的**预览**占比（None = 按真实播放位置画）。
+    """
     info = info or MediaInfo()
     st = style or DEFAULT_STYLE
     rect = QRectF(rect)
@@ -198,12 +232,12 @@ def draw(p: QPainter, rect, info: Optional[MediaInfo] = None,
     p.save()
     p.setRenderHint(QPainter.Antialiasing, True)
 
-    # 封面：圆角底 + 音符占位（真封面要 SMTC 缩略图流，本轮见 media_session）
+    # 封面：圆角底 + 音符占位（真封面要 SMTC 缩略图流，见 media_session）
     cover = L["cover"]
     cr = max(6.0, cover.width() * 0.18)
     p.setPen(Qt.NoPen)
     base = QColor(st.accent)
-    base.setAlpha(DIM_ALPHA if not info.demo else 90)
+    base.setAlpha(DIM_ALPHA if not (info.demo or info.partial) else 90)
     p.setBrush(base)
     p.drawRoundedRect(cover, cr, cr)
     _note_glyph(p, cover, QColor(255, 255, 255, 210))
@@ -223,8 +257,9 @@ def draw(p: QPainter, rect, info: Optional[MediaInfo] = None,
     p.setPen(QColor(st.dim))
     ar = L["artist_rect"]
     fm = QFontMetricsF(L["font_artist"])
+    artist = info.artist or "—"
     p.drawText(ar, Qt.AlignLeft | Qt.AlignVCenter,
-               fm.elidedText(info.artist or "—", Qt.ElideRight, ar.width()))
+               fm.elidedText(artist, Qt.ElideRight, ar.width()))
 
     # 三键：中间那颗是实心强调色（主操作），两侧只有图标
     for box, kind in zip(L["buttons"], ("prev", "play", "next")):
@@ -236,19 +271,46 @@ def draw(p: QPainter, rect, info: Optional[MediaInfo] = None,
         else:
             _button_icon(p, box, kind, QColor(st.dim), info.playing)
 
-    # 进度条 + 剩余时间（右下）+ 降级角标（左下，同一行）
-    _round_bar(p, L["bar"], info.progress(), st)
+    # 进度条 + 右下读数 + 左下状态角标（同一行）
+    frac = info.progress(now)
+    if seek_frac is not None:
+        frac = max(0.0, min(1.0, float(seek_frac)))
+    # 「仅曲名」档没有时长：不画进度（画了就是撒谎），底轨压暗表示不可用
+    _round_bar(p, L["bar"], 0.0 if info.partial else frac, st,
+               dim=bool(info.partial), handle=seek_frac is not None)
+
     row = L["row"]
     p.setFont(L["font_time"])
-    rem = info.remains()
-    if rem:
-        p.setPen(QColor(st.dim))
-        p.drawText(row, Qt.AlignRight | Qt.AlignVCenter, rem)
+    p.setPen(QColor(st.dim))
+    if seek_frac is not None and info.duration > 0:
+        p.drawText(row, Qt.AlignRight | Qt.AlignVCenter,
+                   "%s / %s" % (fmt_time(seek_frac * info.duration),
+                                fmt_time(info.duration)))
+    elif seek_frac is not None:
+        p.drawText(row, Qt.AlignRight | Qt.AlignVCenter, fmt_time(0))
+    else:
+        rem = info.remains(now)
+        if rem:
+            p.drawText(row, Qt.AlignRight | Qt.AlignVCenter, rem)
+        elif info.duration > 0:
+            p.drawText(row, Qt.AlignRight | Qt.AlignVCenter,
+                       fmt_time(info.position_at(now)))
     # 没拿到真实会话时必须说清楚（否则用户以为"显示错了"）。放左下角而不是
     # 卡片顶部：顶部是封面/曲名的领地，挤进去会把封面上沿顶到圆角外面。
+    hint = ""
     if info.demo:
+        hint = "未检测到播放器信息"
+    elif info.partial:
+        hint = "仅曲名 · 无进度"
+    if hint:
         p.setPen(QColor(st.dim))
-        p.drawText(row, Qt.AlignLeft | Qt.AlignVCenter, "未检测到播放器信息")
+        # 右侧时钟会占掉一段，左侧提示按剩余宽度省略——窄卡片上不许被硬裁
+        fm_h = QFontMetricsF(L["font_time"])
+        right_w = fm_h.horizontalAdvance(info.remains(now) or "0:00") + 6.0
+        left_w = max(20.0, row.width() - right_w)
+        p.drawText(QRectF(row.left(), row.top(), left_w, row.height()),
+                   Qt.AlignLeft | Qt.AlignVCenter,
+                   fm_h.elidedText(hint, Qt.ElideRight, left_w))
     p.restore()
 
 
@@ -263,11 +325,43 @@ class MusicWidget(GlassWidget):
         super().__init__(storage, entry, interactive=True)
         self.source: MediaSessionSource = create_source()
         self._info = self.source.snapshot()
+        self._now = time.monotonic()
         self._scroll = 0.0
+        self._seek_frac = None       # 拖动进度条时的预览占比（None = 没在拖）
+        # 侧车启动推迟一点：组件构造发生在桌面启动 / 重排路径上，spawn
+        # 子进程（哪怕只有 20ms）不该卡在首屏绘制里。
+        # 用**挂在自身上的 QTimer**（不是 QTimer.singleShot）：组件在 1.2s
+        # 内被重建时，父对象销毁会连定时器一起取消，不会回调到已析构的窗口。
+        self._start_timer = QTimer(self)
+        self._start_timer.setSingleShot(True)
+        self._start_timer.timeout.connect(self._start_source)
+        self._start_timer.start(1200)
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_MS)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
+
+    # ---------- 生命周期 ----------
+    def _start_source(self):
+        start = getattr(self.source, "start", None)
+        if callable(start):
+            try:
+                start()
+            except Exception:      # noqa: BLE001 —— 数据源起不来也不许崩组件
+                pass
+
+    def _stop_source(self):
+        stop = getattr(self.source, "stop", None)
+        if callable(stop):
+            try:
+                stop()
+            except Exception:      # noqa: BLE001
+                pass
+
+    def destroy_now(self):
+        """销毁路径（重排/切模式）也要收子进程，否则会留下孤儿 PS。"""
+        self._stop_source()
+        super().destroy_now()
 
     # ---------- 节拍 ----------
     def _tick(self):
@@ -280,6 +374,7 @@ class MusicWidget(GlassWidget):
         else:
             self._scroll += TICK_MS / 1000.0
         self._info = info
+        self._now = time.monotonic()
         self.update()
 
     # ---------- 交互 ----------
@@ -290,6 +385,13 @@ class MusicWidget(GlassWidget):
             if box.adjusted(-4, -4, 4, 4).contains(QPointF(pos)):
                 return kind
         return None
+
+    def _bar_at(self, pos) -> bool:
+        L = layout(QRectF(self.card_rect()), self._info)
+        return bar_hit_rect(L["bar"]).contains(QPointF(pos))
+
+    def _seek_enabled(self) -> bool:
+        return bool(self._info.duration > 0) and not self._info.partial
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -306,17 +408,44 @@ class MusicWidget(GlassWidget):
                 self.source.next_track()
                 self._after_control()
                 return
+            if self._seek_enabled() and self._bar_at(e.position()):
+                # 抓进度条：**不转交 super()**，否则会被当成拖动组件
+                L = layout(QRectF(self.card_rect()), self._info)
+                self._seek_frac = frac_at(L["bar"], e.position().x())
+                self.update()
+                return
         super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self._seek_frac is not None:
+            L = layout(QRectF(self.card_rect()), self._info)
+            self._seek_frac = frac_at(L["bar"], e.position().x())
+            self.update()
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if self._seek_frac is not None and e.button() == Qt.LeftButton:
+            frac = self._seek_frac
+            self._seek_frac = None
+            if self._seek_enabled():
+                self.source.seek(frac * self._info.duration)
+                self._after_control()
+            self.update()
+            return
+        super().mouseReleaseEvent(e)
 
     def _after_control(self):
         """控制后立刻回读一次：演示态要马上反映"暂停了/换歌了"。"""
         self._info = self.source.snapshot()
+        self._now = time.monotonic()
         self._scroll = 0.0
         self.update()
 
     # ---------- 绘制 ----------
     def paint_content(self, p):
-        draw(p, QRectF(self.card_rect()), self._info, self.style, self._scroll)
+        draw(p, QRectF(self.card_rect()), self._info, self.style, self._scroll,
+             now=self._now, seek_frac=self._seek_frac)
 
     def on_settings_changed(self):
         super().on_settings_changed()
@@ -326,4 +455,5 @@ class MusicWidget(GlassWidget):
         timer = getattr(self, "_timer", None)
         if timer is not None:
             timer.stop()
+        self._stop_source()
         super().closeEvent(e)

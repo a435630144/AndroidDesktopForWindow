@@ -273,6 +273,13 @@ SETTINGS_QSS = (
     " padding: 6px 14px; font-size: 12px; font-family: %(fam)s;}"
     "QPushButton:hover{background: rgba(255,255,255,28);}"
     "QPushButton:pressed{background: rgba(255,255,255,10);}"
+    # 侧栏左下角 GitHub 入口（v11 反馈 34）：图标按钮，悬停才亮边框
+    "QPushButton#githubLink{background: rgba(255,255,255,8);"
+    " border: 1px solid rgba(255,255,255,16); border-radius: 9px; padding: 0;}"
+    "QPushButton#githubLink:hover{background: rgba(255,255,255,26);"
+    " border-color: rgba(255,255,255,46);}"
+    "QPushButton#githubLinkText{background: transparent; border: none;"
+    " color: rgba(150,214,255,235); font-size: 10px; padding: 0;}"
     # 禁用态：自动模式下「重置网格位置」不该看起来能点（v7 原点组）
     "QPushButton:disabled{color: rgba(150,156,166,120);"
     " background: rgba(255,255,255,6); border-color: rgba(255,255,255,14);}"

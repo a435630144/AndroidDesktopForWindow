@@ -72,6 +72,7 @@ from src import autostart                          # noqa: E402
 from src import win32_layer                        # noqa: E402
 from src.add_apps_dialog import AddAppsDialog      # noqa: E402
 from src.desktop_window import DesktopWindow       # noqa: E402
+from src.desktop_hotkeys import DesktopHotkeys     # noqa: E402
 from src.dock import DockWindow, seed_from_layout  # noqa: E402
 from src.paths import asset_path, ensure_app_dirs  # noqa: E402
 from src.settings_dialog import SettingsDialog, open_settings   # noqa: E402
@@ -131,6 +132,19 @@ def main() -> int:
     seed_from_layout(storage)
     dock_bar = DockWindow(storage)
     window.set_dock(dock_bar)
+    # v11（反馈 31）：桌面上的 Ctrl+C / Ctrl+V。桌面窗口是 WS_EX_NOACTIVATE
+    # （永不获得焦点），键盘事件到不了 keyPressEvent——只能挂低层键盘钩子，
+    # 判据见 desktop_hotkeys 模块头（指针在我方桌面 + 前台不是别的应用 +
+    # 真的有事可做，三条同时成立才吞键）。
+    hotkeys = DesktopHotkeys(
+        on_copy=window.copy_selection,
+        on_paste=window.paste_from_clipboard,
+        own_hwnds=lambda: [int(window.winId()), int(dock_bar.winId())],
+        can_copy=window.has_selection,
+        can_paste=window.clipboard_has_files,
+    )
+    hotkeys.install()
+    app.aboutToQuit.connect(hotkeys.uninstall)
     # 锚定小组件是网格一等公民：占位变化（落定/移动）时挤走被压住的图标
     layer.gridChanged.connect(window.on_widget_grid_changed)
     # M4：组件拖动实时预览（hover 按新占位矩形实时挤走图标，松手回退）

@@ -15,8 +15,9 @@
 分组：通用 / 外观与图标 / 布局与网格 / 模式 / 高级。
 """
 from PySide6.QtCore import (Property, QElapsedTimer, QEasingCurve,
-                            QPropertyAnimation, Qt, QTimer)
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen
+                            QPropertyAnimation, QSize, Qt, QTimer, QUrl)
+from PySide6.QtGui import (QColor, QDesktopServices, QFont, QGuiApplication,
+                           QIcon, QPainter, QPen)
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QComboBox,
                                QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
                                QPushButton, QScrollArea, QSizePolicy, QSlider,
@@ -28,6 +29,7 @@ from . import grid_flow
 from . import i18n
 from . import interaction
 from . import page_rules
+from . import updater
 from .stepper import Stepper
 from .ui_choice import ComboBox
 from . import theme
@@ -69,6 +71,21 @@ class Switch(QCheckBox):
         anim.setEasingCurve(QEasingCurve.OutCubic)
         anim.start()
         self._anim = anim
+
+    def setChecked(self, checked):
+        """初始化时**直接就位**，不播 160ms 动画。
+
+        v11：旧实现在建窗时先 `setChecked(True)` 再显示，动画从 0 开始跑，
+        打开设置面板会看到一排开关"从关到开"地翻一遍；更糟的是首帧截图/
+        低帧率机器上它看起来就是**关着**的（用户以为设置丢了）。
+        未显示时直接置位；已显示时的用户操作仍然走弹簧动画。
+        """
+        super().setChecked(bool(checked))
+        if not self.isVisible():
+            if self._anim is not None:
+                self._anim.stop()
+                self._anim = None
+            self._set_t(1.0 if checked else 0.0)
 
     def paintEvent(self, e):
         p = QPainter(self)
@@ -122,7 +139,7 @@ class SettingsDialog(QDialog):
     # v9 V2：新增「组件库」分页（原独立窗口融合进来，BUG1 从结构上消失）
     NAV = (("general", "通用"), ("widgets", "组件库"), ("dock", "Dock 栏"),
            ("appearance", "外观与图标"), ("layout", "布局与网格"),
-           ("mode", "模式"), ("advanced", "高级"))
+           ("mode", "模式"), ("developer", "开发者"), ("advanced", "高级"))
 
     def __init__(self, window, storage, layer, parent=None, page=None):
         super().__init__(parent)
@@ -229,6 +246,35 @@ class SettingsDialog(QDialog):
             self._nav_buttons.append(btn)
             lay.addWidget(btn)
         lay.addStretch(1)
+
+        # v11（反馈 34）：左下角 GitHub 图标——一键去仓库看源码 / 提 issue。
+        # 图标走 assets/github.svg（QtSvg 插件缺失时退化成文字，不留下
+        # 一个空白方块）。
+        self.btn_github = QPushButton()
+        self.btn_github.setObjectName("githubLink")
+        self.btn_github.setCursor(Qt.PointingHandCursor)
+        self.btn_github.setFixedSize(32, 32)
+        self.btn_github.setToolTip(i18n.T("settings.github.tip"))
+        self.btn_github.setAccessibleName(i18n.T("settings.github.tip"))
+        try:
+            # 显式 import QtSvg：QIcon 读 SVG 依赖 imageformats/qsvg 插件，
+            # 不 import 这个模块时打包器可能不收集插件（源码态能显示、
+            # 冻结包变成空白方块）。失败也不影响使用（下面有文字兜底）。
+            from PySide6 import QtSvg  # noqa: F401
+            from .paths import asset_path
+            icon = QIcon(asset_path("github.svg"))
+        except Exception:      # noqa: BLE001
+            icon = QIcon()
+        if icon.isNull():
+            self.btn_github.setText("GitHub")
+            self.btn_github.setObjectName("githubLinkText")
+        else:
+            self.btn_github.setIcon(icon)
+            self.btn_github.setIconSize(QSize(19, 19))
+        self.btn_github.clicked.connect(
+            lambda: self._open_url(updater.PROJECT_URL))
+        lay.addWidget(self.btn_github, 0, Qt.AlignLeft)
+        lay.addSpacing(4)
 
         from . import version
         ver = QLabel(version.label())
@@ -512,12 +558,39 @@ class SettingsDialog(QDialog):
         hook = getattr(self.window, "apply_dock_style", None)
         if hook is not None:
             hook()
+        # 悬停倍数只在「悬停放大」开着时可调（关掉整项放大，旋钮没有意义）
+        if ctl("sp_dock_hover") is not None and ctl("chk_dock_hover") is not None:
+            self.sp_dock_hover.setEnabled(
+                bool(self.chk_dock.isChecked())
+                and bool(self.chk_dock_hover.isChecked()))
         # 圆角大小只在「圆角」形态下有效（胶囊/直角是固定几何）
         if ctl("sld_dock_radius") is not None:
             self.sld_dock_radius.setEnabled(
                 bool(self.chk_dock.isChecked())
                 and (mode or dock.normalize_radius_mode(
                     self.storage.get_setting("dock_radius_mode"))) == "round")
+        self._dock_save_timer.start(250)
+
+    def _apply_dock_metrics(self, *_):
+        """Dock 尺寸与间距（v11 反馈 29）：图标大小见 `_apply_dock`（要重建
+        图标），这里管间隔 / 内边距 / 悬停倍数。
+
+        三步：写设置 -> 立刻让条带按新厚度重排（cheap：只 setGeometry +
+        update）-> 网格重建走统一防抖（`refresh_grid` 会销毁重建全部图标，
+        逐像素调一次就是"拖炸"）。
+        """
+        ctl = lambda name: getattr(self, name, None)  # noqa: E731
+        if ctl("sp_dock_gap") is not None:
+            self.storage.set_setting("dock_gap", int(self.sp_dock_gap.value()))
+        if ctl("sp_dock_pad") is not None:
+            self.storage.set_setting("dock_pad", int(self.sp_dock_pad.value()))
+        if ctl("sp_dock_hover") is not None:
+            self.storage.set_setting("dock_hover_pct",
+                                     int(self.sp_dock_hover.value()))
+        hook = getattr(self.window, "apply_dock_metrics", None)
+        if callable(hook):
+            hook(False)          # 只重排条带，不重建网格
+        self._schedule_grid_refresh()
         self._dock_save_timer.start(250)
 
     def _sync_dock_border_btn(self):
@@ -578,6 +651,15 @@ class SettingsDialog(QDialog):
         if ctl("sp_dock_icon") is not None:
             self.storage.set_setting(
                 "dock_icon", int(self.sp_dock_icon.value()))
+        if ctl("sp_dock_gap") is not None:
+            self.storage.set_setting(
+                "dock_gap", int(self.sp_dock_gap.value()))
+        if ctl("sp_dock_pad") is not None:
+            self.storage.set_setting(
+                "dock_pad", int(self.sp_dock_pad.value()))
+        if ctl("sp_dock_hover") is not None:
+            self.storage.set_setting(
+                "dock_hover_pct", int(self.sp_dock_hover.value()))
         if ctl("sld_dock_alpha") is not None:
             self.storage.set_setting(
                 "dock_alpha", round(int(self.sld_dock_alpha.value()) / 100.0, 4))
@@ -605,12 +687,16 @@ class SettingsDialog(QDialog):
                                      self._dock_border_color)
         self.storage.save()
         # 关掉 Dock 时，子控件一并禁用（不留"能点但无效"的旋钮）
-        for name in ("cmb_dock_pos", "sp_dock_icon", "sld_dock_alpha",
+        for name in ("cmb_dock_pos", "sp_dock_icon", "sp_dock_gap",
+                     "sp_dock_pad", "sld_dock_alpha",
                      "cmb_dock_radius", "chk_dock_hover", "chk_dock_dot",
                      "sld_dock_border", "chk_dock_border_auto"):
             w = ctl(name)
             if w is not None:
                 w.setEnabled(on)
+        if ctl("sp_dock_hover") is not None:
+            self.sp_dock_hover.setEnabled(
+                on and bool(self.chk_dock_hover.isChecked()))
         if ctl("btn_dock_border_color") is not None:
             self._sync_dock_border_btn()
         # 圆角大小只在「圆角」形态下有效（胶囊/直角是固定几何）
@@ -682,7 +768,10 @@ class SettingsDialog(QDialog):
                   i18n.T("settings.general.dock.hint"))
 
         self.cmb_dock_pos = ComboBox()
-        for label, pos in dock.POSITION_LABELS:
+        # POSITION_LABELS 的元素顺序是 (值, 中文兜底)：按元组顺序解包，
+        # 写反了就会把 "bottom" 当标签、把 "底部" 当值（下拉显示英文、
+        # 切位置写进 storage 的是"顶部"这种中文，normalize 后全回 bottom）。
+        for pos, label in dock.POSITION_LABELS:
             self.cmb_dock_pos.addItem(i18n.TL("dock.pos." + pos, label), pos)
         self.cmb_dock_pos.setCurrentIndex(max(0, self.cmb_dock_pos.findData(
             dock.normalize_position(self.storage.get_setting("dock_position")))))
@@ -693,7 +782,11 @@ class SettingsDialog(QDialog):
                   i18n.T("settings.general.dock_position.hint"))
         lay.addWidget(card)
 
-        card2, c2 = self._card(body, i18n.T("settings.dock.card_style"))
+        # ---- v11（反馈 29）：尺寸与间距。用户的诉求是"dock 栏的大小、
+        # 图标间隔、大小比例都能自己调"——这四项各管一件事，不能合并：
+        # 图标大小 = 图标本体；间隔 = 图标之间；内边距 = 条带厚度；
+        # 悬停倍数 = 指到图标时放多大。
+        card, c = self._card(body, i18n.T("settings.dock.card_size"))
 
         self.sp_dock_icon = Stepper()
         self.sp_dock_icon.setRange(dock.DOCK_ICON_MIN, dock.DOCK_ICON_MAX)
@@ -703,8 +796,45 @@ class SettingsDialog(QDialog):
         self.sp_dock_icon.setValue(dock.icon_base(self.storage))
         self.sp_dock_icon.setEnabled(on)
         self.sp_dock_icon.valueChanged.connect(self._apply_dock)
-        self._row(c2, card2, i18n.T("settings.dock.icon.title"),
+        self._row(c, card, i18n.T("settings.dock.icon.title"),
                   self.sp_dock_icon, i18n.T("settings.dock.icon.hint"))
+
+        self.sp_dock_gap = Stepper()
+        self.sp_dock_gap.setRange(dock.DOCK_GAP_MIN, dock.DOCK_GAP_MAX)
+        self.sp_dock_gap.setSingleStep(1)
+        self.sp_dock_gap.setSuffix(i18n.T("settings.dock.unit_px"))
+        self.sp_dock_gap.setFixedWidth(96)
+        self.sp_dock_gap.setValue(dock.gap_px(self.storage))
+        self.sp_dock_gap.setEnabled(on)
+        self.sp_dock_gap.valueChanged.connect(self._apply_dock_metrics)
+        self._row(c, card, i18n.T("settings.dock.gap.title"),
+                  self.sp_dock_gap, i18n.T("settings.dock.gap.hint"))
+
+        self.sp_dock_pad = Stepper()
+        self.sp_dock_pad.setRange(dock.DOCK_PAD_MIN, dock.DOCK_PAD_MAX)
+        self.sp_dock_pad.setSingleStep(1)
+        self.sp_dock_pad.setSuffix(i18n.T("settings.dock.unit_px"))
+        self.sp_dock_pad.setFixedWidth(96)
+        self.sp_dock_pad.setValue(dock.pad_px(self.storage))
+        self.sp_dock_pad.setEnabled(on)
+        self.sp_dock_pad.valueChanged.connect(self._apply_dock_metrics)
+        self._row(c, card, i18n.T("settings.dock.pad.title"),
+                  self.sp_dock_pad, i18n.T("settings.dock.pad.hint"))
+
+        self.sp_dock_hover = Stepper()
+        self.sp_dock_hover.setRange(dock.DOCK_HOVER_MIN, dock.DOCK_HOVER_MAX)
+        self.sp_dock_hover.setSingleStep(2)
+        self.sp_dock_hover.setSuffix("%")
+        self.sp_dock_hover.setFixedWidth(96)
+        self.sp_dock_hover.setValue(dock.hover_pct(self.storage))
+        self.sp_dock_hover.setEnabled(on and dock.hover_enabled(self.storage))
+        self.sp_dock_hover.valueChanged.connect(self._apply_dock_metrics)
+        self._row(c, card, i18n.T("settings.dock.hover_scale.title"),
+                  self.sp_dock_hover,
+                  i18n.T("settings.dock.hover_scale.hint"))
+        lay.addWidget(card)
+
+        card2, c2 = self._card(body, i18n.T("settings.dock.card_style"))
 
         self.sld_dock_alpha = QSlider(Qt.Horizontal)
         self.sld_dock_alpha.setRange(30, 100)
@@ -1096,31 +1226,48 @@ class SettingsDialog(QDialog):
                   self.chk_autosync, i18n.T("settings.mode.auto_sync.hint"))
         lay.addWidget(card)
 
-    def _page_advanced(self, body, lay):
-        card, c = self._card(body, i18n.T("settings.advanced.card.maintain"))
-        btns = QWidget()
-        bh = QHBoxLayout(btns)
-        bh.setContentsMargins(0, 0, 0, 0)
-        bh.setSpacing(8)
-        self.btn_rescan = QPushButton(i18n.T("button.rescan"))
-        self.btn_rescan.clicked.connect(self._rescan)
-        self.btn_reset = QPushButton(i18n.T("button.reset_layout"))
-        self.btn_reset.clicked.connect(self._reset_layout)
-        bh.addWidget(self.btn_rescan)
-        bh.addWidget(self.btn_reset)
-        self._row(c, card, i18n.T("settings.advanced.files.title"), btns,
-                  i18n.T("settings.advanced.files.hint"))
-        lay.addWidget(card)
+    def _page_developer(self, body, lay):
+        """开发者（v11 反馈 32）：总开关 + 分项开关 + 网格原点。
 
-        card, c = self._card(body, i18n.T("settings.advanced.card.debug"))
+        旧实现把"网格调试信息"一个开关当成全部开发者功能：打开就是满屏
+        网格线 + 组件红底 + 帧率 + 窗口巡检全上，想只看帧率做不到；关掉
+        则连原点定位也一起锁死。现在拆成：
+
+            总开关（dev_mode）  ── 关 = 下面全部失效且不可交互
+              ├─ 网格线 / 原点 / 几何信息   dev_grid
+              ├─ 组件碰撞体积               dev_widget_collision
+              ├─ 帧率与绘制面积             dev_perf
+              ├─ 组件窗口一致性巡检         dev_window_check
+              └─ 网格原点定位（手动位置）    grid_origin_mode
+
+        分项默认全开：总开关打开后的行为与旧版一致（零迁移成本）。
+        """
+        card, c = self._card(body, i18n.T("settings.dev.card_master"))
         self.chk_dev = Switch()
         self.chk_dev.setChecked(bool(self.storage.get_setting("dev_mode")))
         self.chk_dev.toggled.connect(self._apply_dev_mode)
-        self._row(c, card, i18n.T("settings.advanced.dev_grid.title"),
-                  self.chk_dev, i18n.T("settings.advanced.dev_grid.hint"))
+        self._row(c, card, i18n.T("settings.dev.master.title"), self.chk_dev,
+                  i18n.T("settings.dev.master.hint"))
+        lay.addWidget(card)
 
-        # 网格原点定位（v7 §3.4 / 反馈 21）：**开发者功能**，只有上面的
-        # 开发者开关打开后才可配置（2026-10-20 用户反馈 5：不要放桌面右键）。
+        card, c = self._card(body, i18n.T("settings.dev.card_overlays"))
+        self._dev_switches = {}
+        for key, name in (("dev_grid", "grid"),
+                          ("dev_widget_collision", "collision"),
+                          ("dev_perf", "perf"),
+                          ("dev_window_check", "window")):
+            sw = Switch()
+            sw.setChecked(self._dev_value(key))
+            sw.toggled.connect(
+                lambda checked, k=key: self._apply_dev_flag(k, checked))
+            self._row(c, card, i18n.T("settings.dev.%s.title" % name), sw,
+                      i18n.T("settings.dev.%s.hint" % name))
+            self._dev_switches[key] = sw
+        lay.addWidget(card)
+
+        # ---- 网格原点定位（v7 §3.4 / 反馈 21）：开发者功能。原来在「高级」
+        # 页的调试卡片里，v11 整组搬到这里（高级只留维护 / 更新 / 关于）。
+        card, c = self._card(body, i18n.T("settings.dev.card_origin"))
         origin_manual = self.storage.grid_origin_mode() == "manual"
         self.chk_origin = Switch()
         self.chk_origin.setChecked(origin_manual)
@@ -1166,6 +1313,23 @@ class SettingsDialog(QDialog):
                   i18n.T("settings.advanced.origin_pick.hint"))
         lay.addWidget(card)
         self._sync_origin_controls()
+        self._sync_dev_controls()
+
+    def _page_advanced(self, body, lay):
+        card, c = self._card(body, i18n.T("settings.advanced.card.maintain"))
+        btns = QWidget()
+        bh = QHBoxLayout(btns)
+        bh.setContentsMargins(0, 0, 0, 0)
+        bh.setSpacing(8)
+        self.btn_rescan = QPushButton(i18n.T("button.rescan"))
+        self.btn_rescan.clicked.connect(self._rescan)
+        self.btn_reset = QPushButton(i18n.T("button.reset_layout"))
+        self.btn_reset.clicked.connect(self._reset_layout)
+        bh.addWidget(self.btn_rescan)
+        bh.addWidget(self.btn_reset)
+        self._row(c, card, i18n.T("settings.advanced.files.title"), btns,
+                  i18n.T("settings.advanced.files.hint"))
+        lay.addWidget(card)
 
         # 「关于」：版本标识（v6c 跑错包事故的取证设施——从桌面右键挪到这里，
         # 既满足"右键别塞版本号"，又保留"一眼看出跑的是哪个包"的能力）。
@@ -1177,6 +1341,9 @@ class SettingsDialog(QDialog):
                   self.lbl_about_version,
                   i18n.T("settings.advanced.version.hint"))
         lay.addWidget(card)
+
+        self._build_update_card(body, lay)
+        self._build_author_card(body, lay)
 
     # ---------- 实时生效 ----------
     def _call_window(self, name, *args):
@@ -1639,9 +1806,26 @@ class SettingsDialog(QDialog):
 
     def _apply_dev_mode(self, checked):
         self.storage.set_setting("dev_mode", bool(checked))
-        # 原点定位属开发者功能：开关一翻，整组控件跟着可用/不可用
-        self._sync_origin_controls()
+        # 原点定位 / 分项开关属开发者功能：总闸一翻，整组跟着可用/不可用
+        self._sync_dev_controls()
         self._call_window('update')
+
+    # ---------- v11：开发者分项开关 ----------
+    def _dev_value(self, key: str, default: bool = True) -> bool:
+        """读一个开发者分项设置（缺省 = True，与旧行为一致）。"""
+        v = self.storage.get_setting(key)
+        return default if v is None else bool(v)
+
+    def _apply_dev_flag(self, key: str, checked):
+        self.storage.set_setting(key, bool(checked))
+        self._call_window('update')
+
+    def _sync_dev_controls(self):
+        """总闸关 -> 分项开关与原点整组置灰（数据保留，只是不能改）。"""
+        on = bool(self.storage.get_setting("dev_mode"))
+        for sw in getattr(self, "_dev_switches", {}).values():
+            sw.setEnabled(on)
+        self._sync_origin_controls()
 
     def _apply_opacity(self, value):
         self.lbl_opacity.setText("%d%%" % value)
@@ -1732,3 +1916,104 @@ class SettingsDialog(QDialog):
         if ret == QMessageBox.Yes:
             self.storage.seed_desktop_clone(replace=True)
             self._call_window('rebuild')
+
+    # ---------- v11：更新检测 / 关于作者 ----------
+    def _build_update_card(self, body, lay):
+        """「更新」：当前版本 + 检查按钮 + 一行状态。
+
+        检查在后台线程（`updater.UpdateChecker`），UI 只接信号——网络慢
+        时窗口照常可操作，用户看到的是"正在检查…"而不是假死。
+        """
+        card, c = self._card(body, i18n.T("settings.advanced.card.update"))
+        box = QWidget()
+        h = QHBoxLayout(box)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(10)
+        self.lbl_update = QLabel(i18n.T("settings.advanced.update.idle"))
+        self.lbl_update.setObjectName("rowHint")
+        self.lbl_update.setWordWrap(True)
+        self.btn_check_update = QPushButton(
+            i18n.T("settings.advanced.update.check"))
+        self.btn_check_update.setCursor(Qt.PointingHandCursor)
+        self.btn_check_update.clicked.connect(self._check_update)
+        h.addWidget(self.lbl_update, 1)
+        h.addWidget(self.btn_check_update, 0, Qt.AlignVCenter)
+        self._row(c, card, i18n.T("settings.advanced.update.title"), box,
+                  i18n.T("settings.advanced.update.hint"))
+
+        self._update_url = updater.RELEASES_URL
+        self.btn_open_release = QPushButton(
+            i18n.T("settings.advanced.update.open"))
+        self.btn_open_release.clicked.connect(
+            lambda: self._open_url(self._update_url))
+        self._row_open_release = self._row(
+            c, card, i18n.T("settings.advanced.update.open_title"),
+            self.btn_open_release)
+        self._row_open_release.setVisible(False)
+        lay.addWidget(card)
+        self._updater = None
+
+    def _check_update(self):
+        """检查更新（防连点；失败也要把按钮放回来）。"""
+        if self._updater is None:
+            self._updater = updater.UpdateChecker(self)
+            self._updater.finished.connect(self._on_update_finished)
+            self._updater.failed.connect(self._on_update_failed)
+        if self._updater.busy:
+            return
+        self.lbl_update.setText(i18n.T("settings.advanced.update.checking"))
+        self.btn_check_update.setEnabled(False)
+        self._updater.check()
+
+    def _on_update_finished(self, info):
+        self.btn_check_update.setEnabled(True)
+        info = info or {}
+        latest = str(info.get("version") or "")
+        if info.get("newer"):
+            self._update_url = str(info.get("url") or updater.RELEASES_URL)
+            self.lbl_update.setText(
+                i18n.T("settings.advanced.update.found", version=latest))
+            self._row_open_release.setVisible(True)
+        else:
+            self.lbl_update.setText(
+                i18n.T("settings.advanced.update.up_to_date", version=latest))
+            self._row_open_release.setVisible(False)
+
+    def _on_update_failed(self, message):
+        self.btn_check_update.setEnabled(True)
+        self.lbl_update.setText(
+            i18n.T("settings.advanced.update.failed", error=str(message)))
+
+    def _build_author_card(self, body, lay):
+        """「关于作者」：一句介绍 + 抖音 / 哔哩哔哩两个入口。"""
+        card, c = self._card(body, i18n.T("settings.advanced.card.author"))
+        about = QLabel(i18n.T("settings.advanced.author.about"))
+        about.setObjectName("rowHint")
+        about.setWordWrap(True)
+        c.addWidget(about)
+        box = QWidget()
+        h = QHBoxLayout(box)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(8)
+        self._author_buttons = []
+        for key, label, url in updater.AUTHOR_LINKS:
+            btn = QPushButton(i18n.TL("settings.advanced.author." + key, label))
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(
+                "QPushButton{background: rgba(76,194,255,32);"
+                " border: 1px solid rgba(76,194,255,110);"
+                " border-radius: 8px; padding: 5px 14px; font-size: 12px;"
+                " color: rgb(150,214,255);}"
+                "QPushButton:hover{background: rgba(76,194,255,56);}")
+            btn.clicked.connect(lambda _c=False, u=url: self._open_url(u))
+            h.addWidget(btn)
+            self._author_buttons.append((key, btn))
+        self._row(c, card, i18n.T("settings.advanced.author.links"), box)
+        lay.addWidget(card)
+
+    def _open_url(self, url: str):
+        """用系统默认浏览器打开链接（失败不弹窗，静默即可）。"""
+        try:
+            QDesktopServices.openUrl(QUrl(str(url)))
+        except Exception:      # noqa: BLE001
+            pass

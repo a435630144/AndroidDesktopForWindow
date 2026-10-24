@@ -40,6 +40,7 @@ $ErrorActionPreference = 'Continue'
     --icon assets\app_icon.ico `
     --add-data "assets;assets" `
     --add-data "src/i18n;i18n" `
+    --add-data "src/media_smtc.ps1;src" `
     main.py *> $log
 $pycode = $LASTEXITCODE
 $ErrorActionPreference = $prevEap

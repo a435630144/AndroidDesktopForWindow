@@ -59,9 +59,15 @@ RADIUS_LABELS = (("round", "圆角"), ("pill", "胶囊"), ("square", "直角"))
 # 现在 32px / 4 槽位（空态长度 ~152px），并且这三项都进了设置 ▸ Dock 栏。
 DOCK_ICON = 32          # 图标基准边长（逻辑 px，100% 缩放；设置可改 24~56）
 DOCK_ICON_MIN, DOCK_ICON_MAX = 24, 56
+# v11（反馈 29）：间距 / 内边距 / 悬停放大全部进设置——"Dock 大小"由
+# 图标 + 内边距 + 悬停倍数三者共同决定，只留一个滑块等于把三种诉求
+# 压成一条线（用户：想要"更紧凑但图标别变小"就做不到）。
 DOCK_GAP = 6            # 图标间距（图标 PNG 自带透明边，视觉间隙约 2 倍）
+DOCK_GAP_MIN, DOCK_GAP_MAX = 0, 24
 DOCK_PAD = 6            # 条带内边距（hover 图标与条带边留出呼吸）
+DOCK_PAD_MIN, DOCK_PAD_MAX = 2, 20
 DOCK_HOVER = 1.22       # hover 放大倍数（1.0 = 不放大；设置里可整项关闭）
+DOCK_HOVER_MIN, DOCK_HOVER_MAX = 100, 150   # 设置值域（百分比，100 = 不放大）
 MIN_SLOTS = 4           # 空态/少量条目时按 4 个槽位撑住长度（条形不会缩成一点）
 DOCK_MAX_ITEMS = 24     # 上限（再多滚不动，靠拖出/排序管理；
                         # 与待办清单的 MAX_ITEMS 同名会撞文档门禁的常量表）
@@ -131,6 +137,39 @@ def bg_alpha(storage) -> float:
     return max(0.30, min(1.0, v))
 
 
+# ---- 尺寸与间距（v11 反馈 29）----
+def _clamped_int(storage, key, default, lo, hi) -> int:
+    """读一个夹在 [lo, hi] 的整数设置（脏值回 default，不抛）。"""
+    try:
+        v = int(setting(storage, key, default))
+    except (TypeError, ValueError):
+        v = default
+    return max(lo, min(hi, v))
+
+
+def gap_px(storage) -> int:
+    """图标间距（逻辑 px，100% 缩放基准，0~24）。"""
+    return _clamped_int(storage, "dock_gap", DOCK_GAP,
+                        DOCK_GAP_MIN, DOCK_GAP_MAX)
+
+
+def pad_px(storage) -> int:
+    """条带内边距（逻辑 px，2~20）——决定"条带有多厚"。"""
+    return _clamped_int(storage, "dock_pad", DOCK_PAD,
+                        DOCK_PAD_MIN, DOCK_PAD_MAX)
+
+
+def hover_pct(storage) -> int:
+    """hover 放大倍数（百分比，100~150；100 = 不放大）。"""
+    return _clamped_int(storage, "dock_hover_pct", 122,
+                        DOCK_HOVER_MIN, DOCK_HOVER_MAX)
+
+
+def hover_ratio(storage) -> float:
+    """hover 放大倍数（浮点，1.0~1.5；100% -> 1.0）。"""
+    return hover_pct(storage) / 100.0
+
+
 # ---- 边框（v10 反馈 27：粗细与颜色可调）----
 BORDER_MIN, BORDER_MAX = 0, 4
 DEFAULT_BORDER_WIDTH = 1
@@ -174,6 +213,7 @@ class DockMetrics(NamedTuple):
     thickness: int      # 条带厚度（副轴）
     length: int         # 条带长度（主轴）
     slots: int = 0      # 参与长度计算的槽位数（含空态撑开的）
+    hover: float = DOCK_HOVER   # hover 放大倍数（v11：设置可调）
 
 
 # ---------------------------------------------------------------- 纯函数
@@ -187,22 +227,29 @@ def _scale(ui_scale) -> float:
     return min(2.0, max(0.6, s))
 
 
-def metrics(ui_scale, count: int, base: int = DOCK_ICON) -> DockMetrics:
+def metrics(ui_scale, count: int, base: int = DOCK_ICON,
+            gap: int = DOCK_GAP, pad: int = DOCK_PAD,
+            hover: float = DOCK_HOVER) -> DockMetrics:
     """Dock 几何：图标/间距/内边距只随 `ui_scale` 线性放大。
 
     条带厚度 = pad×2 + hover 后的图标边长——**预留放大空间**是有意的：
     hover 时图标在条带内长大，永远不出窗口（见模块 docstring）。
 
-    `base` 是"100% 缩放下的图标边长"（v10 A9 起可配置：设置 ▸ Dock 栏）。
+    `base` / `gap` / `pad` / `hover` 是"100% 缩放下的基准值"（v10 A9 起
+    可配置：设置 ▸ Dock 栏；v11 补上 gap/pad/hover 三项）。
     """
     s = _scale(ui_scale)
     icon = max(16, int(round(int(base) * s)))
-    gap = max(3, int(round(DOCK_GAP * s)))
-    pad = max(2, int(round(DOCK_PAD * s)))
-    thickness = pad * 2 + int(round(icon * DOCK_HOVER))
+    g = max(0, int(round(int(gap) * s)))
+    p = max(1, int(round(int(pad) * s)))
+    try:
+        h = max(1.0, min(1.5, float(hover)))
+    except (TypeError, ValueError):
+        h = DOCK_HOVER
+    thickness = p * 2 + int(round(icon * h))
     slots = max(MIN_SLOTS, min(DOCK_MAX_ITEMS, max(0, int(count))))
-    length = pad * 2 + slots * icon + (slots - 1) * gap
-    return DockMetrics(icon, gap, pad, thickness, length, slots)
+    length = p * 2 + slots * icon + (slots - 1) * g
+    return DockMetrics(icon, g, p, thickness, length, slots, h)
 
 
 def metrics_for(storage, count: int = 0) -> DockMetrics:
@@ -212,7 +259,8 @@ def metrics_for(storage, count: int = 0) -> DockMetrics:
             count = len(load_items(storage))
         except Exception:      # noqa: BLE001
             count = 0
-    return metrics(storage.ui_scale(), count, icon_base(storage))
+    return metrics(storage.ui_scale(), count, icon_base(storage),
+                   gap_px(storage), pad_px(storage), hover_ratio(storage))
 
 
 def normalize_position(position) -> str:
@@ -650,7 +698,7 @@ class DockWindow(QWidget):
         d = abs(int(index) - int(self._hover_index))
         if d == 0 or d > 2:
             return 0
-        grow = self._m.icon * (DOCK_HOVER - 1.0) * self._hover_t
+        grow = self._m.icon * (self._m.hover - 1.0) * self._hover_t
         falloff = 0.5 if d == 1 else 0.18
         shift = int(round(grow * falloff))
         return shift if index > self._hover_index else -shift
@@ -754,7 +802,7 @@ class DockWindow(QWidget):
         ly = y - self._bar[1]
         grow = 0.0
         if i == self._hover_index:
-            grow = m.icon * (DOCK_HOVER - 1.0) * self._hover_t
+            grow = m.icon * (m.hover - 1.0) * self._hover_t
         # 尺寸量化到 2px 步进：hover 动画每帧都会变，不量化会让
         # `appsource.icon_pixmap` 的 size 缓存键爆炸（每帧新建 pixmap）
         size = max(16, int(round((m.icon + grow) / 2.0)) * 2)

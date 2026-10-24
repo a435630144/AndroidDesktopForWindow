@@ -14,6 +14,11 @@
   M10 组件点击三键分别调到 prev / play_pause / next（假数据源，不碰真播放器）
   M11 注册表登记：spans (3,2) 起、分类媒体、默认锚定、有预览函数
   M12 组件真的画了内容 + 刷新间隔 500ms
+  M13 侧车协议：B64 行解码（中文/无会话/垃圾行）
+  M14 组合源优先级：SMTC > 标题 > 演示；seek 只往真源发
+  M15 窗口标题解析：`歌名 - 歌手` / `•` / 品牌后缀
+  M16 进度条拖动：按下不移动组件、松手一次 seek 且只发一次
+  M17 仅曲名档：进度条不可拖、不画假进度
 
 运行：python tests/test_widget_music.py   （offscreen）
 """
@@ -94,6 +99,19 @@ def click(w, pos):
     ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(pos), QPointF(pos),
                      Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
     w.mousePressEvent(ev)
+
+
+def drag(w, p0, p1):
+    """按下 -> 移动 -> 松手（进度条拖动的最小序列）。"""
+    w.mousePressEvent(QMouseEvent(
+        QEvent.MouseButtonPress, QPointF(p0), QPointF(p0),
+        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+    w.mouseMoveEvent(QMouseEvent(
+        QEvent.MouseMove, QPointF(p1), QPointF(p1),
+        Qt.NoButton, Qt.LeftButton, Qt.NoModifier))
+    w.mouseReleaseEvent(QMouseEvent(
+        QEvent.MouseButtonRelease, QPointF(p1), QPointF(p1),
+        Qt.LeftButton, Qt.NoButton, Qt.NoModifier))
 
 
 def main(app):
@@ -272,6 +290,160 @@ def main(app):
     w2._timer.stop()
     w2.close()
     w.close()
+
+    # ---------- M16 / M17：进度条拖动 ----------
+    class SeekFake(FakeSource):
+        def __init__(self, info=None):
+            super().__init__()
+            self.info = info or MediaInfo(title="真歌名", artist="真艺人",
+                                          playing=True, position=30.0,
+                                          duration=120.0, seekable=True)
+
+        def snapshot(self):
+            return self.info
+
+        def seek(self, seconds):
+            self.calls.append(("seek", round(float(seconds), 2)))
+            return True
+
+    w3 = wm.MusicWidget(st, dict(st.widgets[0]))
+    fake3 = SeekFake()
+    w3.source = fake3
+    w3._info = fake3.snapshot()
+    w3._timer.stop()
+    w3.resize(W, H)
+    Lb = wm.layout(QRectF(0, 0, W, H))
+    bar = Lb["bar"]
+    pos0 = (w3.x(), w3.y())
+    x25 = bar.left() + bar.width() * 0.25
+    w3.mousePressEvent(QMouseEvent(
+        QEvent.MouseButtonPress, QPointF(x25, bar.center().y()),
+        QPointF(x25, bar.center().y()), Qt.LeftButton, Qt.LeftButton,
+        Qt.NoModifier))
+    check("M16 按在进度条上：进入预览态", w3._seek_frac is not None
+          and abs(w3._seek_frac - 0.25) < 0.02, str(w3._seek_frac))
+    check("M16b 按下进度条不移动组件（不被当成拖窗口）",
+          (w3.x(), w3.y()) == pos0, "%s -> %s" % (pos0, (w3.x(), w3.y())))
+    x75 = bar.left() + bar.width() * 0.75
+    w3.mouseMoveEvent(QMouseEvent(
+        QEvent.MouseMove, QPointF(x75, bar.center().y()),
+        QPointF(x75, bar.center().y()), Qt.NoButton, Qt.LeftButton,
+        Qt.NoModifier))
+    check("M16c 拖动更新预览占比", abs(w3._seek_frac - 0.75) < 0.02,
+          str(w3._seek_frac))
+    check("M16d 拖动中尚未 seek（松手才落地）",
+          not [c for c in fake3.calls if isinstance(c, tuple)], str(fake3.calls))
+    w3.mouseReleaseEvent(QMouseEvent(
+        QEvent.MouseButtonRelease, QPointF(x75, bar.center().y()),
+        QPointF(x75, bar.center().y()), Qt.LeftButton, Qt.NoButton,
+        Qt.NoModifier))
+    seeks = [c for c in fake3.calls if isinstance(c, tuple)]
+    check("M16e 松手 seek 到目标位置（0.75 × 120s = 90s）",
+          len(seeks) == 1 and abs(seeks[0][1] - 90.0) < 2.0, str(seeks))
+    check("M16f 松手后退出预览态", w3._seek_frac is None)
+
+    fake4 = SeekFake(MediaInfo(title="只有标题", artist="X", playing=True,
+                               duration=0.0, partial=True, seekable=False))
+    w3.source = fake4
+    w3._info = fake4.snapshot()
+    w3.mousePressEvent(QMouseEvent(
+        QEvent.MouseButtonPress, QPointF(x25, bar.center().y()),
+        QPointF(x25, bar.center().y()), Qt.LeftButton, Qt.LeftButton,
+        Qt.NoModifier))
+    check("M17 仅曲名档进度条不可拖（按下去也不进预览态）",
+          w3._seek_frac is None and not w3._seek_enabled())
+    check("M17b 仅曲名档 progress 恒 0（不画假进度）",
+          fake4.snapshot().progress() == 0.0)
+    w3.mouseReleaseEvent(QMouseEvent(
+        QEvent.MouseButtonRelease, QPointF(x25, bar.center().y()),
+        QPointF(x25, bar.center().y()), Qt.LeftButton, Qt.NoButton,
+        Qt.NoModifier))
+    w3._timer.stop()
+    w3.close()
+
+    # ---------- M13：侧车协议 ----------
+    import base64
+    import json
+
+    def b64line(obj):
+        raw = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        return "B64:" + base64.b64encode(raw).decode("ascii")
+
+    info = ms.parse_sidecar_line(b64line({
+        "ok": True, "has": True, "title": "晴天", "artist": "周杰伦",
+        "album": "叶惠美", "playing": True, "pos": 12.5, "dur": 269.0,
+        "app": "cloudmusic"}))
+    check("M13 侧车行解码出中文曲名/艺人",
+          info is not None and info.title == "晴天" and info.artist == "周杰伦",
+          str(info))
+    check("M13b 真会话可 seek 且进度按位置算",
+          info is not None and info.seekable and abs(info.progress() - 12.5 / 269.0) < 1e-6,
+          str(info.progress() if info else None))
+    off = ms.parse_sidecar_line(b64line({"ok": True, "has": False}))
+    check("M13c 无会话 -> EMPTY（不编歌名）", off is not None and off.title == "")
+    check("M13d 垃圾行 -> None（跳过而不抛）",
+          ms.parse_sidecar_line("hello") is None
+          and ms.parse_sidecar_line("B64:!!!!") is None
+          and ms.parse_sidecar_line(None) is None)
+    check("M13e 插值：播放中位置随时间前进",
+          abs(MediaInfo(playing=True, position=10.0, duration=100.0,
+                        stamp=100.0).position_at(105.0) - 15.0) < 1e-6)
+    check("M13f 插值不超过时长",
+          MediaInfo(playing=True, position=99.0, duration=100.0,
+                    stamp=100.0).position_at(200.0) == 100.0)
+
+    # ---------- M14：组合源优先级 ----------
+    class Stub:
+        name = "stub"
+
+        def __init__(self, info):
+            self.info = info
+            self.seeked = None
+            self.started = False
+            self.stopped = False
+
+        def start(self):
+            self.started = True
+
+        def stop(self):
+            self.stopped = True
+
+        def snapshot(self):
+            return self.info
+
+        def seek(self, seconds):
+            self.seeked = seconds
+            return True
+
+    smtc = Stub(MediaInfo(title="SMTC 歌", artist="A", duration=200.0,
+                          position=20.0, playing=True, seekable=True))
+    titles = Stub(MediaInfo(title="标题歌", artist="B", partial=True))
+    demo = DemoSource()
+    auto = ms.AutoSource(smtc=smtc, titles=titles, demo=demo)
+    check("M14 SMTC 有歌时优先用真会话", auto.snapshot().title == "SMTC 歌")
+    check("M14b seek 发给 SMTC", auto.seek(30.0) and smtc.seeked == 30.0,
+          str(smtc.seeked))
+    smtc.info = MediaInfo()
+    check("M14c SMTC 空 -> 退到窗口标题", auto.snapshot().title == "标题歌")
+    check("M14d 标题档不可 seek（没有时长就不能假装能拖）",
+          auto.seek(30.0) is False)
+    titles.info = MediaInfo()
+    snap = auto.snapshot()
+    check("M14e 都没有 -> 演示档", snap.demo is True and snap.title != "",
+          snap.title)
+    auto.start()
+    auto.stop()
+    check("M14f start/stop 透传到 SMTC（子进程不留孤儿）",
+          smtc.started and smtc.stopped)
+
+    # ---------- M15：标题解析 ----------
+    check("M15 `歌名 - 歌手` 拆开", ms.parse_title("晴天 - 周杰伦") == ("晴天", "周杰伦"))
+    check("M15b `•` 分隔也认", ms.parse_title("Stay • Rihanna") == ("Stay", "Rihanna"))
+    check("M15c 品牌后缀被去掉",
+          ms.parse_title("晴天 - 周杰伦 - 网易云音乐") == ("晴天", "周杰伦"))
+    check("M15d 只有一段时整段当歌名",
+          ms.parse_title("Some Title") == ("Some Title", ""))
+    check("M15e 空标题不编造", ms.parse_title("") == ("", ""))
 
     # ---------- M11：注册表 ----------
     from src import widget_registry as reg

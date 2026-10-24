@@ -5,7 +5,8 @@
 深色底上失去可读性层次。重构为「左侧导航 + 右栏分页 + 行式卡片」，
 文字颜色与字号统一由 theme.SETTINGS_QSS 提供。
 
-  U1 左侧栏 7 个导航项（通用 / 组件库 / Dock 栏 / 外观与图标 / 布局与网格 / 模式 / 高级）
+  U1 左侧栏 8 个导航项（通用 / 组件库 / Dock 栏 / 外观与图标 / 布局与网格 /
+     模式 / 开发者 / 高级）——v11 反馈 32 新增「开发者」分页
   U2 点导航切页：stack 索引跟着变，页标题跟着变
   U3 卡片走 objectName=settingsCard，样式统一来自 SETTINGS_QSS
   U4 行标题 rowTitle / 说明 rowHint 两级文字，颜色在 SETTINGS_QSS 里定义
@@ -96,13 +97,14 @@ def main(app):
     navs = [b for b in dlg.findChildren(QPushButton)
             if b.objectName() == "navItem"]
     # v9 V2：新增「组件库」分页（原独立窗口融合进来）
-    check("U1 左侧栏 7 个导航项", len(navs) == 7, "found=%d" % len(navs))
-    check("U1 导航文案依次为 通用/组件库/Dock 栏/外观与图标/布局与网格/模式/高级",
+    check("U1 左侧栏 8 个导航项", len(navs) == 8, "found=%d" % len(navs))
+    check("U1 导航文案依次为 通用/组件库/Dock 栏/外观与图标/布局与网格/模式/开发者/高级",
           [b.text() for b in navs]
-          == ["通用", "组件库", "Dock 栏", "外观与图标", "布局与网格", "模式", "高级"],
+          == ["通用", "组件库", "Dock 栏", "外观与图标", "布局与网格", "模式",
+              "开发者", "高级"],
           "%s" % [b.text() for b in navs])
     stack = dlg.findChildren(QStackedWidget)
-    check("U1 右栏是 7 页堆栈", len(stack) == 1 and stack[0].count() == 7,
+    check("U1 右栏是 8 页堆栈", len(stack) == 1 and stack[0].count() == 8,
           "stacks=%d" % len(stack))
 
     # ---------- U2 切页 ----------
@@ -114,7 +116,7 @@ def main(app):
           "%s" % dlg.lbl_page_title.text())
     check("U2 只有当前导航高亮",
           [b.isChecked() for b in navs]
-          == [False, False, False, False, False, True, False],
+          == [False, False, False, False, False, True, False, False],
           "%s" % [b.isChecked() for b in navs])
     navs[0].click()
     app.processEvents()
@@ -204,7 +206,8 @@ def main(app):
 
     # ---------- U8 可滚动 ----------
     scrolls = dlg.findChildren(QScrollArea)
-    check("U8 每页内容装在可滚动区域", len(scrolls) == 6, "found=%d" % len(scrolls))
+    # 8 页里「组件库」自带滚动区（不能套第二层），所以外层是 7 个
+    check("U8 每页内容装在可滚动区域", len(scrolls) == 7, "found=%d" % len(scrolls))
     check("U8 滚动区无横向滚动条（宽度自适应）",
           all(s.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
               for s in scrolls))

@@ -124,6 +124,9 @@ DEFAULT_SETTINGS = {
     "dock_seeded": False,       # 首次启用是否已用桌面现成应用填过（只填一次）
     # v10 A9（反馈 24）：Dock 外观（全部是"全局旋钮"，不进 dock_items）
     "dock_icon": 32,            # 图标逻辑边长 24~56（100% 缩放下的基准）
+    "dock_gap": 6,              # v11：图标间距 0~24（逻辑 px，100% 基准）
+    "dock_pad": 6,              # v11：条带内边距 2~20——决定"条带有多厚"
+    "dock_hover_pct": 122,      # v11：hover 放大百分比 100~150（100 = 不放大）
     "dock_alpha": 0.86,         # 条带背景不透明度 0.30~1.0
     "dock_radius_mode": "round",  # round（指定半径，默认）| pill（胶囊）| square（直角）
     "dock_radius": 12,           # round 形态的半径 0~26（100% 缩放基准）
@@ -157,6 +160,14 @@ DEFAULT_SETTINGS = {
     # （另一处是隐藏 DefView 连带壁纸，见 win32_layer）。排查布局时在
     # 右键菜单「查看 ▸ 显示网格调试信息」里临时打开即可。
     "dev_mode": False,
+    # v11（反馈 32）：开发者选项拆成分页 + 分项开关。`dev_mode` 变成**总闸**，
+    # 下面四个是各自叠加层——旧实现整个 dev_mode 一个开关，开了就是满屏
+    # 网格 + 红底 + 帧率 + 窗口巡检，想只看帧率做不到。默认全开：
+    # 总闸一打开的行为与旧版完全一致（零迁移成本）。
+    "dev_grid": True,            # 网格线 / 原点十字 / 几何信息文字
+    "dev_widget_collision": True,  # 组件碰撞体积红底 + 卡片/窗口框
+    "dev_perf": True,            # 帧率 / 峰值 / 绘制面积读数
+    "dev_window_check": True,    # 组件真实窗口 vs 卡片一致性巡检
     # v10 A2（反馈 3）："首次加载已把 dev_mode 关掉"的一次性标记。
     # 覆盖安装不清 %APPDATA%，旧版遗留的 True 会被新版继承 → 开局一张调试网格。
     "dev_mode_v10_reset": False,

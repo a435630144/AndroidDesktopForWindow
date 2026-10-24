@@ -450,13 +450,16 @@ class DesktopWindow(QWidget):
                 self._paint_band(event)
             if self._organize_mode() and not self._widgets_only():
                 if self._dev_mode() or self._grid_flash:
-                    self._paint_grid_debug()
+                    # force_grid：取点/重置后那一下"闪网格"与开发者开关无关，
+                    # 它是一次性反馈（v11：分项开关不能把这条反馈也关掉）
+                    self._paint_grid_debug(force_grid=self._grid_flash)
                 self._paint_dots()
             if hl:
                 self._paint_highlight(event)   # v6 §5.2：目标格红框置顶
             if self._picking_origin:
                 if not self._dev_mode() and not self._grid_flash:
-                    self._paint_grid_debug()   # 取点态先把网格显出来再点
+                    # 取点态必须看得见网格（否则用户不知道在点哪儿）
+                    self._paint_grid_debug(force_grid=True)
                 self._paint_pick_hint()        # 提示条最后画（不能被网格盖住）
             return  # 除上述元素外全透明，融入壁纸
         p = QPainter(self)
@@ -468,8 +471,10 @@ class DesktopWindow(QWidget):
         p.setFont(theme.ui_font(13))
         p.drawText(24, 30, "桌面整理 Demo · 悬浮模式（未能挂载桌面层，功能不受影响）")
         if self._organize_mode() and not self._widgets_only():
-            if self._dev_mode():
-                self._paint_grid_debug()
+            # 悬浮兜底同样认"取点闪网格"：挂载失败时用户也会从设置里取点，
+            # 那一下必须看得见网格（与附着分支同一判据）。
+            if self._dev_mode() or self._grid_flash:
+                self._paint_grid_debug(force_grid=self._grid_flash)
             self._paint_dots()
         if hl:
             self._paint_highlight(event)
@@ -1142,6 +1147,26 @@ class DesktopWindow(QWidget):
         except (RuntimeError, AttributeError):
             self._dock = None
 
+    def apply_dock_metrics(self, reflow_grid: bool = True):
+        """Dock **尺寸**变化（图标间隔 / 内边距 / 悬停倍数）：重排条带。
+
+        v11（反馈 29）：这三个值改的是条带厚度与长度，条带必须立刻按新
+        尺寸落位（`apply_geometry` 只算几何 + setGeometry + update，很轻）；
+        `reflow_grid=False` 时**不**重建网格图标——拖步进器/滑条时逐次
+        重建会像 v10 反馈 27 那样把主线程拖死，网格交给设置页的防抖。
+
+        与 `apply_dock_settings()` 的分工：那条路径还要 `refresh_band()`
+        （win32 重挂 + 层序归位），只有开关/位置这类"会换边"的改动才需要。
+        """
+        d = self._dock
+        if d is not None:
+            try:
+                d.apply_geometry((self.width(), self.height()))
+            except (RuntimeError, AttributeError):
+                self._dock = None
+        if reflow_grid:
+            self.refresh_grid()
+
     def _dock_hit(self, pos) -> bool:
         """窗口坐标 pos 是否落在 Dock 条带上（屏幕/全局坐标换算后比较）。"""
         d = self._dock
@@ -1405,33 +1430,67 @@ class DesktopWindow(QWidget):
                 p.drawEllipse(c, 4, 4)
         p.end()
 
-    def _paint_grid_debug(self):
+    def _dev_flag(self, key: str, default: bool = True) -> bool:
+        """开发者分项开关（v11 反馈 32）：总闸关着 -> 一律 False。
+
+        `dev_mode` 是总闸，`dev_grid` / `dev_widget_collision` / `dev_perf` /
+        `dev_window_check` 是四项叠加层。旧 state 没有这些键 -> 默认 True，
+        所以"打开总闸"的行为与旧版完全一致（零迁移成本）。
+        """
+        if not self._dev_mode():
+            return False
+        v = self.storage.get_setting(key)
+        return default if v is None else bool(v)
+
+    def _paint_grid_debug(self, force_grid: bool = False):
         """开发者模式：网格可视化边框（2026-10-18，排查布局问题用）。
 
         画四样东西（调试色与主题色刻意错开——ACCENT 是蓝，这里用春绿/
         品红，肉眼一眼区分；像素签名见 tests/test_dev_mode.py）：
           - 网格工作区外边界（ox,oy → +cols*cw, +rows*ch）：2px 春绿实线
           - 内部网格线（cols+1 竖 + rows+1 横）：1px 春绿 140 alpha
-            （亮壁纸上也清晰，又不抢图标焦点；叠深色底混合后像素签名
-             见 tests/test_dev_mode.py 相对式判据）
           - 原点十字（ox,oy）：8px 品红——四边等距铺满的锚点
           - 左上几何信息文字（ox/oy/列行/格尺寸/页码）：春绿 12px
         只在整理模式画（原生模式桌面是系统原生的，不盖任何东西）；
         GridMetrics 快照未就绪（挂载前）时跳过。
+
+        **v11（反馈 32）拆成四项独立开关**（设置 ▸ 开发者）：`dev_grid`
+        管网格线/原点/几何文字，`dev_widget_collision` 管组件碰撞红底，
+        `dev_perf` 管帧率读数，`dev_window_check` 管窗口一致性巡检。
+        `force_grid=True` 是"取点 / 重置后闪一下"这类一次性反馈，与开关
+        无关（总闸关着时用户取点也必须看得见网格）。
         """
         m = grid_flow.current_metrics()
         if m is None:
             return
-        green = QColor(0, 255, 170)      # 春绿：线 + 文字
-        pink = QColor(255, 64, 160)      # 品红：原点十字
+        grid_on = bool(force_grid) or self._dev_flag("dev_grid")
+        collision_on = self._dev_flag("dev_widget_collision")
+        perf_on = self._dev_flag("dev_perf")
+        check_on = self._dev_flag("dev_window_check")
+        if not (grid_on or collision_on or perf_on or check_on):
+            return
         x0, y0 = m.ox, m.oy
-        x1, y1 = m.ox + m.cols * m.cw, m.oy + m.rows * m.ch
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         # v10 反馈 26：组件碰撞体积红底先铺（最底层）——网格线/信息文字
         # 叠在它上面才看得见；反过来会把网格线染成红绿混色。
-        self._paint_widget_collision(p)
-        # 外边界
+        if collision_on:
+            self._paint_widget_collision(p)
+        if grid_on:
+            self._paint_grid_lines(p, m)
+            self._paint_dev_readout(p, m, x0, y0)
+        if perf_on:
+            self._paint_dev_perf(p, x0, y0)
+        if check_on:
+            self._paint_dev_window_check(p, x0, y0)
+        p.end()
+
+    def _paint_grid_lines(self, p: QPainter, m):
+        """网格线 + 原点十字（`dev_grid` 那一项）。"""
+        green = QColor(0, 255, 170)      # 春绿：线 + 文字
+        pink = QColor(255, 64, 160)      # 品红：原点十字
+        x0, y0 = m.ox, m.oy
+        x1, y1 = m.ox + m.cols * m.cw, m.oy + m.rows * m.ch
         p.setPen(QPen(green, 2))
         p.setBrush(Qt.NoBrush)
         p.drawRect(QRect(x0, y0, x1 - x0, y1 - y0))
@@ -1447,7 +1506,9 @@ class DesktopWindow(QWidget):
         p.setPen(QPen(pink, 2))
         p.drawLine(x0 - 5, y0, x0 + 5, y0)
         p.drawLine(x0, y0 - 5, x0, y0 + 5)
-        # 几何信息文字（左上，边界内侧）
+
+    def _paint_dev_readout(self, p: QPainter, m, x0: int, y0: int):
+        """左上角几何信息文字（列行 / 格尺寸 / 页码）。"""
         total = grid_flow.page_count(self.storage)
         p.setPen(QPen(QColor(0, 255, 170, 220), 1))
         p.setFont(theme.ui_font(12))
@@ -1456,8 +1517,12 @@ class DesktopWindow(QWidget):
                    "DEV 网格 ox=%d oy=%d %d列×%d行 格%dx%d 第%d/%d页"
                    % (m.ox, m.oy, m.cols, m.rows, m.cw, m.ch,
                       self._page + 1, max(1, total)))
-        # 反馈 8（v7e）：帧率/峰值读数——排查"掉帧卡顿"时不用再开性能
-        # 分析器，开发者模式左上角直接看（峰值 > 16ms 就是掉帧帧）。
+
+    def _paint_dev_perf(self, p: QPainter, x0: int, y0: int):
+        """帧率 / 峰值 / 绘制面积读数（`dev_perf` 那一项）。
+
+        反馈 8（v7e）：排查"掉帧卡顿"时不用再开性能分析器。
+        """
         st = self.frame_stats()
         p.setPen(QPen(QColor(0, 255, 170, 200), 1))
         p.drawText(QRect(x0 + 6, y0 + 24, 560, 18),
@@ -1465,8 +1530,13 @@ class DesktopWindow(QWidget):
                    "帧 %.0ffps  均 %.1fms  峰 %.1fms  上次绘制 %.1f万px"
                    % (st["fps"], st["avg_ms"], st["max_ms"],
                       st["last_area"] / 10000.0))
-        # v10 反馈 27：组件真实窗口 vs 卡片尺寸。不一致 = 盒外有一圈吞点击
-        # 的透明区（用户"没有红底却点不动"的直接证据），红字报出来。
+
+    def _paint_dev_window_check(self, p: QPainter, x0: int, y0: int):
+        """组件真实窗口 vs 卡片尺寸的一致性巡检（`dev_window_check`）。
+
+        v10 反馈 27：不一致 = 盒外有一圈吞点击的透明区（用户"没有红底却
+        点不动"的直接证据），红字报出来。
+        """
         rows = self._widget_window_rects()
         bad = [r for r in rows
                if r[3] and (r[1].width() != r[2][0] or r[1].height() != r[2][1])]
@@ -1481,7 +1551,6 @@ class DesktopWindow(QWidget):
                    % (len(rows), len(rows), len(self.icons)))
         p.drawText(QRect(x0 + 6, y0 + 42, 700, 18),
                    Qt.AlignLeft | Qt.AlignVCenter, txt)
-        p.end()
 
     # ---------- 组件碰撞可视化（v10 反馈 26） ----------
     def _widget_collision_rects(self) -> list:
@@ -3551,6 +3620,48 @@ class DesktopWindow(QWidget):
                         and any(u.isLocalFile() for u in md.urls()))
         except Exception:
             return False
+
+    # ---------- v11 反馈 31：桌面 Ctrl+C / Ctrl+V ----------
+    def has_selection(self) -> bool:
+        """是否有选中项（快捷键判据：没东西可复制就别吞键）。"""
+        return bool(self._selected)
+
+    def copy_selection(self) -> bool:
+        """把选中的图标写进系统剪贴板（本地文件 URL，资源管理器也认）。
+
+        只收 `type == "app"` 且 `target` 是真实文件/目录的条目：
+        扫描来的应用（`shell:AppsFolder\\…`）与虚拟文件夹没有可复制的
+        磁盘对象，塞进剪贴板只会产生一个打不开的条目。
+        """
+        from PySide6.QtCore import QMimeData, QUrl
+        paths = []
+        for eid in sorted(self._selected):
+            entry = self.storage.find_entry(eid)
+            if entry is None or entry.get("type") != "app":
+                continue
+            target = str(entry_app(entry).get("target") or "")
+            if target and os.path.exists(target):
+                paths.append(target)
+        if not paths:
+            return False
+        md = QMimeData()
+        md.setUrls([QUrl.fromLocalFile(p) for p in paths])
+        try:
+            QApplication.clipboard().setMimeData(md)
+            # 留一份 Python 引用：某些平台插件在 mimeData 被回收后读不到
+            # 内容（粘贴成空），持有到下一次复制为止，代价只有一个对象。
+            self._clip_mime = md
+        except Exception:      # noqa: BLE001 —— 剪贴板被占用时静默失败
+            return False
+        return True
+
+    def paste_from_clipboard(self):
+        """公开入口：把剪贴板里的文件复制到桌面（Ctrl+V / 右键「粘贴」共用）。"""
+        self._paste_files()
+
+    def clipboard_has_files(self) -> bool:
+        """公开别名：剪贴板里有没有可粘贴的本地文件（快捷键判据用）。"""
+        return self._clipboard_has_files()
 
     def _paste_files(self):
         """粘贴：把剪贴板里的本地文件/目录复制到桌面（系统语义）。"""

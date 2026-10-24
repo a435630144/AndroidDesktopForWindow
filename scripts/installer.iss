@@ -9,17 +9,17 @@
 
 #define MyAppName "PhoneDesktop"
 #define MyAppNameEn "PhoneDesktop"
-#define MyAppVersion "5.0.6"
+#define MyAppVersion "6.0.0"
 #define MyAppPublisher "随便玩玩ay"
 #define MyAppExe "PhoneDesktop.exe"
 
 ; 打包目录名 / 产物名参数化：运行中的旧实例会锁住 dist\<BuildDir>，
 ; 换名重打时用 ISCC /DBuildDir=xxx /DOutBase=xxx 覆盖即可，不必改脚本。
 #ifndef BuildDir
-  #define BuildDir "PhoneDesktop_v10g"
+  #define BuildDir "PhoneDesktop_v11a"
 #endif
 #ifndef OutBase
-  #define OutBase "PhoneDesktop_v10g_Setup"
+  #define OutBase "PhoneDesktop_v11a_Setup"
 #endif
 
 [Setup]
