@@ -1,4 +1,4 @@
-# DesktopOrganizer
+# 掌镜桌面 (ZhangJing Desktop)
 
 *A free, open-source Windows desktop organizer — Android-style icon grid, spring-physics animations and native-feeling desktop widgets that turn your Windows desktop into a phone home screen.*
 
@@ -12,7 +12,7 @@ English | [简体中文](README.md)
 
 A third-party desktop organizer and beautifier for Windows with a **phone-style UI and interaction model**: it mounts its own grid layer above the native desktop and replaces native icons with a fully controlled rendering layer — positions, animations, folders and widgets are all yours to define.
 
-Despite the name, this is **far past the prototype stage**: installer, tray residency, crash logging, single-instance guard, auto re-attach watchdog, **89 test files / 2308 assertions**. Since v10 the product is called **PhoneDesktop** everywhere (exe name, install dir and the `%APPDATA%` data dir); existing users' data is **migrated automatically on first launch**, so layouts and settings survive the rename.
+Despite the name, this is **far past the prototype stage**: installer, tray residency, crash logging, single-instance guard, auto re-attach watchdog, **89 test files / 2308 assertions**. The product is called **掌镜桌面** (ZhangJing Desktop). The exe name and data dir remain `PhoneDesktop` so existing users' data paths stay valid.
 
 <p align="center"><img src="docs/images/01-desktop.png" width="900" alt="The desktop: Android-style icon grid with anchored widgets"></p>
 

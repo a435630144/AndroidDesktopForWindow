@@ -10,42 +10,60 @@
       <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
     </linearGradient>
     <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="26"/>
+      <feGaussianBlur stdDeviation="30"/>
     </filter>
     <path id="sq" d="M 272,48 H 752 A 224,224 0 0 1 976,272 V 752 A 224,224 0 0 1 752,976 H 272 A 224,224 0 0 1 48,752 V 272 A 224,224 0 0 1 272,48 Z"/>
     <clipPath id="clipSq"><use href="#sq"/></clipPath>
-    <path id="tile" d="M 0,0 h 160 a 40,40 0 0 1 40,40 v 80 a 40,40 0 0 1 -40,40 h -160 a 40,40 0 0 1 -40,-40 v -80 a 40,40 0 0 1 40,-40 Z"/>
   </defs>
 
-  <!-- 画布：一方属于两个世界的屏幕 -->
+  <!-- 载体：一方属于两个世界的屏幕 -->
   <use href="#sq" fill="url(#bg)"/>
   <g clip-path="url(#clipSq)">
     <rect x="48" y="48" width="928" height="440" fill="url(#gloss)"/>
     <use href="#sq" fill="none" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="2.5"/>
   </g>
 
-  <!-- 八枚锚定的图标 -->
-  <g fill="#FFFFFF">
-    <use href="#tile" transform="translate(232,176)"/>
-    <use href="#tile" transform="translate(632,176)"/>
-    <use href="#tile" transform="translate(232,376)"/>
-    <use href="#tile" transform="translate(432,376)"/>
-    <use href="#tile" transform="translate(632,376)"/>
-    <use href="#tile" transform="translate(232,576)"/>
-    <use href="#tile" transform="translate(432,576)"/>
-    <use href="#tile" transform="translate(632,576)"/>
+  <!-- PAD：深靛机身，横置于蓝空之上 -->
+  <g transform="translate(0,12)">
+    <rect x="132" y="268" width="760" height="488" rx="64"
+          fill="#16204A" opacity="0.28" filter="url(#soft)"/>
+  </g>
+  <rect x="132" y="268" width="760" height="488" rx="64" fill="#1B2A5E"/>
+  <circle cx="512" cy="281" r="5.5" fill="#0F1B44"/>
+  <rect x="158" y="294" width="708" height="436" rx="46" fill="#F4F7FF"/>
+
+  <!-- 状态栏：低语于顶端 -->
+  <rect x="184" y="324" width="28" height="12" rx="6" fill="#1B2A5E" opacity="0.55"/>
+  <rect x="812" y="324" width="28" height="12" rx="6" fill="#1B2A5E" opacity="0.55"/>
+
+  <!-- 通栏大组件：时钟、天气、两枚小窗——组件锚定的自画像 -->
+  <rect x="184" y="364" width="188" height="284" rx="40" fill="#3E63E8"/>
+  <rect x="208" y="388" width="140" height="16" rx="8" fill="#FFFFFF" opacity="0.9"/>
+  <circle cx="278" cy="472" r="38" fill="#FFFFFF" opacity="0.92"/>
+  <rect x="208" y="536" width="60" height="40" rx="12" fill="#FFFFFF" opacity="0.35"/>
+  <rect x="280" y="536" width="60" height="40" rx="12" fill="#FFFFFF" opacity="0.35"/>
+  <rect x="208" y="604" width="140" height="12" rx="6" fill="#FFFFFF" opacity="0.35"/>
+
+  <!-- 应用网格：四列三行，正中央为让位而空 -->
+  <g>
+    <rect x="438" y="366" width="80" height="80" rx="22" fill="#3E63E8"/>
+    <rect x="538" y="366" width="80" height="80" rx="22" fill="#7C9BF5"/>
+    <rect x="638" y="366" width="80" height="80" rx="22" fill="#C3D2F8"/>
+    <rect x="738" y="366" width="80" height="80" rx="22" fill="#3E63E8"/>
+
+    <rect x="438" y="466" width="80" height="80" rx="22" fill="#7C9BF5"/>
+    <rect x="638" y="466" width="80" height="80" rx="22" fill="#3E63E8"/>
+    <rect x="738" y="466" width="80" height="80" rx="22" fill="#7C9BF5"/>
+
+    <rect x="438" y="566" width="80" height="80" rx="22" fill="#3E63E8"/>
+    <rect x="538" y="566" width="80" height="80" rx="22" fill="#C3D2F8"/>
+    <rect x="638" y="566" width="80" height="80" rx="22" fill="#7C9BF5"/>
+    <rect x="738" y="566" width="80" height="80" rx="22" fill="#3E63E8"/>
   </g>
 
-  <!-- 领舞者：长按选中，浮起一分，世界为它重排 -->
-  <g transform="translate(0,26) translate(512,238) scale(1.08) translate(-512,-256)">
-    <rect x="428" y="172" width="168" height="168" rx="45"
-          fill="#1B2A78" opacity="0.34" filter="url(#soft)"/>
-  </g>
-  <use href="#tile" fill="#FFFFFF"
-       transform="translate(512,238) scale(1.08) translate(-512,-256) translate(432,176)"/>
-
-  <!-- 页面指示器：这里可以翻页 -->
-  <rect x="457" y="833" width="26" height="10" rx="5" fill="#FFFFFF" fill-opacity="0.95"/>
-  <circle cx="517" cy="838" r="9" fill="#FFFFFF" fill-opacity="0.28"/>
-  <circle cx="562" cy="838" r="9" fill="#FFFFFF" fill-opacity="0.28"/>
+  <!-- 托盘：三枚待命的图标，一枚暖橙是唯一的切分音 -->
+  <rect x="184" y="656" width="656" height="44" rx="22" fill="#1B2A5E" opacity="0.10"/>
+  <rect x="436" y="662" width="32" height="32" rx="9" fill="#3E63E8"/>
+  <rect x="496" y="662" width="32" height="32" rx="9" fill="#7C9BF5"/>
+  <rect x="556" y="662" width="32" height="32" rx="9" fill="#FF9F43"/>
 </svg>

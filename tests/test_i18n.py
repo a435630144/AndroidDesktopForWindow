@@ -290,7 +290,7 @@ def main(app):
         i18n._TABLES.clear()
         shutil.rmtree(fake_meipass, ignore_errors=True)
     check("I16c 回到源码态仍取得到中文词表",
-          i18n.T("settings.title") == "桌面整理 · 设置", i18n.T("settings.title"))
+          i18n.T("settings.title") == "掌镜桌面 · 设置", i18n.T("settings.title"))
 
     # ---------- I17：打包脚本必须带上词表（漏了就重蹈 v10a） ----------
     build_ps1 = (ROOT / "scripts" / "build_portable.ps1").read_text(encoding="utf-8")

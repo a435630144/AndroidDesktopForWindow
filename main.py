@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-PhoneDesktop - 第三方桌面整理 / 美化软件（安卓式桌面 + 小组件 + Dock）
+掌镜桌面 - 第三方桌面美化软件（安卓式桌面 + 小组件 + Dock）
 
 功能：
   - 类安卓桌面网格：桌面文件克隆（可选），图标可拖拽、双击启动
@@ -89,8 +89,7 @@ def main() -> int:
     ensure_app_dirs()
 
     app = QApplication(sys.argv)
-    app.setApplicationName("PhoneDesktop")
-    app.setApplicationDisplayName("PhoneDesktop")
+    app.setApplicationName("PhoneDesktop")    # 不改：影响 %APPDATA% 数据目录路径
     app.setQuitOnLastWindowClosed(False)  # 隐藏窗口不等于退出，常驻托盘
     app.setWindowIcon(QIcon(asset_path("app_icon.png")))
 
@@ -110,6 +109,7 @@ def main() -> int:
     # v10 D3（反馈 15-a）：语言必须在**任何界面对象之前**定下来——托盘/设置/
     # 组件库的文案都是建对象时写进去的，晚一步设就会留下半中半英的窗口。
     i18n.set_language(storage)
+    app.setApplicationDisplayName(i18n.T("app.name"))  # 显示名随语言切换
     # v9 V3：先加载用户导入的组件（外部 zip），再建组件层——否则已在布局里
     # 的插件组件会因为注册表还没有它而静默消失。
     widget_plugin.load_all()
