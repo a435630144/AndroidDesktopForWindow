@@ -28,6 +28,7 @@ from . import dock
 from . import grid_flow
 from . import i18n
 from . import interaction
+from . import liquid_glass
 from . import page_rules
 from . import updater
 from .stepper import Stepper
@@ -137,8 +138,11 @@ def open_settings(window, storage, layer, page="general"):
 
 class SettingsDialog(QDialog):
     # v9 V2：新增「组件库」分页（原独立窗口融合进来，BUG1 从结构上消失）
+    # v14 反馈 3：「图标」独立分页——文字颜色/阴影/描边 + cell 预览框样式
+    # （反馈 13）。塞进「外观与图标」会让那页变成两屏，图标规则值得自己的页。
     NAV = (("general", "通用"), ("widgets", "组件库"), ("dock", "Dock 栏"),
-           ("appearance", "外观与图标"), ("layout", "布局与网格"),
+           ("appearance", "外观与图标"), ("icons", "图标"),
+           ("layout", "布局与网格"),
            ("mode", "模式"), ("developer", "开发者"), ("advanced", "高级"))
 
     def __init__(self, window, storage, layer, parent=None, page=None):
@@ -536,7 +540,22 @@ class SettingsDialog(QDialog):
         lbl_keys.setObjectName("rowHint")
         lbl_keys.setWordWrap(True)
         self._row(c, card, i18n.T("settings.general.shortcuts.title"), lbl_keys)
+
+        # v14 反馈 2：快捷键总开关。低层键盘钩子是**全局**的（每次按键都要
+        # 进本进程），有用户反馈"鼠标速度异常"——虽然程序从不改系统鼠标
+        # 参数，仍给一个开关：怀疑时先关掉，Ctrl+C/V 失效即排除它。
+        self.chk_hotkeys = Switch()
+        self.chk_hotkeys.setChecked(bool(self.storage.get_setting("desktop_hotkeys")))
+        self.chk_hotkeys.toggled.connect(self._apply_desktop_hotkeys)
+        self._row(c, card, i18n.T("settings.general.hotkeys.title"),
+                  self.chk_hotkeys, i18n.T("settings.general.hotkeys.hint"))
         lay.addWidget(card)
+
+    def _apply_desktop_hotkeys(self, checked):
+        self.storage.set_setting("desktop_hotkeys", bool(checked))
+        hook = getattr(self.window, "set_desktop_hotkeys", None)
+        if hook is not None:
+            hook(bool(checked))
 
     def _show_onboarding(self):
         """关掉设置窗再放指引：遮罩是全屏置顶的，设置窗留在下面反而穿帮。"""
@@ -652,14 +671,15 @@ class SettingsDialog(QDialog):
             for sp in self._dock_pad_steppers.values():
                 sp.setValue(dock.DOCK_PAD)
         if ctl("sp_dock_hover") is not None:
-            self.sp_dock_hover.setValue(122)   # 默认 122%
+            self.sp_dock_hover.setValue(dock.DEFAULT_HOVER_PCT)   # 默认 140%
         self._apply_dock()
 
     def _reset_dock_style(self):
         """重置外观到出厂值。"""
         ctl = lambda name: getattr(self, name, None)  # noqa: E731
         if ctl("sld_dock_alpha") is not None:
-            self.sld_dock_alpha.setValue(86)   # DEFAULT_ALPHA
+            self.sld_dock_alpha.setValue(
+                int(round(dock.DEFAULT_ALPHA * 100)))   # DEFAULT_ALPHA
         if ctl("cmb_dock_radius") is not None:
             idx = self.cmb_dock_radius.findData(dock.DEFAULT_RADIUS_MODE)
             if idx >= 0:
@@ -1199,6 +1219,605 @@ class SettingsDialog(QDialog):
                   i18n.T("settings.appearance.opacity.hint_free"))
         lay.addWidget(card)
 
+        # ---------- v14 反馈 9：液态玻璃 ----------
+        # 一张卡管全部 liquid_* 键（`liquid_glass.py` 是唯一读取入口）：
+        # 总开关 + 三个表面开关 + 三个强度滑条 + 扫光开关。强度为 0 的
+        # 旋钮不禁用（0 = 显式关掉这一层光学，是合法值），只有总开关
+        # 关闭时才把下属控件置灰。
+        card_lq, cq = self._card(body, i18n.T("settings.appearance.card_liquid"),
+                                 reset_fn=self._reset_liquid)
+
+        self.chk_liquid = Switch()
+        self.chk_liquid.setChecked(liquid_glass.master_enabled(self.storage))
+        self.chk_liquid.toggled.connect(self._apply_liquid_master)
+        self._row(cq, card_lq, i18n.T("settings.appearance.liquid.master.title"),
+                  self.chk_liquid, i18n.T("settings.appearance.liquid.master.hint"))
+
+        self.chk_liquid_folder = Switch()
+        self.chk_liquid_folder.setObjectName("chk_liquid_folder")
+        self.chk_liquid_folder.setChecked(
+            liquid_glass.surface_enabled(self.storage, "folder"))
+        self.chk_liquid_folder.toggled.connect(self._apply_liquid_surface)
+        self._row(cq, card_lq,
+                  i18n.T("settings.appearance.liquid.folder.title"),
+                  self.chk_liquid_folder,
+                  i18n.T("settings.appearance.liquid.folder.hint"))
+
+        self.chk_liquid_dock = Switch()
+        self.chk_liquid_dock.setObjectName("chk_liquid_dock")
+        self.chk_liquid_dock.setChecked(
+            liquid_glass.surface_enabled(self.storage, "dock"))
+        self.chk_liquid_dock.toggled.connect(self._apply_liquid_surface)
+        self._row(cq, card_lq, i18n.T("settings.appearance.liquid.dock.title"),
+                  self.chk_liquid_dock,
+                  i18n.T("settings.appearance.liquid.dock.hint"))
+
+        self.chk_liquid_widget = Switch()
+        self.chk_liquid_widget.setObjectName("chk_liquid_widget")
+        self.chk_liquid_widget.setChecked(
+            liquid_glass.surface_enabled(self.storage, "widget"))
+        self.chk_liquid_widget.toggled.connect(self._apply_liquid_surface)
+        self._row(cq, card_lq,
+                  i18n.T("settings.appearance.liquid.widget.title"),
+                  self.chk_liquid_widget,
+                  i18n.T("settings.appearance.liquid.widget.hint"))
+
+        self.sld_liquid_dispersion = self._liquid_slider(
+            "liquid_dispersion", self._apply_liquid_dispersion)
+        self.lbl_liquid_dispersion = self._liquid_value_lbl(
+            self.sld_liquid_dispersion)
+        dsp_box = self._liquid_slider_box(self.sld_liquid_dispersion,
+                                          self.lbl_liquid_dispersion)
+        self._row(cq, card_lq,
+                  i18n.T("settings.appearance.liquid.dispersion.title"),
+                  dsp_box,
+                  i18n.T("settings.appearance.liquid.dispersion.hint"))
+
+        self.sld_liquid_bezel = self._liquid_slider(
+            "liquid_bezel", self._apply_liquid_bezel)
+        self.lbl_liquid_bezel = self._liquid_value_lbl(self.sld_liquid_bezel)
+        bzl_box = self._liquid_slider_box(self.sld_liquid_bezel,
+                                          self.lbl_liquid_bezel)
+        self._row(cq, card_lq,
+                  i18n.T("settings.appearance.liquid.bezel.title"), bzl_box,
+                  i18n.T("settings.appearance.liquid.bezel.hint"))
+
+        self.sld_liquid_noise = self._liquid_slider(
+            "liquid_noise", self._apply_liquid_noise)
+        self.lbl_liquid_noise = self._liquid_value_lbl(self.sld_liquid_noise)
+        nse_box = self._liquid_slider_box(self.sld_liquid_noise,
+                                          self.lbl_liquid_noise)
+        self._row(cq, card_lq,
+                  i18n.T("settings.appearance.liquid.noise.title"), nse_box,
+                  i18n.T("settings.appearance.liquid.noise.hint"))
+
+        self.chk_liquid_shimmer = Switch()
+        self.chk_liquid_shimmer.setChecked(
+            liquid_glass.liquid_style(self.storage).shimmer)
+        self.chk_liquid_shimmer.toggled.connect(self._apply_liquid_shimmer)
+        self._row(cq, card_lq,
+                  i18n.T("settings.appearance.liquid.shimmer.title"),
+                  self.chk_liquid_shimmer,
+                  i18n.T("settings.appearance.liquid.shimmer.hint"))
+        lay.addWidget(card_lq)
+        self._sync_liquid_controls()
+
+    # ---------- 图标分页（v14 反馈 3 / 反馈 13） ----------
+    def _page_icons(self, body, lay):
+        """标签文字样式 + 移动预览框样式。
+
+        两个卡片各管一组键（`label_style.py` 是唯一读取入口），全部实时
+        生效：文字样式走 `window.apply_label_style()`（换样式对象 + 重画，
+        不重建图标），预览框下次拖拽自然用新值。
+        """
+        from . import label_style as _ls
+
+        # ---- 卡片一：标签文字 ----
+        card, c = self._card(body, i18n.T("settings.icons.card.text"),
+                             reset_fn=self._reset_label_text)
+
+        self._label_color = str(
+            self.storage.get_setting("label_color") or "#f4f5f7")
+        self.btn_label_color = QPushButton()
+        self.btn_label_color.setFixedWidth(120)
+        self.btn_label_color.setCursor(Qt.PointingHandCursor)
+        self.btn_label_color.clicked.connect(self._pick_label_color)
+        self._sync_label_color_btn()
+        self._row(c, card, i18n.T("settings.icons.color.title"),
+                  self.btn_label_color, i18n.T("settings.icons.color.hint"))
+
+        self.chk_label_bold = Switch()
+        self.chk_label_bold.setChecked(
+            bool(self.storage.get_setting("label_bold")))
+        self.chk_label_bold.toggled.connect(self._apply_label_bold)
+        self._row(c, card, i18n.T("settings.icons.bold.title"),
+                  self.chk_label_bold, i18n.T("settings.icons.bold.hint"))
+
+        self.chk_label_shadow = Switch()
+        self.chk_label_shadow.setChecked(
+            bool(self.storage.get_setting("label_shadow")))
+        self.chk_label_shadow.toggled.connect(self._apply_label_shadow)
+        self._row(c, card, i18n.T("settings.icons.shadow.title"),
+                  self.chk_label_shadow, i18n.T("settings.icons.shadow.hint"))
+
+        self.sld_label_shadow = QSlider(Qt.Horizontal)
+        self.sld_label_shadow.setRange(0, 100)
+        self.sld_label_shadow.setFixedWidth(150)
+        self.sld_label_shadow.setValue(
+            int(self.storage.get_setting("label_shadow_alpha") or 75))
+        self.lbl_label_shadow = QLabel("%d%%" % self.sld_label_shadow.value())
+        self.lbl_label_shadow.setObjectName("rowHint")
+        self.lbl_label_shadow.setFixedWidth(40)
+        self.sld_label_shadow.valueChanged.connect(
+            self._apply_label_shadow_alpha)
+        sh_box = QWidget()
+        sb = QHBoxLayout(sh_box)
+        sb.setContentsMargins(0, 0, 0, 0)
+        sb.setSpacing(8)
+        sb.addWidget(self.sld_label_shadow)
+        sb.addWidget(self.lbl_label_shadow)
+        self._row(c, card, i18n.T("settings.icons.shadow_alpha.title"),
+                  sh_box, i18n.T("settings.icons.shadow_alpha.hint"))
+
+        self.chk_label_outline = Switch()
+        self.chk_label_outline.setChecked(
+            bool(self.storage.get_setting("label_outline")))
+        self.chk_label_outline.toggled.connect(self._apply_label_outline)
+        self._row(c, card, i18n.T("settings.icons.outline.title"),
+                  self.chk_label_outline, i18n.T("settings.icons.outline.hint"))
+
+        self._label_outline_color = str(
+            self.storage.get_setting("label_outline_color") or "#000000")
+        self.btn_label_outline_color = QPushButton()
+        self.btn_label_outline_color.setFixedWidth(120)
+        self.btn_label_outline_color.setCursor(Qt.PointingHandCursor)
+        self.btn_label_outline_color.clicked.connect(
+            self._pick_label_outline_color)
+        self._sync_outline_color_btn()
+        self._row(c, card, i18n.T("settings.icons.outline_color.title"),
+                  self.btn_label_outline_color,
+                  i18n.T("settings.icons.outline_color.hint"))
+
+        self.sp_label_outline_w = Stepper()
+        self.sp_label_outline_w.setRange(
+            _ls.LABEL_OUTLINE_MIN, _ls.LABEL_OUTLINE_MAX)
+        self.sp_label_outline_w.setFixedWidth(96)
+        self.sp_label_outline_w.setValue(
+            int(self.storage.get_setting("label_outline_width") or 1))
+        self.sp_label_outline_w.valueChanged.connect(
+            self._apply_label_outline_w)
+        self._row(c, card, i18n.T("settings.icons.outline_w.title"),
+                  self.sp_label_outline_w,
+                  i18n.T("settings.icons.outline_w.hint"))
+        lay.addWidget(card)
+
+        # ---- 卡片二：移动预览框（反馈 13） ----
+        card2, c2 = self._card(body, i18n.T("settings.icons.card.preview"),
+                               reset_fn=self._reset_cell_preview)
+        self.cmb_cell_preview = ComboBox()
+        for key, label, _c in _ls.PREVIEW_PRESETS:
+            self.cmb_cell_preview.addItem(
+                i18n.TL("settings.icons.preview.preset." + key, label), key)
+        self.cmb_cell_preview.addItem(
+            i18n.T("settings.icons.preview.preset.custom"), "custom")
+        cur_color = str(self.storage.get_setting("cell_preview_color") or "")
+        cur_key = ""
+        for key, _l, col in _ls.PREVIEW_PRESETS:
+            if cur_color and cur_color.lower() == col.name():
+                cur_key = key
+                break
+        if not cur_key:
+            cur_key = "custom" if cur_color else "danger"
+        self.cmb_cell_preview.setCurrentIndex(
+            max(0, self.cmb_cell_preview.findData(cur_key)))
+        self.cmb_cell_preview.currentIndexChanged.connect(
+            self._apply_cell_preview_preset)
+        self._row(c2, card2, i18n.T("settings.icons.preview.preset.title"),
+                  self.cmb_cell_preview,
+                  i18n.T("settings.icons.preview.preset.hint"))
+
+        self._cell_preview_color = cur_color
+        self.btn_cell_preview_color = QPushButton()
+        self.btn_cell_preview_color.setFixedWidth(120)
+        self.btn_cell_preview_color.setCursor(Qt.PointingHandCursor)
+        self.btn_cell_preview_color.clicked.connect(
+            self._pick_cell_preview_color)
+        self._sync_cell_preview_color_btn()
+        self._row(c2, card2, i18n.T("settings.icons.preview.color.title"),
+                  self.btn_cell_preview_color,
+                  i18n.T("settings.icons.preview.color.hint"))
+
+        self.sld_cell_preview_fill = QSlider(Qt.Horizontal)
+        self.sld_cell_preview_fill.setRange(
+            _ls.PREVIEW_FILL_MIN, _ls.PREVIEW_FILL_MAX)
+        self.sld_cell_preview_fill.setFixedWidth(150)
+        self.sld_cell_preview_fill.setValue(
+            int(self.storage.get_setting("cell_preview_fill") or 8))
+        self.lbl_cell_preview_fill = QLabel(
+            "%d%%" % self.sld_cell_preview_fill.value())
+        self.lbl_cell_preview_fill.setObjectName("rowHint")
+        self.lbl_cell_preview_fill.setFixedWidth(40)
+        self.sld_cell_preview_fill.valueChanged.connect(
+            self._apply_cell_preview_fill)
+        fill_box = QWidget()
+        fb = QHBoxLayout(fill_box)
+        fb.setContentsMargins(0, 0, 0, 0)
+        fb.setSpacing(8)
+        fb.addWidget(self.sld_cell_preview_fill)
+        fb.addWidget(self.lbl_cell_preview_fill)
+        self._row(c2, card2, i18n.T("settings.icons.preview.fill.title"),
+                  fill_box, i18n.T("settings.icons.preview.fill.hint"))
+
+        self.sp_cell_preview_width = Stepper()
+        self.sp_cell_preview_width.setRange(
+            _ls.PREVIEW_WIDTH_MIN, _ls.PREVIEW_WIDTH_MAX)
+        self.sp_cell_preview_width.setSuffix("px")
+        self.sp_cell_preview_width.setFixedWidth(96)
+        self.sp_cell_preview_width.setValue(
+            int(self.storage.get_setting("cell_preview_width") or 2))
+        self.sp_cell_preview_width.valueChanged.connect(
+            self._apply_cell_preview_width)
+        self._row(c2, card2, i18n.T("settings.icons.preview.width.title"),
+                  self.sp_cell_preview_width,
+                  i18n.T("settings.icons.preview.width.hint"))
+
+        self.sp_cell_preview_radius = Stepper()
+        self.sp_cell_preview_radius.setRange(
+            _ls.PREVIEW_RADIUS_MIN, _ls.PREVIEW_RADIUS_MAX)
+        self.sp_cell_preview_radius.setSuffix("px")
+        self.sp_cell_preview_radius.setFixedWidth(96)
+        self.sp_cell_preview_radius.setValue(
+            int(self.storage.get_setting("cell_preview_radius") or 8))
+        self.sp_cell_preview_radius.valueChanged.connect(
+            self._apply_cell_preview_radius)
+        self._row(c2, card2, i18n.T("settings.icons.preview.radius.title"),
+                  self.sp_cell_preview_radius,
+                  i18n.T("settings.icons.preview.radius.hint"))
+        lay.addWidget(card2)
+        self._sync_label_controls()
+
+    # ---- 图标页：写设置 + 热更新窗口 ----
+    def _label_style_changed(self):
+        """图标页任何一项改动：落防抖盘 + 推窗口热更新。
+
+        与 Dock 外观同一套防抖（拖滑条时每像素都写盘会拖死主线程，
+        v10 反馈 27）。窗口不可用（探针 / 替身）时只落设置。
+        """
+        self._flush_storage()
+        hook = getattr(self.window, "apply_label_style", None)
+        if callable(hook):
+            try:
+                hook()
+            except (RuntimeError, AttributeError):
+                pass     # 窗口正在销毁——设置已落盘，下次启动生效
+
+    def _sync_label_color_btn(self):
+        c = QColor(self._label_color)
+        if not c.isValid():
+            c = QColor("#f4f5f7")
+        fg = "#101216" if c.lightness() > 150 else "#f2f5fa"
+        self.btn_label_color.setText(c.name().upper())
+        self.btn_label_color.setStyleSheet(
+            "QPushButton{background-color:%s;color:%s;border:1px solid %s;"
+            "border-radius:6px;padding:4px 8px;font-size:12px;}"
+            % (c.name(), fg, theme.rgba(theme.BORDER)))
+
+    def _sync_outline_color_btn(self):
+        c = QColor(self._label_outline_color)
+        if not c.isValid():
+            c = QColor("#000000")
+        fg = "#101216" if c.lightness() > 150 else "#f2f5fa"
+        self.btn_label_outline_color.setText(c.name().upper())
+        self.btn_label_outline_color.setStyleSheet(
+            "QPushButton{background-color:%s;color:%s;border:1px solid %s;"
+            "border-radius:6px;padding:4px 8px;font-size:12px;}"
+            % (c.name(), fg, theme.rgba(theme.BORDER)))
+
+    def _sync_cell_preview_color_btn(self):
+        raw = str(self._cell_preview_color or "").strip()
+        c = QColor(raw) if raw else QColor(theme.DANGER)
+        if not c.isValid():
+            c = QColor(theme.DANGER)
+        fg = "#101216" if c.lightness() > 150 else "#f2f5fa"
+        self.btn_cell_preview_color.setText(
+            i18n.T("button.follow_theme") if not raw else c.name().upper())
+        self.btn_cell_preview_color.setStyleSheet(
+            "QPushButton{background-color:%s;color:%s;border:1px solid %s;"
+            "border-radius:6px;padding:4px 8px;font-size:12px;}"
+            "QPushButton:disabled{color:%s;}"
+            % (c.name(), fg, theme.rgba(theme.BORDER),
+               theme.rgba(theme.TEXT_FAINT)))
+
+    def _sync_label_controls(self):
+        """依赖开关的可用态：没开阴影就别让浓度滑条可拖（不留无效旋钮）。"""
+        shadow_on = bool(self.chk_label_shadow.isChecked())
+        self.sld_label_shadow.setEnabled(shadow_on)
+        outline_on = bool(self.chk_label_outline.isChecked())
+        self.sp_label_outline_w.setEnabled(outline_on)
+        self.btn_label_outline_color.setEnabled(outline_on)
+
+    # ---------- 液态玻璃（v14 反馈 9） ----------
+    def _liquid_slider(self, key, slot):
+        sld = QSlider(Qt.Horizontal)
+        sld.setRange(0, 100)
+        sld.setFixedWidth(150)
+        sld.setStyleSheet(theme.SLIDER_QSS)
+        sld.setValue(int(self.storage.get_setting(key) or 0))
+        sld.valueChanged.connect(slot)
+        sld.sliderReleased.connect(self._flush_storage)
+        return sld
+
+    def _liquid_value_lbl(self, sld):
+        lbl = QLabel("%d%%" % sld.value())
+        lbl.setObjectName("rowHint")
+        lbl.setFixedWidth(40)
+        return lbl
+
+    def _liquid_slider_box(self, sld, lbl):
+        box = QWidget()
+        b = QHBoxLayout(box)
+        b.setContentsMargins(0, 0, 0, 0)
+        b.setSpacing(8)
+        b.addWidget(sld)
+        b.addWidget(lbl)
+        return box
+
+    def _sync_liquid_controls(self):
+        """总开关关闭时下属控件置灰（0 强度是合法值，滑条不跟着置灰）。"""
+        on = bool(self.chk_liquid.isChecked())
+        for w in (self.chk_liquid_folder, self.chk_liquid_dock,
+                  self.chk_liquid_widget, self.sld_liquid_dispersion,
+                  self.sld_liquid_bezel, self.sld_liquid_noise,
+                  self.chk_liquid_shimmer):
+            w.setEnabled(on)
+
+    def _liquid_changed(self):
+        """液态玻璃任何一项改动：防抖落盘 + 推三个表面重绘。"""
+        self._flush_storage()
+        hook = getattr(self.window, "apply_liquid_style", None)
+        if callable(hook):
+            try:
+                hook()
+            except (RuntimeError, AttributeError):
+                pass     # 窗口正在销毁——设置已落盘，下次启动生效
+
+    def _apply_liquid_master(self, on):
+        self.storage.set_setting("liquid_glass", bool(on))
+        self._sync_liquid_controls()
+        self._liquid_changed()
+
+    def _apply_liquid_surface(self, on):
+        """三个表面开关共用一个槽：按 objectName 分发到对应键。"""
+        key = {"chk_liquid_folder": "liquid_folder",
+               "chk_liquid_dock": "liquid_dock",
+               "chk_liquid_widget": "liquid_widget"}.get(
+                   self.sender().objectName())
+        if key is None:
+            return
+        self.storage.set_setting(key, bool(on))
+        self._liquid_changed()
+
+    def _apply_liquid_dispersion(self, v):
+        self.lbl_liquid_dispersion.setText("%d%%" % v)
+        self.storage.set_setting("liquid_dispersion", v)
+        self._liquid_changed()
+
+    def _apply_liquid_bezel(self, v):
+        self.lbl_liquid_bezel.setText("%d%%" % v)
+        self.storage.set_setting("liquid_bezel", v)
+        self._liquid_changed()
+
+    def _apply_liquid_noise(self, v):
+        self.lbl_liquid_noise.setText("%d%%" % v)
+        self.storage.set_setting("liquid_noise", v)
+        self._liquid_changed()
+
+    def _apply_liquid_shimmer(self, on):
+        self.storage.set_setting("liquid_shimmer", bool(on))
+        self._liquid_changed()
+
+    def _reset_liquid(self):
+        """液态玻璃整卡回出厂（三表面全开 + 中等强度 + 扫光开）。"""
+        defaults = (("liquid_glass", True), ("liquid_folder", True),
+                    ("liquid_dock", True), ("liquid_widget", True),
+                    ("liquid_dispersion", 60), ("liquid_bezel", 60),
+                    ("liquid_noise", 40), ("liquid_shimmer", True))
+        for k, v in defaults:
+            self.storage.set_setting(k, v)
+        # 控件跟着回位（blockSignals：重置不该再触发一轮 apply）
+        for w, v in ((self.chk_liquid, True), (self.chk_liquid_folder, True),
+                     (self.chk_liquid_dock, True),
+                     (self.chk_liquid_widget, True),
+                     (self.chk_liquid_shimmer, True)):
+            w.blockSignals(True)
+            w.setChecked(v)
+            w.blockSignals(False)
+        for sld, lbl, v in ((self.sld_liquid_dispersion,
+                             self.lbl_liquid_dispersion, 60),
+                            (self.sld_liquid_bezel, self.lbl_liquid_bezel, 60),
+                            (self.sld_liquid_noise, self.lbl_liquid_noise, 40)):
+            sld.blockSignals(True)
+            sld.setValue(v)
+            sld.blockSignals(False)
+            lbl.setText("%d%%" % v)
+        self._sync_liquid_controls()
+        self._liquid_changed()
+
+    def _pick_label_color(self):
+        start = QColor(self._label_color)
+        if not start.isValid():
+            start = QColor("#f4f5f7")
+        c = QColorDialog.getColor(start, self,
+                                  i18n.T("settings.icons.color.title"),
+                                  QColorDialog.DontUseNativeDialog)
+        if not c.isValid():
+            return
+        self._label_color = c.name()
+        self._sync_label_color_btn()
+        self._apply_label_color()
+
+    def _pick_label_outline_color(self):
+        start = QColor(self._label_outline_color)
+        if not start.isValid():
+            start = QColor("#000000")
+        c = QColorDialog.getColor(start, self,
+                                  i18n.T("settings.icons.outline_color.title"),
+                                  QColorDialog.DontUseNativeDialog)
+        if not c.isValid():
+            return
+        self._label_outline_color = c.name()
+        self._sync_outline_color_btn()
+        self.storage.set_setting("label_outline_color", c.name())
+        self._label_style_changed()
+
+    def _apply_label_color(self, *_):
+        self.storage.set_setting("label_color", self._label_color)
+        self._label_style_changed()
+
+    def _apply_label_bold(self, on):
+        self.storage.set_setting("label_bold", bool(on))
+        self._label_style_changed()
+
+    def _apply_label_shadow(self, on):
+        self.storage.set_setting("label_shadow", bool(on))
+        self._sync_label_controls()
+        self._label_style_changed()
+
+    def _apply_label_shadow_alpha(self, v):
+        self.lbl_label_shadow.setText("%d%%" % int(v))
+        self.storage.set_setting("label_shadow_alpha", int(v))
+        self._label_style_changed()
+
+    def _apply_label_outline(self, on):
+        self.storage.set_setting("label_outline", bool(on))
+        self._sync_label_controls()
+        self._label_style_changed()
+
+    def _apply_label_outline_w(self, v):
+        self.storage.set_setting("label_outline_width", int(v))
+        self._label_style_changed()
+
+    def _apply_cell_preview_preset(self, idx):
+        key = self.cmb_cell_preview.currentData()
+        if key == "custom":
+            # 「自定义」= 立刻开取色盘；取消则退回上一个有效预设
+            self._pick_cell_preview_color(revert_to=(
+                self.cmb_cell_preview, idx))
+            return
+        from . import label_style as _ls
+        _ls.apply_preview_preset(self.storage, key)
+        col = QColor(self.storage.get_setting("cell_preview_color"))
+        self._cell_preview_color = col.name()
+        self._sync_cell_preview_color_btn()
+        self._label_style_changed()
+
+    def _pick_cell_preview_color(self, revert_to=None):
+        raw = str(self._cell_preview_color or "").strip()
+        start = QColor(raw) if raw else QColor(theme.DANGER)
+        if not start.isValid():
+            start = QColor(theme.DANGER)
+        c = QColorDialog.getColor(start, self,
+                                  i18n.T("settings.icons.preview.color.title"),
+                                  QColorDialog.DontUseNativeDialog)
+        if not c.isValid():
+            if revert_to is not None:
+                cmb, idx = revert_to
+                cur = str(self.storage.get_setting("cell_preview_color") or "")
+                back = "custom" if cur else "danger"
+                cmb.blockSignals(True)
+                cmb.setCurrentIndex(max(0, cmb.findData(back)))
+                cmb.blockSignals(False)
+            return
+        self._cell_preview_color = c.name()
+        self.storage.set_setting("cell_preview_color", c.name())
+        self._sync_cell_preview_color_btn()
+        if revert_to is not None:
+            cmb, _idx = revert_to
+            cmb.blockSignals(True)
+            cmb.setCurrentIndex(max(0, cmb.findData("custom")))
+            cmb.blockSignals(False)
+        self._label_style_changed()
+
+    def _apply_cell_preview_fill(self, v):
+        self.lbl_cell_preview_fill.setText("%d%%" % int(v))
+        self.storage.set_setting("cell_preview_fill", int(v))
+        self._label_style_changed()
+
+    def _apply_cell_preview_width(self, v):
+        self.storage.set_setting("cell_preview_width", int(v))
+        self._label_style_changed()
+
+    def _apply_cell_preview_radius(self, v):
+        self.storage.set_setting("cell_preview_radius", int(v))
+        self._label_style_changed()
+
+    def _reset_label_text(self):
+        """标签文字回出厂（= Windows 原生：白字 + 柔和黑阴影，无描边）。"""
+        from . import label_style as _ls
+        d = _ls.default_label_style()
+        self.storage.set_setting("label_color", d.color.name())
+        self.storage.set_setting("label_bold", d.bold)
+        self.storage.set_setting("label_shadow", d.shadow)
+        self.storage.set_setting("label_shadow_color",
+                                 d.shadow_color.name())
+        self.storage.set_setting("label_shadow_alpha",
+                                 int(round(d.shadow_alpha * 100)))
+        self.storage.set_setting("label_outline", d.outline)
+        self.storage.set_setting("label_outline_color",
+                                 d.outline_color.name())
+        self.storage.set_setting("label_outline_width", d.outline_width)
+        # 控件跟着回位（blockSignals：重置不该再触发一轮 apply）
+        self._label_color = d.color.name()
+        self._sync_label_color_btn()
+        for w, v in ((self.chk_label_bold, d.bold),
+                     (self.chk_label_shadow, d.shadow),
+                     (self.chk_label_outline, d.outline)):
+            w.blockSignals(True)
+            w.setChecked(v)
+            w.blockSignals(False)
+        self.sld_label_shadow.blockSignals(True)
+        self.sld_label_shadow.setValue(int(round(d.shadow_alpha * 100)))
+        self.sld_label_shadow.blockSignals(False)
+        self.lbl_label_shadow.setText("%d%%" % int(round(d.shadow_alpha * 100)))
+        self.sp_label_outline_w.blockSignals(True)
+        self.sp_label_outline_w.setValue(d.outline_width)
+        self.sp_label_outline_w.blockSignals(False)
+        self._sync_label_controls()
+        self._label_style_changed()
+
+    def _reset_cell_preview(self):
+        """预览框回出厂（现行红框：DANGER + 8% 填充 + 2px + R8）。"""
+        from . import label_style as _ls
+        d = _ls.default_preview_style()
+        self.storage.set_setting("cell_preview_color", "")
+        self.storage.set_setting("cell_preview_fill",
+                                 int(round(d.fill_alpha * 100)))
+        self.storage.set_setting("cell_preview_width", d.width)
+        self.storage.set_setting("cell_preview_radius", d.radius)
+        self._cell_preview_color = ""
+        self._sync_cell_preview_color_btn()
+        self.sld_cell_preview_fill.blockSignals(True)
+        self.sld_cell_preview_fill.setValue(int(round(d.fill_alpha * 100)))
+        self.sld_cell_preview_fill.blockSignals(False)
+        self.lbl_cell_preview_fill.setText(
+            "%d%%" % int(round(d.fill_alpha * 100)))
+        self.sp_cell_preview_width.blockSignals(True)
+        self.sp_cell_preview_width.setValue(d.width)
+        self.sp_cell_preview_width.blockSignals(False)
+        self.sp_cell_preview_radius.blockSignals(True)
+        self.sp_cell_preview_radius.setValue(d.radius)
+        self.sp_cell_preview_radius.blockSignals(False)
+        self.cmb_cell_preview.blockSignals(True)
+        self.cmb_cell_preview.setCurrentIndex(
+            max(0, self.cmb_cell_preview.findData("danger")))
+        self.cmb_cell_preview.blockSignals(False)
+        self._label_style_changed()
+
+    def _reset_label_page(self):
+        """整页回出厂（两个卡片各管各的，这里一把都重置）。"""
+        self._reset_label_text()
+        self._reset_cell_preview()
+
     def _page_layout(self, body, lay):
         card, c = self._card(body, i18n.T("settings.layout.card.grid"))
         # ① 读原生图标尺寸（决定 cell 基准）——v7 §3.1 起移入网格卡片
@@ -1369,6 +1988,14 @@ class SettingsDialog(QDialog):
         self.chk_autosync.toggled.connect(self._apply_auto_sync)
         self._row(c, card, i18n.T("settings.mode.auto_sync.title"),
                   self.chk_autosync, i18n.T("settings.mode.auto_sync.hint"))
+
+        # v14 反馈 1：文件夹悬停自动展开
+        self.chk_hover_folder = Switch()
+        self.chk_hover_folder.setChecked(
+            bool(self.storage.get_setting("folder_hover_expand")))
+        self.chk_hover_folder.toggled.connect(self._apply_folder_hover)
+        self._row(c, card, i18n.T("settings.mode.folder_hover.title"),
+                  self.chk_hover_folder, i18n.T("settings.mode.folder_hover.hint"))
         lay.addWidget(card)
 
     def _page_developer(self, body, lay):
@@ -2048,6 +2675,11 @@ class SettingsDialog(QDialog):
         hook = getattr(self.window, "set_auto_sync", None)
         if hook is not None:
             hook(bool(checked))
+
+    def _apply_folder_hover(self, checked):
+        """文件夹悬停自动展开（v14 反馈 1）：纯设置项，图标每次悬停现读。"""
+        self.storage.set_setting("folder_hover_expand", bool(checked))
+        self._flush_storage()
 
     def _rescan(self):
         added, removed = self.window.rescan_desktop()

@@ -71,7 +71,13 @@ def _is_green(px: QColor) -> bool:
 
 
 def _is_pink(px: QColor) -> bool:
-    return px.red() > 200 and px.blue() > 100 and px.green() < 120
+    """原点十字签名：品红 (255,64,160)——蓝显著高于绿。
+
+    不能只用"红高 + 有点蓝"：组件碰撞红底的边缘像素叠在组件白玻璃上会混成
+    (252,102,103) 这种三文鱼色（V6b 曾被它咬住）。十字的蓝永远 > 130，
+    混色伪影的蓝只有 ~100，用蓝/绿差把两者分开。
+    """
+    return px.red() > 200 and px.blue() > 130 and px.green() < 110
 
 
 def _is_red(px: QColor) -> bool:
@@ -105,7 +111,7 @@ def main(app):
     st = make_state(dev=False)
     dlg = SettingsDialog(SimpleNamespace(attached=True, update=lambda: None),
                          st, None, page="developer")
-    check("V2 开发者分页已选中", dlg.stack.currentIndex() == 6,
+    check("V2 开发者分页已选中", dlg.stack.currentIndex() == 7,
           "idx=%d" % dlg.stack.currentIndex())
     subs = getattr(dlg, "_dev_switches", {})
     check("V2b 四个分项开关都在", len(subs) == 4 and set(subs) == set(FLAGS),

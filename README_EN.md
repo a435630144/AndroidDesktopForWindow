@@ -4,15 +4,15 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: current version **v10a** (installer 5.0.0, first package of the v10 line) with **89 test files / 2308 assertions green**. v10 brings a **widget store** (gitee first, github fallback, sha256 verification; Local / Store tabs in the widget library, first batch: world clock & countdown), an **English UI** (auto / 中文 / English, applied instantly), a **bilingual + refreshed installer**, plus v9's **per-widget appearance settings** (background / opacity / text / accent colour), a **widget plugin platform** (drop in a folder or a zip — see [docs/组件开发指南.md](docs/组件开发指南.md)) and a **phone-style input mode** (single tap launches / long-press menu / multi-select with batch actions / swipe to flip pages). Bug reports and ideas are welcome via Issues.
+> 🚧 **Under active development**: the latest release is **8.0.0 (v14a)**, which adds **liquid glass** (folder popups / Dock bar / widget backgrounds, each with its own switch under Settings ▸ Appearance), an **iOS-style Dock** (gradient shelf + top specular highlight + hover lift, now the default), **size-specific widget layouts** (the weather widget's 4×2 is not a scaled 2×2: it adds humidity/wind and a three-day temperature-range bar), **icon label styling** (colour / shadow / outline, 1:1 with native Windows by default) and **drag preview box styling**, plus **pure mode** (double-click empty desktop space to hide all UI), **hover-to-expand folders**, and a **default empty page** for the onboarding walkthrough. **103 test files green**. Bug reports and ideas are welcome via Issues.
 
-[![release](https://img.shields.io/badge/release-v5.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-89%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-103%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
 A third-party desktop organizer and beautifier for Windows with a **phone-style UI and interaction model**: it mounts its own grid layer above the native desktop and replaces native icons with a fully controlled rendering layer — positions, animations, folders and widgets are all yours to define.
 
-Despite the name, this is **far past the prototype stage**: installer, tray residency, crash logging, single-instance guard, auto re-attach watchdog, **89 test files / 2308 assertions**. The product is called **掌镜桌面** (ZhangJing Desktop). The exe name and data dir remain `PhoneDesktop` so existing users' data paths stay valid.
+Despite the name, this is **far past the prototype stage**: installer, tray residency, crash logging, single-instance guard, auto re-attach watchdog, **103 test files**. The product is called **掌镜桌面** (ZhangJing Desktop). The exe name and data dir remain `PhoneDesktop` so existing users' data paths stay valid.
 
 <p align="center"><img src="docs/images/01-desktop.png" width="900" alt="The desktop: Android-style icon grid with anchored widgets"></p>
 
@@ -22,18 +22,24 @@ Despite the name, this is **far past the prototype stage**: installer, tray resi
 
 | Module | Description |
 |---|---|
-| 🧭 Icon grid | Android-style grid layout with column count / icon size / DPI awareness; click to select, double-click to open, drag to move |
+| 🧭 Icon grid | Android-style grid layout with column count / icon size / DPI awareness; click to select, double-click to open, drag to move; **file names wrap to two lines** instead of being truncated |
 | 🤏 Slide-to-rearrange | Neighboring icons elastically slide aside while you drag (true spring physics curve), snap precisely to the target cell, and slide back on cancel |
-| 📂 Drag-to-merge | Drag an icon onto another to merge into a folder; folder popup uses liquid-glass material with an emergence open/close animation; members can be dragged out / removed |
+| 📂 Drag-to-merge | Drag an icon onto another to merge into a folder; **hover a folder for 260 ms and it expands automatically** (can be turned off); folder popup uses liquid-glass material with an emergence open/close animation; members can be dragged out / removed |
 | 🖱️ Batch operations | Rubber-band multi-select + whole-group dragging |
-| 🧩 Desktop widgets | Clock / Sticky notes (editable) / Desktop panel (search · quick folders · disks · recent downloads · weather) / **System monitor** (CPU · memory · disk) / **To-do list** (multi-instance) / **Calendar** (month view with remembered month) / **Weather** (live with cache fallback) / **Music** (controls whatever is playing on this PC, player-agnostic); supports **anchored (non-floating)** mode where widgets join the grid as first-class citizens, with drag-resize and icon mutual displacement |
+| 📋 Desktop copy &amp; paste | `Ctrl+C` / `Ctrl+V`: copy in File Explorer, click the desktop, paste straight to disk |
+| 🫥 Pure mode | **Double-click empty desktop space to hide every UI element** — wallpaper only; double-click again to bring it back |
+| 🧩 Desktop widgets | Clock / Sticky notes (editable) / Desktop panel (search · quick folders · disks · recent downloads · weather) / **System monitor** (CPU · memory · disk) / **To-do list** (multi-instance) / **Calendar** (month view with remembered month) / **Weather** (live with cache fallback; **2×2 and 4×2 are two different layouts** — the 4×2 adds humidity/wind and a three-day temperature-range bar) / **Music** (controls whatever is playing on this PC, player-agnostic, shows album art); supports **anchored (non-floating)** mode where widgets join the grid as first-class citizens, with drag-resize and icon mutual displacement |
 | 🧩 Widget library | A page inside the settings panel: browse widgets by category, search, and see four-state cards (not added / hidden / on desktop / added) with **live previews rendered by the very same `draw()`** used on the desktop; import or uninstall third-party widget zips, and appearance edits apply immediately |
+| 🧊 Liquid glass | One master switch plus per-surface switches under Settings ▸ Appearance (folder popup / Dock bar / widget background): fresnel lens-edge light, chromatic dispersion fringe, material grain and a slow sweeping highlight — each layer's strength is adjustable |
+| 🔤 Label &amp; preview styling | A dedicated Settings ▸ Icons page: text colour / bold / shadow (with strength) / outline (width + colour), **1:1 with native Windows by default**; the drag-target preview box's border colour / fill / width / radius are configurable too (red / blue / green / orange presets) |
 | 🔀 Two modes | **Organizer mode** (native icons hidden, desktop rendering taken over) / **native mode** (free-floating): one-click switch, and each mode **keeps its own layout** independently |
-| 🚀 Dock | A row of app shortcuts, bottom by default (top / left / right, toggleable): spring-scaled hover, drop to append, drag to reorder, drag out to remove; the **grid automatically yields the strip and recomputes columns/rows** |
-| 📑 Paging | Automatic paging when icons overflow; page dots + wheel paging, drag to the screen edge to flip. Flips are **whole-page carousel slides** (icons and widgets share one spring scalar, 420 ms critically damped — no leftovers, no drift) |
+| 📱 Phone input | Settings ▸ Mode ▸ Input: single tap launches, hold 450 ms for the menu, keep dragging after the hold to move; multi-select shows a checkmark and a right-click batch menu; swipe on empty space to flip pages |
+| 🚀 Dock | A row of app shortcuts, bottom by default (top / left / right, toggleable), now in an **iOS-style shelf** by default (vertical gradient + top specular highlight + spring hover lift with neighbour displacement); drop to append, drag to reorder, drag out to remove; icon size / gap / padding / radius / border / opacity / hover scale / indicator dot all adjustable; the **grid automatically yields the strip and recomputes columns/rows** |
+| 📑 Paging | Automatic paging when icons overflow, with **an empty first page out of the box** so onboarding can show the page dots; page dots + wheel paging, drag to the screen edge to flip. Flips are **whole-page carousel slides** (icons and widgets share one spring scalar, 420 ms critically damped — no leftovers, no drift) |
+| 🧭 Onboarding | A 7-step walkthrough on first launch: icons → dragging → folders → paging → Dock → widgets → wrap-up, spot-lighting the real UI; replayable any time from Settings ▸ General |
 | 🔄 Desktop sync | Watches the desktop folder (1 s debounce): new files enter automatically, deleted items are cleaned up |
 | 🪄 Full takeover | Hides native icons and re-renders from the desktop folder clone, giving complete control over position and style (Route A); can also switch back to effects-only mode |
-| 🖥️ Custom desktop context menu | No more losing right-click in organizer mode: new folder/text file, rescan, icon size, display/personalization settings |
+| 🖥️ Custom desktop context menu | No more losing right-click in organizer mode: new folder/text file, rescan, icon size, display/personalization settings; "Show in folder" resolves the file's real location (shortcuts point at their target, desktop files at the desktop folder) |
 | 🛡️ BandGuard daemon | Survives Win+D (show desktop) and explorer restarts — automatically re-mounts |
 | ⏱️ System tray | Pause auto-creation / restore native, rescan, panel toggle, autostart, settings |
 
@@ -70,6 +76,10 @@ Despite the name, this is **far past the prototype stage**: installer, tray resi
 **Android-style paging**: overflowing icons paginate automatically; swipe left/right to flip, with the page dots following along. The wheel and dragging to the screen edge flip too, and each page can independently opt in or out of auto-arrange
 
 <p align="center"><img src="docs/images/09-paging.gif" width="640" alt="Desktop paging: swipe to flip"></p>
+
+**Dock bar**: the row of favourite apps from the bottom of your phone. The iOS-style shelf is the new default — vertical gradient backdrop with a top specular highlight, spring hover lift with neighbour displacement; the liquid-glass optical layers sit on top by default (chromatic fringe, lens-edge light, slow sweep), each surface switchable under Settings ▸ Appearance
+
+<p align="center"><img src="docs/images/08-dock.png" width="900" alt="Dock bar: iOS-style shelf with hover lift and liquid glass"></p>
 
 ## 🛠️ Tech Stack & Dependency Versions
 
@@ -149,7 +159,7 @@ PhoneDesktopForWindow/
 │   ├── build_portable.ps1   # PyInstaller onedir → zip (needs pwsh 7)
 │   ├── installer.iss        # Inno Setup 6 installer (must be UTF-8 BOM)
 │   └── check_docs.py        # Docs consistency check (dead links / duplicate sections / doc-vs-code drift)
-├── tests/                   # 89 standalone scripts (no pytest); judge by exit code
+├── tests/                   # 103 standalone scripts (no pytest); judge by exit code
 │   ├── smoke_test.py        # Headless logic regression (storage/clone/layout)
 │   └── test_*.py            # One per contract: reflow, dual mode, hit-testing, popup, widgets…
 └── tools/                   # Runtime probes probe*.py + packaged-build verification verify_*.py
@@ -161,7 +171,7 @@ PhoneDesktopForWindow/
 # Headless logic regression
 python tests/smoke_test.py
 
-# Full suite: 89 standalone scripts, no pytest; judge by exit code only
+# Full suite: 103 standalone scripts, no pytest; judge by exit code only
 Get-ChildItem tests/test_*.py | ForEach-Object {
     python $_.FullName
     if ($LASTEXITCODE -ne 0) { "FAILED: $($_.Name)" }
@@ -198,6 +208,17 @@ pwsh -File scripts/build_portable.ps1
 
 > Ordered by **installer version**, newest first; the parenthesised tag is the internal build label (see `src/version.py`, also shown at the bottom of the right-click menu). More detail in [`docs/release_notes/`](docs/release_notes/).
 
+### 8.0.0 (v14a) · Liquid glass · iOS-style Dock · Size-specific widget layouts → [notes](docs/release_notes/8.0.0.md)
+
+- **Liquid glass** (report 9): master switch + per-surface switches under Settings ▸ Appearance (folder popup / Dock bar / widget background); fresnel lens-edge light, chromatic dispersion, material grain and a slow sweeping highlight, each with its own strength; the sweep pauses automatically when system animations are off
+- **iOS-style Dock** (report 5): gradient shelf + top specular highlight + hover lift become the new defaults; 44 px icons, 20 px radius, 1.40× hover
+- **Size-specific weather layouts** (report 7): the 4×2 is not a scaled 2×2 — the left block adds humidity/wind, and the three-day column carries a temperature-range bar normalised across the forecast
+- **Icon label + preview box styling** (reports 3 / 13): a dedicated Settings ▸ Icons page; defaults match native Windows 1:1
+- **Pure mode** (report 11): double-click empty desktop space to hide all UI, double-click again to restore
+- **Hover-to-expand folders** (report 1) / **default empty page** (report 4) / **three-state "Show in folder" paths** (report 6) / **roomier add-apps sheet** (report 8) / **two-line file names** (report 12) / **widget store installs into the app directory** (report 14) / mouse-speed investigation (report 2)
+
+### 7.1.0 (v13a) · New icon · Refreshed installer wizard · Per-language UI strings → [notes](docs/release_notes/7.1.0.md)
+### 7.0.2 (v12c) · Installer auto-selects language from the system locale → [notes](docs/release_notes/7.0.2.md)
 ### 5.0.1 (v10b) · Fixes the UI language not taking effect · Responsive widget library → [notes](docs/release_notes/5.0.1.md)
 
 - **Fixes the mixed-language UI**: the v10a (5.0.0) packages shipped without the translation dictionaries, so lookups fell back to raw keys like `settings.title` across the interface; this build bundles the tables and adds two regression contracts (frozen-build lookup + packaging), and the self-test now reports table sizes and sample strings

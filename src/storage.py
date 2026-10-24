@@ -95,6 +95,8 @@ DEFAULT_SETTINGS = {
                                 # IconSize 反推 cell（接管后大小一致）
     "page_axis": "horizontal",  # 翻页方向：horizontal（默认，左右）| vertical
     "extra_pages": [],         # 无界模式空白页页码列表（如 [3,5]）
+    # v14 反馈 4：是否已补过"默认第二页"（一次性。用户删掉空白页后不补）
+    "blank_page_seeded": False,
     "takeover_desktop": True,  # 「接管系统桌面」合并开关（替代 hide_native_icons
                                # 语义入口；旧键仍兼容读取）。
                                # v7 反馈 16 起**界面不再提供开关**：启动即接管，
@@ -103,6 +105,37 @@ DEFAULT_SETTINGS = {
     # v7 反馈 14：文件夹默认展开尺寸（上限，[列, 行]，最小 2×2）。
     # 单个文件夹可在自己的 entry["frame"] 里覆盖（右键「文件夹大小」）。
     "folder_frame_default": [3, 3],
+    # v14 反馈 1：文件夹悬停自动展开（260ms 驻留）。手机上"瞄一眼"的语义，
+    # 关掉后回到纯点击打开。
+    "folder_hover_expand": True,
+    # ---- v14 反馈 3 / 13：图标文字样式 + cell 预览框样式 ----
+    # 出厂值 = 1:1 还原 Windows 原生（白字 + 一层柔和黑阴影，无描边不加粗），
+    # 读取/夹紧/脏值回退的唯一入口是 `label_style.py`，这里只放缺省。
+    "label_color": "#f4f5f7",       # 文字色（Windows 原生白）
+    "label_bold": False,            # 加粗（Windows 原生不加粗）
+    "label_shadow": True,           # 阴影开关（Windows 原生有柔和阴影）
+    "label_shadow_color": "#000000",
+    "label_shadow_alpha": 75,       # 阴影浓度 %（0~100）
+    "label_outline": False,         # 文字描边（Windows 原生无描边）
+    "label_outline_color": "#000000",
+    "label_outline_width": 1,       # 描边粗细 1~3
+    # 反馈 13：拖动落点预览框（原硬编码红框 + 8% 红底）。空色 = 跟随主题。
+    "cell_preview_color": "",       # "" = theme.DANGER
+    "cell_preview_fill": 8,         # 填充浓度 %（0~40）
+    "cell_preview_width": 2,        # 边框粗细 1~4
+    "cell_preview_radius": 8,       # 圆角 0~16
+    # ---- v14 反馈 9：液态玻璃（Liquid Glass） ----
+    # 光学叠加层（透镜边 / 色散 / 颗粒 / 扫光）挂在既有玻璃之上，三个表面
+    # （文件夹弹窗 / Dock 栏 / 小组件背景）各一个开关，总开关一票否决。
+    # 读取/夹紧的唯一入口是 `liquid_glass.py`，这里只放缺省。
+    "liquid_glass": True,           # 总开关
+    "liquid_folder": True,          # 文件夹弹窗表面
+    "liquid_dock": True,            # Dock 栏表面
+    "liquid_widget": True,          # 小组件背景表面
+    "liquid_dispersion": 60,        # 色散强度 %（0~100）
+    "liquid_bezel": 60,             # 透镜边缘 %（0~100）
+    "liquid_noise": 40,             # 噪声颗粒 %（0~100）
+    "liquid_shimmer": True,         # 流动扫光（系统关动画时自动停）
     "auto_sync_desktop": True,  # 监听桌面目录自动同步（v6 §7.4：新增/删除/
                                 # 重命名 debounce 1s 后增量更新，不重排已有布局）
     "columns": "auto",         # 每行图标数："auto"=按工作区尺寸自动计算（M1 GridMetrics，
@@ -126,9 +159,12 @@ DEFAULT_SETTINGS = {
     "dock_items": [],           # [{"name","target","icon_path"}]，规范化见 dock.py
     "dock_seeded": False,       # 首次启用是否已用桌面现成应用填过（只填一次）
     # v10 A9（反馈 24）：Dock 外观（全部是"全局旋钮"，不进 dock_items）
-    "dock_icon": 32,            # 图标逻辑边长 24~56（100% 缩放下的基准）
-    "dock_gap": 6,              # v11：图标间距 0~24（逻辑 px，100% 基准）
-    "dock_pad": 6,              # v11：条带内边距 2~20——决定"条带有多厚"
+    # v14 反馈 5：默认样式改成 iOS Dock 观感（更大图标 / 更松间距 / 更厚内边距 /
+    # 更圆角 / 更透背景 / 更强 hover）。出厂值在这里，用户改过的值在各自
+    # state.json 里，不受影响。
+    "dock_icon": 44,            # 图标逻辑边长 24~56（100% 缩放下的基准）
+    "dock_gap": 12,             # v11：图标间距 0~24（逻辑 px，100% 基准）
+    "dock_pad": 10,             # v11：条带内边距 2~20——决定"条带有多厚"
     # v12 反馈 35：四向内边距（未设时回退 dock_pad）
     "dock_pad_top": None,
     "dock_pad_bottom": None,
@@ -138,10 +174,10 @@ DEFAULT_SETTINGS = {
     "dock_offset_x": 0,
     "dock_offset_y": 0,
     "dock_center": True,
-    "dock_hover_pct": 122,      # v11：hover 放大百分比 100~150（100 = 不放大）
-    "dock_alpha": 0.86,         # 条带背景不透明度 0.30~1.0
+    "dock_hover_pct": 140,      # v11：hover 放大百分比 100~150（100 = 不放大）
+    "dock_alpha": 0.62,         # 条带背景不透明度 0.30~1.0（iOS 玻璃 Shelf 更透）
     "dock_radius_mode": "round",  # round（指定半径，默认）| pill（胶囊）| square（直角）
-    "dock_radius": 12,           # round 形态的半径 0~26（100% 缩放基准）
+    "dock_radius": 20,           # round 形态的半径 0~26（100% 缩放基准）
     # 一次性迁移标记（v10 A11）：A9 的默认值是 pill，用户只要动过 Dock 设置
     # 就已经被 `_apply_dock` 落盘成 "pill"——光改默认值看不见效果。
     "dock_radius_migrated": False,
@@ -183,6 +219,11 @@ DEFAULT_SETTINGS = {
     # v10 A2（反馈 3）："首次加载已把 dev_mode 关掉"的一次性标记。
     # 覆盖安装不清 %APPDATA%，旧版遗留的 True 会被新版继承 → 开局一张调试网格。
     "dev_mode_v10_reset": False,
+    # v14 反馈 2：桌面 Ctrl+C / Ctrl+V 快捷键总开关。关掉即**卸载**低层键盘
+    # 钩子——有用户反馈"用软件之后鼠标速度异常"，虽然程序从不修改系统鼠标
+    # 参数（见 tests/test_reveal_path.py 的 M1 守卫），但全局钩子意味着每次
+    # 按键都要 round-trip 进本进程；给一个开关，怀疑时先关掉再观察。
+    "desktop_hotkeys": True,
 }
 
 DEFAULT_WIDGETS = [
@@ -223,6 +264,27 @@ class Storage:
             "widgets": deepcopy(DEFAULT_WIDGETS),
         }
         self._load()
+        self._merge_install_lang()
+
+    def _merge_install_lang(self):
+        """安装器写下的语言旁路文件 → settings.lang（v12c）。
+
+        安装器在 ssPostInstall 写 `{appdata}/PhoneDesktop/install_lang`
+        （内容 `zh_CN` / `en`，见 scripts/installer.iss）。不直接改 state.json
+        是因为 Inno 的 Pascal 里拼 JSON 易碎，旁路文件原子且可测。
+
+        优先级（i18n.resolve 唯一入口，这里只负责把旁路值收进 settings）：
+          用户显式 language > 本文件 > 系统语言。
+        每次启动都读：重装/覆盖安装换了语言，下一次启动即生效。
+        """
+        sidecar = os.path.join(os.path.dirname(self.path), "install_lang")
+        try:
+            with open(sidecar, "r", encoding="utf-8") as f:
+                value = f.read().strip()
+        except Exception:
+            return
+        if value in ("zh_CN", "en"):
+            self._data["settings"]["lang"] = value
 
     # ---------- 读写 ----------
     def _load(self):
@@ -1057,7 +1119,32 @@ class Storage:
         empty = not self._data["layout"]
         if not force and not empty and not self.get_setting("auto_clone_desktop"):
             return 0
-        return self.seed_desktop_clone()
+        added = self.seed_desktop_clone()
+        self.ensure_second_page()
+        return added
+
+    def ensure_second_page(self):
+        """保证至少有 2 页（v14 反馈 4：默认给一页空白页）。
+
+        只有一页时页点不画（`_dot_centers` total<=1 返回空），新手指引的
+        「分页」那一步也会被跳过——用户根本学不到"可以左右翻页"。默认补一页
+        空白页，页点出现、翻页手势有处可用。
+
+        一次性（`blank_page_seeded`）：用户主动删掉空白页后不再补，否则
+        「删除空白页」变成删不掉。
+        """
+        if self.get_setting("blank_page_seeded"):
+            return False
+        from . import grid_flow
+        try:
+            if grid_flow.page_count(self) >= 2:
+                self.set_setting("blank_page_seeded", True)
+                return False
+            self.set_setting("extra_pages", [1])
+            self.set_setting("blank_page_seeded", True)
+            return True
+        except Exception:      # noqa: BLE001 —— 补页失败不影响启动
+            return False
 
     def migrate_to_native_mode(self):
         """已废弃（2026-10-18 路线A 拍板后保留空实现兼容旧调用）。

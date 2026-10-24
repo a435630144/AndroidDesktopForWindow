@@ -169,15 +169,110 @@ def move_to_desktop(path: str) -> str:
     return str(dest)
 
 
-def reveal_in_explorer(path: str):
-    """在资源管理器中定位文件（选中状态）。"""
+def _is_command_target(target: str) -> bool:
+    """target 是不是「没有文件位置」的壳层入口（命令 / 协议 / CLSID）。
+
+    这类条目（`ms-settings:`、`explorer`、`::{GUID}`、`steam://…`）本来就
+    不对应磁盘上的文件，硬要 `explorer /select,"ms-settings:"` 只会让资源
+    管理器打不开目标、退到默认位置（= 文档库），用户看到的就是"路径指向
+    了电脑文档"。
+    """
+    t = (target or "").strip()
+    if not t:
+        return True
+    if t.startswith("::{"):                    # shell 命名空间（此电脑 / 回收站）
+        return True
+    if "://" in t:                              # 协议入口（steam:// / https://）
+        return True
+    if ":" in t and t[1:3] != ":\\":             # ms-settings: / shell: / edge:
+        head = t.split(":", 1)[0]
+        if (head and not head.startswith("\\") and "/" not in head
+                and len(head) > 1 and len(head) <= 24):
+            return True                          # 单字母是盘符（C:foo），不算
+    if os.sep not in t and "/" not in t:        # 裸命令（explorer / control / notepad）
+        return True
+    return False
+
+
+def reveal_path_for(app: dict):
+    """右键「在文件夹中显示」应该定位到的路径（None = 没有文件位置）。
+
+    用户诉求（反馈 6）：三条路径规则——
+      1. 普通文件 → 文件自己（定位到它所在文件夹并选中）；
+      2. 快捷方式（.lnk）→ **原文件**（解析 .lnk 目标，指到 exe 所在目录）；
+      3. 本来就在桌面上的文件 → 桌面文件夹（上面两条已经覆盖：桌面文件的
+         target 就在桌面目录下）。
+    `.url` 的真实目标常是协议（steam:// / http://），没有文件夹可定位，
+    退到 .url 文件自己。坏链接同样退到 .lnk 自己——至少让用户看见它。
+    """
+    target = str(app.get("target") or "")
+    if not target or _is_command_target(target):
+        return None
+    p = _expand(target)
+    if p.lower().endswith(".lnk"):
+        tgt = shortcut_target_path(app)
+        return _expand(tgt) if tgt else p
+    return p
+
+
+def _select_in_folder(folder: str, name: str) -> bool:
+    """在资源管理器里打开 folder 并选中 name（SHOpenFolderAndSelectItems）。
+
+    不走 `explorer /select,"…"` 命令行：那条路会把参数引号转义后塞给
+    explorer，路径解析失败时资源管理器不报错、直接打开默认位置（文档库），
+    表现为"所有路径都指向电脑文档"。Shell API 没有这层字符串解析，选中态
+    由壳层自己算。
+    """
     try:
-        subprocess.Popen(["explorer", '/select,"%s"' % path])
-    except Exception:
+        import ctypes.wintypes as wintypes
+        shell32 = ctypes.windll.shell32
+        shell32.ILCreateFromPathW.restype = wintypes.HANDLE
+        shell32.ILCreateFromPathW.argtypes = [wintypes.LPCWSTR]
+        shell32.SHOpenFolderAndSelectItems.argtypes = [
+            wintypes.HANDLE, wintypes.UINT, ctypes.c_void_p, wintypes.ULONG]
+        shell32.ILFree.argtypes = [wintypes.HANDLE]
+        full = os.path.join(folder, name)
+        pidl = shell32.ILCreateFromPathW(full)
+        if not pidl:
+            return False
         try:
+            return int(shell32.SHOpenFolderAndSelectItems(pidl, 0, None, 0)) == 0
+        finally:
+            shell32.ILFree(pidl)
+    except Exception:
+        return False
+
+
+def _open_folder(path: str) -> bool:
+    """打开一个目录（资源管理器窗口）。"""
+    try:
+        if os.path.isdir(path):
             os.startfile(path)
-        except Exception:
-            pass
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def reveal_in_explorer(path: str):
+    """在资源管理器中定位文件（选中状态）。
+
+    目录 → 直接打开；文件 → 打开所在文件夹并选中它。文件已经不在（被移走 /
+    删除）时退到所在文件夹，文件夹也没了才退到桌面——**绝不**退到文档库。
+    返回是否成功派发（调用方据此决定要不要给用户提示）。
+    """
+    p = _expand(str(path or ""))
+    if not p:
+        return False
+    if os.path.isdir(p):
+        return _open_folder(p)
+    parent = os.path.dirname(p)
+    if not os.path.isdir(parent):
+        folders = _desktop_folders()
+        parent = folders[0] if folders else os.path.expanduser("~")
+    if _select_in_folder(parent, os.path.basename(p)):
+        return True
+    return _open_folder(parent)
 
 
 def create_on_desktop(name: str, is_dir: bool = False) -> str:

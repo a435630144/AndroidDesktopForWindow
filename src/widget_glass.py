@@ -20,6 +20,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
 
 from . import theme
+from . import liquid_glass
 from . import widget_style
 from .widget_base import FloatingWidget
 
@@ -187,8 +188,16 @@ class GlassWidget(FloatingWidget):
         st = self.style
         # v10 A8：玻璃画在**卡片**矩形上——编辑态窗口外扩了一圈，玻璃
         # 必须留在卡片位置，外扩区只保留 alpha=2 的命中填充。
-        paint_glass(p, QRectF(self.card_rect()), st.radius,
+        card = QRectF(self.card_rect())
+        paint_glass(p, card, st.radius,
                     tint_alpha=st.tint_alpha, tint_color=st.bg)
+        # v14 反馈 9：液态玻璃光学叠加层（在玻璃之上、内容之下）。
+        # 组件是常驻表面，扫光由 liquid_glass 的共享低频 ticker 驱动，
+        # 系统关动画时 shimmer_phase() 返回 None，整条不画。
+        if liquid_glass.surface_enabled(self.storage, "widget"):
+            liquid_glass.paint_overlay(
+                p, card, st.radius, liquid_glass.liquid_style(self.storage),
+                phase=liquid_glass.shimmer_phase(), widget=self)
 
     def paint_content(self, p):
         """子类实现。默认什么都不画（防止漏实现时整块空白看不出来）。"""

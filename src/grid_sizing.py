@@ -84,6 +84,11 @@ CHROME_X = 7            # 图标方块左右留白 = widget_w - icon_box 的一�
 ICON_BOX_MIN = 16       # 小 cell 下图标方块下限
 LABEL_H_MIN = 10        # 标签区下限（单行小字）
 FONT_BOX_TIERS = ((40, 9), (58, 10))   # (icon_box 上界, font_px)，其余 14
+# 反馈 12：文件名默认折两行。第二行的行距比单行松（单行那 1.5 倍里含上下
+# 留白，第二行只补行距）。cell 装不下第二行时自动退回单行——格子尺寸是
+# v6 规格（84x91），不能为了标签把格距撑大。
+LABEL_LINES = 2
+LABEL_LINE_FACTOR = 1.28
 
 
 class IconLayout(NamedTuple):
@@ -154,9 +159,17 @@ def _font_for_box(icon_box: int) -> int:
     return 14
 
 
-def label_height(icon_box: int) -> int:
-    """标签区高度（与 `AppIcon._paint_label` 的单行布局同源）。"""
-    return max(LABEL_H_MIN, int(round(_font_for_box(icon_box) * 1.5)) + 4)
+def label_height(icon_box: int, lines: int = 1) -> int:
+    """标签区高度（与 `AppIcon._paint_label` 同源）。
+
+    `lines=1` 保持 v6 以来的单行规格（`cell_from_native` 只用它，格距不变）；
+    `lines=2` 追加第二行的行距——反馈 12「文件名一行显示不下折两行」。
+    """
+    font = _font_for_box(icon_box)
+    h = max(LABEL_H_MIN, int(round(font * 1.5)) + 4)
+    for _ in range(max(0, int(lines) - 1)):
+        h += int(round(font * LABEL_LINE_FACTOR))
+    return h
 
 
 # ---------------------------------------------------------------- 层一：cell
@@ -230,7 +243,11 @@ def icon_layout(cw: int, ch: int, fit_or_tier="medium",
     box = max(ICON_BOX_MIN, int(round(cw * f * s)))
     chrome_x = CHROME_X
     w = max(1, box + 2 * chrome_x)
-    lh = label_height(box)
+    # 反馈 12：默认两行标签。格子（ch）装得下第二行才给——cell 尺寸由
+    # `cell_from_native` 单行规格推导，widget 只能在格内纵向余量里长。
+    lh = label_height(box, 1)
+    if LABEL_LINES > 1 and box + label_height(box, LABEL_LINES) <= max(1, int(ch)):
+        lh = label_height(box, LABEL_LINES)
     h = max(1, box + lh)
     return IconLayout(w, h, box, chrome_x, lh, _font_for_box(box))
 

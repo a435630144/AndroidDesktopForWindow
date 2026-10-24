@@ -97,26 +97,28 @@ def main(app):
     navs = [b for b in dlg.findChildren(QPushButton)
             if b.objectName() == "navItem"]
     # v9 V2：新增「组件库」分页（原独立窗口融合进来）
-    check("U1 左侧栏 8 个导航项", len(navs) == 8, "found=%d" % len(navs))
-    check("U1 导航文案依次为 通用/组件库/Dock 栏/外观与图标/布局与网格/模式/开发者/高级",
+    # v14 反馈 3：新增「图标」分页（外观与图标之后）
+    check("U1 左侧栏 9 个导航项", len(navs) == 9, "found=%d" % len(navs))
+    check("U1 导航文案依次为 通用/组件库/Dock 栏/外观与图标/图标/布局与网格/模式/开发者/高级",
           [b.text() for b in navs]
-          == ["通用", "组件库", "Dock 栏", "外观与图标", "布局与网格", "模式",
-              "开发者", "高级"],
+          == ["通用", "组件库", "Dock 栏", "外观与图标", "图标", "布局与网格",
+              "模式", "开发者", "高级"],
           "%s" % [b.text() for b in navs])
     stack = dlg.findChildren(QStackedWidget)
-    check("U1 右栏是 8 页堆栈", len(stack) == 1 and stack[0].count() == 8,
+    check("U1 右栏是 9 页堆栈", len(stack) == 1 and stack[0].count() == 9,
           "stacks=%d" % len(stack))
 
     # ---------- U2 切页 ----------
-    navs[5].click()       # v10 A9：Dock 栏插在「组件库」之后，「模式」顺延到 5
+    navs[6].click()       # v10 A9：Dock 栏插在「组件库」之后；v14 又插入
+                          # 「图标」，「模式」顺延到 6
     app.processEvents()
-    check("U2 点「模式」→ stack 第 5 页",
-          dlg.stack.currentIndex() == 5, "idx=%d" % dlg.stack.currentIndex())
+    check("U2 点「模式」→ stack 第 6 页",
+          dlg.stack.currentIndex() == 6, "idx=%d" % dlg.stack.currentIndex())
     check("U2 页标题跟着变", dlg.lbl_page_title.text() == "模式",
           "%s" % dlg.lbl_page_title.text())
     check("U2 只有当前导航高亮",
           [b.isChecked() for b in navs]
-          == [False, False, False, False, False, True, False, False],
+          == [False, False, False, False, False, False, True, False, False],
           "%s" % [b.isChecked() for b in navs])
     navs[0].click()
     app.processEvents()
@@ -170,7 +172,9 @@ def main(app):
     check("U5b 无界像素 spin 已退役", not hasattr(dlg, "spin_icon_px"))
 
     # ---------- U6 模式页归属 ----------
-    inside = page_widgets(dlg, 5)   # v10 A9：Dock 栏插在组件库之后，模式页到 5
+    # v10 A9：Dock 栏插在组件库之后；v14 反馈 3 又插入「图标」页，
+    # 模式页顺延到 6
+    inside = page_widgets(dlg, 6)
     # 反馈 16：接管开关下线（启动即接管），模式页只留布局与同步项
     check("U6 接管开关已下线", not hasattr(dlg, "chk_takeover"))
     check("U6 自动克隆在「模式」页", id(dlg.chk_autoclone) in inside)
@@ -207,7 +211,7 @@ def main(app):
     # ---------- U8 可滚动 ----------
     scrolls = dlg.findChildren(QScrollArea)
     # 8 页里「组件库」自带滚动区（不能套第二层），所以外层是 7 个
-    check("U8 每页内容装在可滚动区域", len(scrolls) == 7, "found=%d" % len(scrolls))
+    check("U8 每页内容装在可滚动区域", len(scrolls) == 8, "found=%d" % len(scrolls))
     check("U8 滚动区无横向滚动条（宽度自适应）",
           all(s.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
               for s in scrolls))

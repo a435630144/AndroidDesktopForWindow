@@ -38,6 +38,16 @@ FORM_BG_HOVER = QColor(255, 255, 255, 16)
 GAP = 10          # 与锚点窗口的间距
 
 
+def _wrap_lines(name: str, fm, width: int, max_lines: int) -> list:
+    """折行（西文按词、中文按字），超过 max_lines 时末行省略。
+
+    与 `AppIcon._wrap_elide` 同一套规则——两处都是"格子里的应用名"，
+    规则分家必然出现"桌面能折行、添加表单不能"的割裂感。
+    """
+    from .iconwidget import AppIcon
+    return AppIcon._wrap_elide(name, fm, max(1, int(width)), max_lines)
+
+
 def _scale(storage) -> float:
     try:
         return float(storage.ui_scale())
@@ -235,7 +245,10 @@ class AddAppsForm(FolderForm):
 
     picked = Signal(str)
 
-    COLS = 5
+    # v14 反馈 8：单行 5 列太挤（图标 34 + 名字 46px，中文名三个字就省略）。
+    # 改成 4 列 + 更宽的格子 + 两行名字：格子从 52 加到 64，名字可用宽度
+    # 从 46 到 58，第二行再给一半——长名终于看得全。
+    COLS = 4
     VISIBLE_ROWS = 3          # 超过就滚动（滚轮）
 
     def __init__(self, storage, candidates, parent=None):
@@ -248,8 +261,8 @@ class AddAppsForm(FolderForm):
     # ---------- 度量 ----------
     def _cell(self):
         m = self.m()
-        icon = max(28, int(round(34 * m)))
-        return icon, int(round(52 * m)), int(round(44 * m))
+        icon = max(30, int(round(36 * m)))
+        return icon, int(round(64 * m)), int(round(58 * m))
 
     def _rows(self):
         n = len(self._cands)
@@ -315,13 +328,16 @@ class AddAppsForm(FolderForm):
             pm = appsource.icon_pixmap(app, icon_size, dpr)
             ix = rect.center().x() - icon_size // 2
             p.drawPixmap(ix, rect.top() + 2, pm)
+            # 名字两行（v14 反馈 8）：中文按字、西文按词折行，末行省略
             p.setPen(theme.TEXT_DIM)
             p.setFont(theme.ui_font(10))
             name = app.get("name") or "?"
             fm = p.fontMetrics()
-            text = fm.elidedText(name, Qt.ElideRight, rect.width() - 6)
-            p.drawText(QRect(rect.left() + 3, rect.top() + icon_size + 4,
-                             rect.width() - 6, 16), Qt.AlignHCenter, text)
+            for i, line in enumerate(_wrap_lines(name, fm, rect.width() - 6, 2)):
+                p.drawText(QRect(rect.left() + 3,
+                                 rect.top() + icon_size + 5 + i * 13,
+                                 rect.width() - 6, 13),
+                           Qt.AlignHCenter, line)
         # 滚动提示
         if self.max_scroll() > 0:
             p.setPen(theme.TEXT_FAINT)

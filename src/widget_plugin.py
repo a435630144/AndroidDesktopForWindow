@@ -5,8 +5,9 @@
 里一键导入，就和内置组件一样出现在桌面。
 
 设计取舍：
-  - **目录即真相**：装了什么看 `%APPDATA%/PhoneDesktop/widgets/`
-    下有哪些子目录，不另存一份"已安装列表"（两份必然漂移）。
+  - **目录即真相**：装了什么看 `程序目录/widgets/` 下有哪些子目录
+    （v14 反馈 14：旧位置 %APPDATA% 与安装目录无关，卸载不干净），
+    不另存一份"已安装列表"（两份必然漂移）。
   - **不信任插件**：zip 只解白名单后缀、拒绝绝对路径与 `..`（zip-slip）、
     限制体积；加载异常只写日志并跳过，绝不拖垮启动。
   - **不做沙箱**：插件是用户自己放进来的 Python 代码，能做的事和主程序
@@ -83,7 +84,37 @@ class PluginError(Exception):
 # ---------------------------------------------------------------- 路径
 
 def plugin_root() -> Path:
+    """用户组件目录：**程序目录/widgets**（v14 反馈 14）。
+
+    旧位置是 `%APPDATA%\\PhoneDesktop\\widgets`——与安装目录毫无关系，
+    卸载软件时组件还留在系统盘，换盘/迁移也会丢。现在跟着程序走。
+    一次性迁移见 `migrate_legacy_plugin_root()`（首次加载前调用）。
+    """
+    return paths.program_dir() / "widgets"
+
+
+def legacy_plugin_root() -> Path:
+    """改名前的组件目录（只有一次性迁移会用到）。"""
     return paths.data_file("widgets")
+
+
+def migrate_legacy_plugin_root() -> bool:
+    """把 %APPDATA% 下的旧组件目录搬到程序目录（一次性，幂等）。
+
+    规矩与 `paths.migrate_legacy_data` 同源：新目录已有内容就不动；
+    先复制后删除；复制失败清掉半成品并回答 False。
+    """
+    new, old = plugin_root(), legacy_plugin_root()
+    if new.exists() or not old.is_dir():
+        return False
+    try:
+        new.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(old, new)
+    except Exception:
+        shutil.rmtree(new, ignore_errors=True)
+        return False
+    shutil.rmtree(old, ignore_errors=True)
+    return True
 
 
 def error_log() -> Path:
@@ -285,6 +316,7 @@ def load_dir(folder: Path) -> WidgetSpec:
 
 def load_all() -> List[WidgetSpec]:
     """启动时加载用户组件；坏插件只记日志，不影响其它组件与启动。"""
+    migrate_legacy_plugin_root()
     root = plugin_root()
     if not root.is_dir():
         return []

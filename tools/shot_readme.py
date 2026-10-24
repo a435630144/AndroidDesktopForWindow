@@ -10,6 +10,7 @@
   05-settings.png       设置 ▸ 布局：分页自动排列 + 图标尺寸
   06-mobile.png         手机模式：多选标记 + 批量菜单 + 图标右键菜单
   07-folder.png         安卓式文件夹：图标缩略 + 展开后的玻璃弹窗
+  08-dock.png           Dock 栏：iOS 风格 Shelf + 悬停抬起 + 液态玻璃
 
 ## 为什么不是"截屏"
 
@@ -936,6 +937,81 @@ def shot_folder():
     _save(img, "07-folder.png")
 
 
+# ---------------------------------------------------------------- 图 8：Dock 栏
+
+def shot_dock():
+    """Dock 栏：iOS 风格 Shelf + 悬停抬起 + 液态玻璃（反馈 5 / 9）。
+
+    两个真实 `DockWindow`：底部横向（7 个应用，第 4 个停在悬停放大态）
+    + 左侧竖向（4 个应用）——位置四向可调用"左右各一个"演示，比空口说
+    四向更直观。液态玻璃默认开着（v14 反馈 9），色散/透镜边直接入镜。
+    """
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QPainter
+    from PySide6.QtWidgets import QWidget
+
+    from src import dock as dockmod
+
+    st = _storage(dock_enabled=True, dock_position="bottom",
+                  dock_items=demo_apps.entries(demo_apps.DESKTOP[:7]))
+
+    d = dockmod.DockWindow(st)
+    d.setAttribute(Qt.WA_DontShowOnScreen, True)
+    d.resize(400, 82)
+    d._hover_index = 3               # 第 4 个图标：停在"被悬停"的稳态
+    d._set_hover_t(1.0)
+    QApplication.processEvents()
+
+    # 竖向小 Dock（左侧）：同一份代码换个位置就是另一根条带
+    st_v = _storage(dock_enabled=True, dock_position="left",
+                    dock_items=demo_apps.entries(demo_apps.DESKTOP[:4]))
+    dv = dockmod.DockWindow(st_v)
+    dv.setAttribute(Qt.WA_DontShowOnScreen, True)
+    dv.resize(82, 4 * 44 + 3 * 12 + 20)
+    QApplication.processEvents()
+
+    img = _blank()
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    _label(p, "Dock 栏：手机底部的那一排常用应用", 52, 36, 27, "#F4F7FD", True)
+    _label(p, "iOS 风格 Shelf——竖向渐变背板 + 顶部一道高光，悬停弹簧抬起、"
+              "邻居让位；液态玻璃的光学层默认叠在上面", 52, 78, 14, "#9DAABF",
+           w=1240)
+
+    # 底部横向主 Dock（壁纸上居中偏下；与右侧要点列表错开，不叠字）
+    dx, dy = (W - 400) // 2, 430
+    d.render(p, QPoint(dx, dy), d.rect(), QWidget.DrawChildren)
+    # 悬停标注：箭头 + 文案指向被放大的那个图标（第 4 个的中心 x）
+    hx = dx + 10 + 3 * (44 + 12) + 22
+    _label(p, "悬停抬起 · 邻居让位", hx - 110, dy + 100, 14, "#D7DEEA",
+           w=240, shadow=True)
+
+    # 左侧竖向小 Dock
+    vx, vy = 96, 200
+    dv.render(p, QPoint(vx, vy), dv.rect(), QWidget.DrawChildren)
+    _label(p, "同一根条带，四向摆放", vx - 26, vy + 4 * 44 + 3 * 12 + 34, 13,
+           "#CBD5E6", w=220, shadow=True)
+
+    # 右侧：这个栏能做什么（按"用户会怎么用它"组织，不按代码结构）
+    tips = ["· 把应用 / 快捷方式拖进条带 = 追加到末尾",
+            "· 按住拖动 = 排序；拖出条带 = 移除",
+            "· hover 弹簧放大（倍数可调），落点有高亮反馈",
+            "· 设置 ▸ Dock 栏：大小 / 间隔 / 内边距 / 圆角 /",
+            "   边框 / 不透明度 / 悬停倍数 / 指示点全可调",
+            "· 屏幕位置四向 + 居中开关，偏移可微调",
+            "· 开启后网格自动让出条带并重算行列（不重叠）",
+            "· 液态玻璃 / 渐变 Shelf 可在设置里分别开关"]
+    ty = 170
+    for line in tips:
+        _label(p, line, 780, ty, 14, "#B9C4D6", w=620)
+        ty += 34
+
+    p.end()
+    _save(img, "08-dock.png")
+    d.close()
+    dv.close()
+
+
 # ---------------------------------------------------------------- 主流程
 
 SHOTS = [
@@ -946,6 +1022,7 @@ SHOTS = [
     ("05", "05-settings.png", "设置▸布局与网格", lambda: shot_settings_layout()),
     ("06", "06-mobile.png", "手机模式", lambda: shot_mobile()),
     ("07", "07-folder.png", "安卓式文件夹", lambda: shot_folder()),
+    ("08", "08-dock.png", "Dock 栏", lambda: shot_dock()),
 ]
 
 

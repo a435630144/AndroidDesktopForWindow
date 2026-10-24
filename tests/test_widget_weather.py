@@ -14,6 +14,13 @@
   X10 温度格式化：四舍五入 + 负号（23.4 -> 23°、-3.2 -> -3°）
   X11 draw 三态（live / cached / empty）都不抛且非空
   X12 宽版（4×2）出现未来三天列
+  W1  2×2 布局 = square：只有当前天气，没有三天列（v14 反馈 7）
+  W2  4×2 布局 = wide：三天列齐全且在界内、互不重叠
+  W3  4×2 左块比 2×2 多「湿度 / 风力」两个指标槽（拓展不是缩放）
+  W4  4×2 每日列有温程条槽（tmin→tmax 的可视化）
+  W5  温程条按全局 [最低温, 最高温] 归一切分（跨天可比较）
+  W6  draw 4×2 比 2×2 画得更满（左右两半都有内容）
+  W7  layout 仍返回旧键 wide/daily_cols（向后兼容，其他调用方不炸）
   X13 刷新不阻塞主线程（mock 0.4s 网络，refresh 立即返回）
   X14 注册表：spans (2,2)/(4,2)、分类信息、单实例、默认锚定；组件是 GlassWidget
 
@@ -179,6 +186,83 @@ def main(app):
     check("X12b layout 宽版含 daily 列",
           len(ww.layout(QRectF(0, 0, 480, 284), m)["daily_cols"]) == 3,
           str(len(ww.layout(QRectF(0, 0, 480, 284), m)["daily_cols"])))
+
+    # ---------- W1-W7：分尺寸差异化布局（v14 反馈 7） ----------
+    # 诉求原话："同一个小组件，内置预设好的不同尺寸，会根据不同的尺寸使用
+    # 不同的 UI 布局，而不是同样的内容进行缩放。天气的 2×2 和 4×2，4×2 并不
+    # 是缩放了 2×2，而是对 2×2 进行了拓展，加入了新的内容和样式。"
+    SQ = ww.layout(QRectF(0, 0, 300, 300), m)
+    WD = ww.layout(QRectF(0, 0, 620, 300), m)
+    check("W1 2×2 = square（只有当前天气）",
+          SQ["mode"] == "square" and not SQ["daily_cols"], str(SQ["mode"]))
+    check("W2 4×2 = wide（三天列齐全）",
+          WD["mode"] == "wide" and len(WD["daily_cols"]) == 3, str(WD["mode"]))
+    in_rect = all(c.left() >= -0.5 and c.top() >= -0.5
+                  and c.right() <= 620.5 and c.bottom() <= 300.5
+                  for c in WD["daily_cols"])
+    check("W2b 三天列都在 4×2 界内", in_rect)
+    no_cross = not any(WD["daily_cols"][i].intersects(WD["daily_cols"][j])
+                       for i in range(3) for j in range(i + 1, 3))
+    check("W2c 三天列互不重叠", no_cross)
+    # 4×2 左块（当前天气）不得与三天列重叠——"拓展"是分区，不是互相压
+    left_clear = not WD["current"].intersects(WD["daily_cols"][0])
+    check("W2d 左块与三天列分区不重叠", left_clear)
+    chips = WD.get("detail_chips") or []
+    check("W3 4×2 左块含湿度/风力两个指标槽（2×2 没有）",
+          len(chips) == 2 and not SQ.get("detail_chips"), str(len(chips)))
+    if len(chips) == 2:
+        inside = all(WD["current"].contains(c) for c in chips)
+        check("W3b 指标槽都在左块内", inside)
+        check("W3c 两个指标槽不重叠", not chips[0].intersects(chips[1]))
+    bars = [c.get("bar") for c in WD["cols"]]
+    check("W4 每日列有温程条槽",
+          all(b is not None and b.width() > 4 and b.height() > 2 for b in bars),
+          str(bars))
+    fr = [c.get("fill") for c in WD["cols"]]
+    # PAYLOAD 三天：明天(22/14) 后天(24.5/13.8) 第3天(27/16.2)
+    # 全局最低 13.8 在后天、最高 27.0 在第 3 天 -> 那两端应顶到 0 / 1
+    check("W5 温程条按全局温程归一切分",
+          all(f is not None and 0.0 <= f[0] < f[1] <= 1.0 for f in fr)
+          and abs(fr[1][0] - 0.0) < 1e-9 and abs(fr[2][1] - 1.0) < 1e-9,
+          str(fr))
+    check("W7 旧键仍返回（wide/daily_cols 向后兼容）",
+          WD["wide"] is True and len(WD["daily_cols"]) == 3
+          and SQ["wide"] is False and SQ["daily_cols"] == [])
+    # W6：4×2 左右两半都要有内容（旧版右半只有三天列、左半是 2×2 的缩小版）
+    imgw2 = canvas(620, 300)
+    p2 = QPainter(imgw2)
+    p2.setRenderHint(QPainter.Antialiasing)
+    ww.draw(p2, QRectF(0, 0, 620, 300), m, "live")
+    p2.end()
+
+    def _half_alpha(img, x0, x1):
+        return sum(1 for y in range(0, img.height(), 2)
+                   for x in range(x0, min(x1, img.width()), 2)
+                   if img.pixelColor(x, y).alpha() > 8)
+
+    lh_, rh_ = _half_alpha(imgw2, 0, 300), _half_alpha(imgw2, 320, 620)
+    check("W6 4×2 左右两半都有内容", lh_ > 200 and rh_ > 200,
+          "left=%d right=%d" % (lh_, rh_))
+    imgsq = canvas(300, 300)
+    ps = QPainter(imgsq)
+    ps.setRenderHint(QPainter.Antialiasing)
+    ww.draw(ps, QRectF(0, 0, 300, 300), m, "live")
+    ps.end()
+    check("W6b 2×2 不抛且非空", alpha_nonempty(imgsq) > 150,
+          str(alpha_nonempty(imgsq)))
+    # W7b：空态 / 极小矩形两个尺寸都不抛
+    for nm, r in (("empty-wide", QRectF(0, 0, 620, 300)),
+                  ("tiny-square", QRectF(0, 0, 60, 60))):
+        okk = True
+        try:
+            imgx = canvas(int(r.width()), int(r.height()))
+            px = QPainter(imgx)
+            ww.draw(px, r, None, "empty")
+            px.end()
+        except Exception as exc:      # noqa: BLE001
+            okk = False
+            print("   draw(%s) 抛异常: %r" % (nm, exc))
+        check("W7b %s 不抛" % nm, okk)
 
     # ---------- X13：不阻塞主线程 ----------
     if STATE.exists():

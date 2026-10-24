@@ -75,7 +75,7 @@ def main(app):
     # ---------- G1 夹紧 ----------
     check("G1 默认值 = 模块常量",
           dock.gap_px(st) == dock.DOCK_GAP and dock.pad_px(st) == dock.DOCK_PAD
-          and dock.hover_pct(st) == 122,
+          and dock.hover_pct(st) == dock.DEFAULT_HOVER_PCT,
           "%s %s %s" % (dock.gap_px(st), dock.pad_px(st), dock.hover_pct(st)))
     st.set_setting("dock_gap", 999)
     st.set_setting("dock_pad", -5)
@@ -88,7 +88,7 @@ def main(app):
     st.set_setting("dock_hover_pct", "x")
     check("G1c 脏值回默认",
           (dock.gap_px(st), dock.pad_px(st), dock.hover_pct(st))
-          == (dock.DOCK_GAP, dock.DOCK_PAD, 122),
+          == (dock.DOCK_GAP, dock.DOCK_PAD, dock.DEFAULT_HOVER_PCT),
           "%s" % ((dock.gap_px(st), dock.pad_px(st), dock.hover_pct(st)),))
 
     # ---------- G2 / G3 metrics ----------
@@ -111,7 +111,8 @@ def main(app):
     m2 = dock.metrics_for(st, 4)
     check("G3 metrics_for 读 storage（间隔 0 / 内边距 4 / 不放大）",
           m2.gap == 0 and m2.pad == 4 and abs(m2.hover - 1.0) < 1e-9, str(m2))
-    check("G4 内边距变小 + 无放大 -> 厚度 = 8 + 32", m2.thickness == 8 + 32,
+    check("G4 内边距变小 + 无放大 -> 厚度 = 8 + 默认图标",
+          m2.thickness == 8 + dock.DOCK_ICON,
           str(m2.thickness))
 
     # ---------- G5 绘制使用 metrics.hover ----------

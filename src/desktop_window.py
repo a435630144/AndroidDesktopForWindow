@@ -16,6 +16,7 @@ from . import effects
 from . import grid_flow
 from . import i18n
 from . import interaction
+from . import label_style
 from . import page_rules
 from . import theme
 from . import win32_layer
@@ -170,6 +171,12 @@ class DesktopWindow(QWidget):
         # 桌面目录监听（v6 §7.4）：由 set_auto_sync 按设置启停，不在构造时启动
         # （测试 / 探针直接构造窗口，不该被动起文件监听）
         self._watcher = None
+        # 低层键盘钩子（v11 反馈 31 / v14 反馈 2）：setup_desktop_hotkeys 时创建
+        self._hotkeys = None
+        # v14 反馈 11：纯净模式（双击空白处只留壁纸）。会话内有效
+        self._zen = False
+        self._zen_hidden = []
+        self._zen_dock_was = True
         # 载入时规整一次，避免越界 / 重叠
         self.storage.compact_layout()
         self.rebuild(stagger=True)  # 首次显示错峰淡入
@@ -463,7 +470,8 @@ class DesktopWindow(QWidget):
                     # force_grid：取点/重置后那一下"闪网格"与开发者开关无关，
                     # 它是一次性反馈（v11：分项开关不能把这条反馈也关掉）
                     self._paint_grid_debug(force_grid=self._grid_flash)
-                self._paint_dots()
+                if not self._zen:
+                    self._paint_dots()
             if hl:
                 self._paint_highlight(event)   # v6 §5.2：目标格红框置顶
             if self._picking_origin:
@@ -480,12 +488,13 @@ class DesktopWindow(QWidget):
         p.setPen(theme.TEXT)
         p.setFont(theme.ui_font(13))
         p.drawText(24, 30, "桌面整理 Demo · 悬浮模式（未能挂载桌面层，功能不受影响）")
-        if self._organize_mode() and not self._widgets_only():
+        if         self._organize_mode() and not self._widgets_only():
             # 悬浮兜底同样认"取点闪网格"：挂载失败时用户也会从设置里取点，
             # 那一下必须看得见网格（与附着分支同一判据）。
             if self._dev_mode() or self._grid_flash:
                 self._paint_grid_debug(force_grid=self._grid_flash)
-            self._paint_dots()
+            if not self._zen:
+                self._paint_dots()
         if hl:
             self._paint_highlight(event)
 
@@ -512,11 +521,14 @@ class DesktopWindow(QWidget):
         p.drawText(r, Qt.AlignCenter, text)
 
     def _paint_highlight(self, event):
-        """v6 §5.2：目标格红框（2px 描边 + 8% 红填充，圆角与网格语言一致）。
+        """v6 §5.2：目标格预览框（2px 描边 + 8% 填充，圆角与网格语言一致）。
 
         2026-10-21 反馈 5：按 `_hl_span` 画**整块**占位矩形（组件 2×1 就
         框 2 格、3×4 就框 12 格）——单格红框会让用户以为只检测到一格，
         左侧格子"不碰撞"的观感正是这么来的。
+
+        v14 反馈 13：颜色 / 填充浓度 / 粗细 / 圆角全部进设置 ▸ 图标
+        （`label_style.preview_style()` 是唯一数据源，这里不再硬编码红）。
         """
         col, row = self._hl_cell
         cs, rs = self._hl_span
@@ -526,10 +538,14 @@ class DesktopWindow(QWidget):
         h = ch * rs + max(0, rs - 1) * 0
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(QPen(theme.DANGER, 2))
-        p.setBrush(QColor(theme.DANGER.red(), theme.DANGER.green(),
-                          theme.DANGER.blue(), 20))
-        p.drawRoundedRect(QRect(x + 1, y + 1, w - 2, h - 2), 8, 8)
+        pv = label_style.preview_style(self.storage)
+        edge = QColor(pv.color)
+        edge.setAlphaF(1.0)
+        fill = QColor(pv.color)
+        fill.setAlphaF(max(0.0, min(1.0, pv.fill_alpha)))
+        p.setPen(QPen(edge, pv.width))
+        p.setBrush(fill)
+        p.drawRoundedRect(QRect(x + 1, y + 1, w - 2, h - 2), pv.radius, pv.radius)
 
     def _paint_hit_fill(self):
         """全窗 alpha=2 命中填充（视觉不可见，使透明像素也可被系统命中测试选中）。"""
@@ -595,6 +611,53 @@ class DesktopWindow(QWidget):
                 self._band_start = e.pos()
                 self._band_rect = None
                 self._band_moved = False
+
+    def mouseDoubleClickEvent(self, e):
+        """v14 反馈 11：双击桌面空白处 = 纯净模式（只留壁纸）。
+
+        图标 / 组件 / Dock / 页点全部收起，再双击一次原样恢复。事件只会
+        在**空白区**到达本窗口（图标和组件是各自的子窗口，自己吃掉），
+        所以这里不需要再做命中判定。
+        """
+        if e.button() != Qt.LeftButton:
+            return
+        self.toggle_zen()
+
+    def toggle_zen(self, on: bool = None):
+        """纯净模式开关（会话内有效，不写盘——重启回到正常桌面）。"""
+        on = (not self._zen) if on is None else bool(on)
+        if on == self._zen:
+            return
+        self._zen = on
+        if on:
+            self._zen_hidden = [ic for ic in self.icons.values() if ic.isVisible()]
+            for ic in self.icons.values():
+                ic.hide()
+            dock = getattr(self, "_dock", None)
+            if dock is not None:
+                dock.hide()
+                self._zen_dock_was = dock.isVisible()
+            layer = getattr(self, "_widget_layer", None)
+            if layer is not None:
+                layer.set_visible(False)
+        else:
+            for ic in getattr(self, "_zen_hidden", []):
+                try:
+                    ic.show()
+                except RuntimeError:      # noqa: BLE001 —— 已销毁的图标
+                    pass
+            dock = getattr(self, "_dock", None)
+            if dock is not None and getattr(self, "_zen_dock_was", True):
+                dock.show()
+            layer = getattr(self, "_widget_layer", None)
+            if layer is not None:
+                layer.set_visible(True)
+            self._cull_page_icons()
+        self.update()
+        from .tray import notify_via_tray
+        notify_via_tray(
+            "纯净模式" if on else "已退出纯净模式",
+            "桌面已清空，只留壁纸；双击空白处恢复" if on else "图标、组件与 Dock 已恢复")
 
     def mouseMoveEvent(self, e):
         if self._swipe_start is not None:
@@ -1156,6 +1219,62 @@ class DesktopWindow(QWidget):
             d.update()
         except (RuntimeError, AttributeError):
             self._dock = None
+
+    # ---------- 图标文字样式（v14 反馈 3） ----------
+    def _label_style(self):
+        """当前标签样式（唯一入口：rebuild / _add_icon / 设置热更新都读它）。"""
+        return label_style.label_style(self.storage)
+
+    def apply_label_style(self):
+        """设置里改完文字样式：把新样式推进每个图标并重绘（不重建部件）。
+
+        不走 `rebuild()`：那会删掉重建全部图标 QWidget，选中态 / 飞行中的
+        拖拽 / 淡入动画全部作废（v10 反馈 27 同款事故）。标签样式只影响
+        `_paint_label`，换对象 + update() 就够了。
+        """
+        st = self._label_style()
+        for icon in list(self.icons.values()):
+            try:
+                icon.set_label_style(st)
+            except (RuntimeError, AttributeError):
+                pass     # 已销毁的图标（rebuild 进行中）直接跳过
+        # 文件夹弹窗里的成员标签同样消费这份样式——弹窗是懒重建的，
+        # 下一次 open 自然拿到新值；已开着的弹窗由它自己的 update 兜底。
+        popup = getattr(self, "_popup", None)
+        if popup is not None:
+            try:
+                popup.apply_label_style(st)
+            except (RuntimeError, AttributeError):
+                pass     # 弹窗已销毁（关闭动画中）直接跳过
+        self.update()
+
+    def apply_liquid_style(self):
+        """液态玻璃设置变更：推进三个表面各重绘一帧（v14 反馈 9）。
+
+        不走 rebuild / refresh_band：外观叠加层不改变任何几何，update()
+        就够了——与 `apply_dock_style()` 同一条纪律（v10 反馈 27 的教训：
+        每个 valueChanged 都重建会把主线程拖死）。
+        """
+        d = self._dock
+        if d is not None:
+            try:
+                d.update()
+            except (RuntimeError, AttributeError):
+                self._dock = None
+        layer = getattr(self, "_widget_layer", None)
+        if layer is not None:
+            for w in list(getattr(layer, "widgets", {}).values()):
+                try:
+                    w.update()
+                except (RuntimeError, AttributeError):
+                    pass     # 已销毁的组件直接跳过
+        popup = getattr(self, "_popup", None)
+        if popup is not None:
+            try:
+                popup.update()
+            except (RuntimeError, AttributeError):
+                pass         # 弹窗已销毁（关闭动画中）直接跳过
+        self.update()
 
     def apply_dock_metrics(self, reflow_grid: bool = True):
         """Dock **尺寸**变化（图标间隔 / 内边距 / 悬停倍数）：重排条带。
@@ -1741,7 +1860,8 @@ class DesktopWindow(QWidget):
                 # v6 A2：三档 × 当前 cell；反馈 12 再乘该条目的 icon_scale
                 layout = self._icon_layout(entry)
                 icon = AppIcon(entry, size, parent=self, chrome_scale=chrome,
-                               layout=layout)
+                               layout=layout,
+                               label_style=self._label_style())
                 self._wire_icon(icon)
                 icon.set_selected(entry["id"] in self._selected)
                 icon.set_selection_visible(self._selection_mode)
@@ -1800,7 +1920,8 @@ class DesktopWindow(QWidget):
         chrome = self.storage.ui_scale()
         layout = self._icon_layout(entry)          # v6 A2 + 反馈 12 单图标倍数
         icon = AppIcon(entry, size, parent=self, chrome_scale=chrome,
-                       layout=layout)
+                       layout=layout,
+                       label_style=self._label_style())
         self._wire_icon(icon)
         icon.set_selected(entry["id"] in self._selected)
         icon.set_selection_visible(self._selection_mode)
@@ -2860,7 +2981,9 @@ class DesktopWindow(QWidget):
             appsource.launch(app)
 
     def _on_open_location(self, app):
-        target = app.get("target", "")
+        # 反馈 6：定位规则——普通文件指它自己、快捷方式指**原文件**、
+        # 桌面文件指桌面文件夹；壳层入口（ms-settings: 等）没有文件位置。
+        target = appsource.reveal_path_for(app)
         if target:
             appsource.reveal_in_explorer(target)
 
@@ -3632,6 +3755,43 @@ class DesktopWindow(QWidget):
             return False
 
     # ---------- v11 反馈 31：桌面 Ctrl+C / Ctrl+V ----------
+    def setup_desktop_hotkeys(self):
+        """装低层键盘钩子（设置 `desktop_hotkeys` 关着就不装）。
+
+        v14 反馈 2：钩子挪到窗口自己身上——设置里改开关要能立刻生效
+        （`set_desktop_hotkeys`），关窗也必须撤钩（`closeEvent`）。
+        """
+        from .desktop_hotkeys import DesktopHotkeys
+        if self._hotkeys is not None:
+            return
+        if not bool(self.storage.get_setting("desktop_hotkeys")):
+            return
+        dock = getattr(self, "_dock", None)
+        own = [int(self.winId())]
+        if dock is not None:
+            try:
+                own.append(int(dock.winId()))
+            except Exception:      # noqa: BLE001
+                pass
+        self._hotkeys = DesktopHotkeys(
+            on_copy=self.copy_selection,
+            on_paste=self.paste_from_clipboard,
+            own_hwnds=lambda: own,
+            can_copy=self.has_selection,
+            can_paste=self.clipboard_has_files,
+        )
+        self._hotkeys.install()
+
+    def set_desktop_hotkeys(self, on: bool):
+        """开 / 关桌面快捷键（设置页即时生效）。"""
+        on = bool(on)
+        if on:
+            self.setup_desktop_hotkeys()
+            return
+        if self._hotkeys is not None:
+            self._hotkeys.uninstall()
+            self._hotkeys = None
+
     def has_selection(self) -> bool:
         """是否有选中项（快捷键判据：没东西可复制就别吞键）。"""
         return bool(self._selected)
@@ -3891,6 +4051,9 @@ class DesktopWindow(QWidget):
 
     def closeEvent(self, e):
         self._band_guard.untrack(self)
+        # 低层键盘钩子必须跟着窗口一起撤：它是**进程级全局钩子**，窗口没了
+        # 还挂着会让每次按键都 round-trip 进一个没有 UI 的进程。
+        self.set_desktop_hotkeys(False)
         # 关窗必须收干净自己的计时器：边缘翻页 / 推让都是"还会改全局页号
         # 与布局"的异步动作，窗口已经退场还让它跑，会把另一个窗口的页翻掉
         # （tests/test_edge_flip.py F7 的落点列随机漂移就是这么来的）。

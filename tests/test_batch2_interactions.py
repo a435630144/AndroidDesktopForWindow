@@ -1,0 +1,199 @@
+# -*- coding: utf-8 -*-
+"""v14 反馈 1/4/8/11：文件夹悬停展开 · 默认第二页 · 添加表单密度 · 纯净模式。
+
+契约：
+  H1  文件夹图标悬停驻留 -> 展开（`_hover_expand_ok` 全放行时）
+  H2  非文件夹 / 文件夹内部成员 / 拖动中 / 已按下 / 多选态 -> 不展开
+  H3  该文件夹已开着 -> 不触（否则悬停一下反而把它关了）
+  H4  设置 `folder_hover_expand=False` -> 不展开
+  P1  首次启动补一页空白页（`ensure_second_page`），页点因此会出现
+  P2  已有 2 页以上不补；用户删掉空白页后不再补（一次性标记）
+  Z1  双击空白处 -> 纯净模式：图标/Dock/组件全隐，再双击恢复
+  Z2  纯净模式不写盘（重启回到正常桌面）
+  F1  添加应用表单：单行 4 列、格子更宽、名字两行
+
+跑法：python tests/test_batch2_interactions.py     （offscreen）
+"""
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ROOT = Path(__file__).resolve().parent.parent
+
+from PySide6.QtCore import Qt                    # noqa: E402
+from PySide6.QtWidgets import QApplication      # noqa: E402
+from src import grid_flow                        # noqa: E402
+from src import folder_forms                     # noqa: E402
+from src.desktop_window import DesktopWindow     # noqa: E402
+from src.iconwidget import AppIcon               # noqa: E402
+from src.storage import Storage                  # noqa: E402
+
+failures = []
+
+
+def check(name, cond, extra=""):
+    print("[%s] %s %s" % ("PASS" if cond else "FAIL", name, extra))
+    if not cond:
+        failures.append(name)
+
+
+def _folder_entry(eid="f1"):
+    return {"id": eid, "type": "folder", "name": "文件夹", "col": 0, "row": 0,
+            "apps": [{"id": "a1", "name": "A", "target": "C:\\a", "kind": "app"}]}
+
+
+def _app_entry(eid="i1"):
+    return {"id": eid, "type": "app", "col": 1, "row": 0,
+            "app": {"id": "x", "name": "X", "target": "C:\\x", "kind": "file"}}
+
+
+class _FakeWin:
+    """最小宿主：只有 `_hover_expand_ok` 会碰的几个属性。"""
+
+    def __init__(self, storage, popup_entry_id=None, selection=False):
+        self.storage = storage
+        self._popup = None if popup_entry_id is None else _FakePopup(popup_entry_id)
+        self._selection_mode = selection
+
+
+class _FakePopup:
+    def __init__(self, entry_id):
+        self.entry = {"id": entry_id}
+
+
+class _FakePress:
+    """最小鼠标事件（只有 mousePressEvent 会碰的三个方法）。"""
+
+    def __init__(self, button, pos):
+        self._b, self._p = button, pos
+
+    def button(self):
+        return self._b
+
+    def pos(self):
+        return self._p
+
+    def globalPos(self):
+        return self._p
+
+
+def main(app):
+    tmp = Path(tempfile.mkdtemp(prefix="test_batch2_"))
+    st = Storage(path=str(tmp / "state.json"))
+    st.save()
+
+    # ---------- H：悬停展开 ----------
+    folder_icon = AppIcon(_folder_entry(), 48)
+    app_icon = AppIcon(_app_entry(), 48)
+    member_icon = AppIcon(_folder_entry("f2"), 48, in_folder=True)
+
+    folder_icon.window = lambda: _FakeWin(st)          # type: ignore[assignment]
+    check("H1a 文件夹悬停放行", folder_icon._hover_expand_ok() is True)
+    check("H1b 普通应用不展开", app_icon._hover_expand_ok() is False)
+    app_icon.window = lambda: _FakeWin(st)             # type: ignore[assignment]
+    check("H1c 普通应用（有宿主）仍不展开", app_icon._hover_expand_ok() is False)
+    member_icon.window = lambda: _FakeWin(st)          # type: ignore[assignment]
+    check("H1d 文件夹内部成员不展开", member_icon._hover_expand_ok() is False)
+
+    folder_icon._press_pos = folder_icon.pos()          # 按下中
+    check("H2a 按下中不展开", folder_icon._hover_expand_ok() is False)
+    folder_icon._press_pos = None
+    folder_icon._drag_loop = True
+    check("H2b 拖动中不展开", folder_icon._hover_expand_ok() is False)
+    folder_icon._drag_loop = False
+
+    folder_icon.window = lambda: _FakeWin(st, selection=True)   # type: ignore[assignment]
+    check("H2c 多选态不展开", folder_icon._hover_expand_ok() is False)
+    folder_icon.window = lambda: _FakeWin(st, popup_entry_id="f1")  # type: ignore[assignment]
+    check("H3 已开着的文件夹不触（否则悬停反而关掉）",
+          folder_icon._hover_expand_ok() is False)
+    folder_icon.window = lambda: _FakeWin(st, popup_entry_id="other")  # type: ignore[assignment]
+    check("H3b 别的小组件开着不影响本文件夹", folder_icon._hover_expand_ok() is True)
+
+    st.set_setting("folder_hover_expand", False)
+    folder_icon.window = lambda: _FakeWin(st)          # type: ignore[assignment]
+    check("H4 设置关掉后不展开", folder_icon._hover_expand_ok() is False)
+    st.set_setting("folder_hover_expand", True)
+    check("H4b 设置打开后恢复", folder_icon._hover_expand_ok() is True)
+
+    # 驻留计时器：到点才展开，离开即撤
+    fired = []
+    folder_icon._open_folder = lambda: fired.append(1)     # type: ignore[assignment]
+    folder_icon.enterEvent(None)
+    check("H5 enter 即起表", folder_icon._hover_open.isActive())
+    folder_icon.leaveEvent(None)
+    check("H5b leave 撤表", not folder_icon._hover_open.isActive())
+    folder_icon.enterEvent(None)
+    folder_icon.mousePressEvent(_FakePress(Qt.LeftButton, folder_icon.pos()))
+    check("H5c 按下撤表", not folder_icon._hover_open.isActive())
+
+    # ---------- P：默认第二页 ----------
+    st2 = Storage(path=str(tmp / "s2.json"))
+    st2.save()
+    check("P1a 初始只有一页", grid_flow.page_count(st2) == 1,
+          str(grid_flow.page_count(st2)))
+    st2.ensure_desktop_clone()
+    check("P1b 补页后有两页", grid_flow.page_count(st2) == 2,
+          str(grid_flow.page_count(st2)))
+    check("P1c 第二页是空白页", grid_flow.extra_pages(st2) == [1],
+          str(grid_flow.extra_pages(st2)))
+    st2.ensure_desktop_clone()
+    check("P2a 幂等（不反复补）", grid_flow.extra_pages(st2) == [1])
+    st2.set_setting("extra_pages", [])
+    st2.ensure_desktop_clone()
+    check("P2b 用户删掉空白页后不再补", grid_flow.extra_pages(st2) == [],
+          str(grid_flow.extra_pages(st2)))
+
+    # ---------- Z：纯净模式 ----------
+    st3 = Storage(path=str(tmp / "s3.json"))
+    st3.ensure_desktop_clone()
+    win = DesktopWindow(st3)
+    n_icons = len(win.icons)
+    check("Z0 桌面有图标", n_icons > 0, str(n_icons))
+    win.toggle_zen()
+    check("Z1a 纯净模式开：图标全隐",
+          all(i.isHidden() for i in win.icons.values()))
+    check("Z1b 纯净模式开：Dock 隐",
+          getattr(win, "_dock", None) is None or win._dock.isHidden())
+    check("Z1c 纯净模式不写盘",
+          "zen" not in json_dump(st3.path), "")
+    win.toggle_zen()
+    check("Z2a 再触发恢复：图标全显",
+          not any(i.isHidden() for i in win.icons.values()))
+    check("Z2b 恢复后仍在第 0 页且页点可画",
+          win._zen is False and len(win._dot_centers()) >= 2)
+
+    # ---------- F：添加表单密度 ----------
+    form = folder_forms.AddAppsForm(st3, [])
+    check("F1 单行 4 列（不再 5 列硬挤）", form.COLS == 4, str(form.COLS))
+    _icon, cw, _ch = form._cell()
+    check("F2 格子更宽（>=60）", cw >= 60, str(cw))
+    from PySide6.QtGui import QFontMetrics
+    fm = QFontMetrics(app.font())
+    lines = folder_forms._wrap_lines("这是一个很长的中文应用名称需要折行", fm, 58, 2)
+    check("F3 名字两行", len(lines) == 2, str(lines))
+    check("F4 末行省略（内容放不下时）",
+          folder_forms._wrap_lines(
+              "超级无敌长的中文应用名称一二三四五六七八九十十一十二十三十四十五十六十七",
+              fm, 58, 2)[-1].endswith("…"))
+
+
+def json_dump(path):
+    import json
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read()
+        return "zen" if "\"zen" in raw else ""
+    except Exception:      # noqa: BLE001
+        return ""
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    main(app)
+    print("----")
+    print("failures=%d" % len(failures))
+    sys.exit(1 if failures else 0)

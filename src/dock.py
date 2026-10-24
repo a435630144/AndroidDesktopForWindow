@@ -36,10 +36,11 @@ from typing import NamedTuple
 
 from PySide6.QtCore import (QEasingCurve, QPoint, QPointF, QPropertyAnimation, QRect,
                             QRectF, Qt, QTimer, Property, Signal)
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtGui import (QBrush, QColor, QLinearGradient, QPainter,
+                           QPainterPath, QPen)
 from PySide6.QtWidgets import QWidget
 
-from . import appsource, effects, theme, win32_layer
+from . import appsource, effects, liquid_glass, theme, win32_layer
 from .iconwidget import MIME_TYPE
 
 # ---------------------------------------------------------------- 常量
@@ -57,16 +58,22 @@ RADIUS_LABELS = (("round", "圆角"), ("pill", "胶囊"), ("square", "直角"))
 # 2026-10-23 反馈 2（v10 A9）：默认样式整体缩小一档——40px 图标 + 5 槽位
 # 的条带在小屏上像"另一条任务栏"，用户原话"默认样式不要加入这么大的"。
 # 现在 32px / 4 槽位（空态长度 ~152px），并且这三项都进了设置 ▸ Dock 栏。
-DOCK_ICON = 32          # 图标基准边长（逻辑 px，100% 缩放；设置可改 24~56）
+#
+# v14 反馈 5：默认样式整体改成 **iOS Dock** 观感——图标更大（44）、间距更松
+# （12）、内边距更厚（10）、圆角更圆（20）、背景更透（0.62，壁纸能透出来），
+# hover 放大也更接近 iOS 的 1.4。这些都是**默认值**：老用户 state 里已落盘的
+# 旧值不被动（见 storage._migrate 的注释），新装/重置的用户拿到新观感。
+DOCK_ICON = 44          # 图标基准边长（逻辑 px，100% 缩放；设置可改 24~56）
 DOCK_ICON_MIN, DOCK_ICON_MAX = 24, 56
 # v11（反馈 29）：间距 / 内边距 / 悬停放大全部进设置——"Dock 大小"由
 # 图标 + 内边距 + 悬停倍数三者共同决定，只留一个滑块等于把三种诉求
 # 压成一条线（用户：想要"更紧凑但图标别变小"就做不到）。
-DOCK_GAP = 6            # 图标间距（图标 PNG 自带透明边，视觉间隙约 2 倍）
+DOCK_GAP = 12           # 图标间距（图标 PNG 自带透明边，视觉间隙约 2 倍）
 DOCK_GAP_MIN, DOCK_GAP_MAX = 0, 24
-DOCK_PAD = 6            # 条带内边距（hover 图标与条带边留出呼吸）
+DOCK_PAD = 10           # 条带内边距（hover 图标与条带边留出呼吸）
 DOCK_PAD_MIN, DOCK_PAD_MAX = 2, 20
-DOCK_HOVER = 1.22       # hover 放大倍数（1.0 = 不放大；设置里可整项关闭）
+DOCK_HOVER = 1.40       # hover 放大倍数（1.0 = 不放大；设置里可整项关闭）
+DEFAULT_HOVER_PCT = 140  # 设置项 dock_hover_pct 的缺省值（与 DOCK_HOVER 同源）
 DOCK_HOVER_MIN, DOCK_HOVER_MAX = 100, 150   # 设置值域（百分比，100 = 不放大）
 MIN_SLOTS = 4           # 空态/少量条目时按 4 个槽位撑住长度（条形不会缩成一点）
 DOCK_MAX_ITEMS = 24     # 上限（再多滚不动，靠拖出/排序管理；
@@ -83,10 +90,14 @@ DRAG_OUT_PX = 36        # 拖出多远算"移出 Dock"（松手即移除）
 # 厚的条带上半径 25.5，视觉上像"药丸"；12px 是 macOS Dock 的量级，条带
 # 仍然是圆角矩形但不再抢眼。**老 state 由 schema 3 迁移一起改**（见
 # `storage._migrate`），否则用户本地已落盘的 "pill" 会让这次改动看不见。
+#
+# v14 反馈 5：iOS Dock 的圆角更接近"厚度的 22%"——44px 图标的条带厚约
+# 64px，20px 圆角正是这个比例；背景透明度 0.62（iOS 的毛玻璃 Shelf 是
+# 能透出壁纸的，0.86 的实色块看着像旧版任务栏）。
 RADIUS_MODES = ("round", "pill", "square")
 DEFAULT_RADIUS_MODE = "round"
-DEFAULT_ALPHA = 0.86
-DEFAULT_RADIUS = 12
+DEFAULT_ALPHA = 0.62
+DEFAULT_RADIUS = 20
 RADIUS_MIN, RADIUS_MAX = 0, 26
 
 
@@ -187,7 +198,7 @@ def pad_4(storage) -> tuple:
 
 def hover_pct(storage) -> int:
     """hover 放大倍数（百分比，100~150；100 = 不放大）。"""
-    return _clamped_int(storage, "dock_hover_pct", 122,
+    return _clamped_int(storage, "dock_hover_pct", DEFAULT_HOVER_PCT,
                         DOCK_HOVER_MIN, DOCK_HOVER_MAX)
 
 
@@ -806,7 +817,28 @@ class DockWindow(QWidget):
         # v10 A9：背景不透明度可调（0.30~1.0）——桌面壁纸透出来多少由用户定
         bg = QColor(theme.SURFACE)
         bg.setAlphaF(bg_alpha(self.storage))
+        # v14 反馈 5：iOS 的 Shelf 不是一块实色，而是**上亮下暗的竖向渐变**
+        # + 顶部一道 specular 高光。实色块在 0.62 透明度下会显"脏"，渐变能
+        # 把透明度还原成"玻璃"的观感。
         p.fillPath(path, bg)
+        p.save()
+        p.setClipPath(path)
+        grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        top = QColor(255, 255, 255, 26)
+        bottom = QColor(0, 0, 0, 26)
+        grad.setColorAt(0.0, top)
+        grad.setColorAt(0.55, QColor(255, 255, 255, 6))
+        grad.setColorAt(1.0, bottom)
+        p.fillRect(rect, grad)
+        # 顶部 specular：两端渐隐（与组件玻璃 / 文件夹弹窗同一语言）
+        hi = QLinearGradient(rect.topLeft(), rect.topRight())
+        hi.setColorAt(0.0, QColor(255, 255, 255, 0))
+        hi.setColorAt(0.5, QColor(255, 255, 255, 46))
+        hi.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.setPen(QPen(QBrush(hi), 1.2))
+        p.drawLine(QPointF(rect.left() + radius * 0.6, rect.top() + 1.0),
+                   QPointF(rect.right() - radius * 0.6, rect.top() + 1.0))
+        p.restore()
         # 边框（v10 反馈 27）：粗细 0~4 + 颜色可调。路径按 粗细/2 内缩，
         # 否则粗边框有一半画到窗口外被裁掉，看起来比设置值细。
         bw = border_width(self.storage)
@@ -822,6 +854,13 @@ class DockWindow(QWidget):
             p.setBrush(Qt.NoBrush)
             p.drawPath(edge_path)
             p.setBrush(Qt.NoBrush)
+
+        # v14 反馈 9：液态玻璃光学叠加层——画在 Shelf 之上、图标之下，
+        # 色散/透镜边只镶边框一圈，不会盖住图标本体。
+        if liquid_glass.surface_enabled(self.storage, "dock"):
+            liquid_glass.paint_overlay(
+                p, rect, radius, liquid_glass.liquid_style(self.storage),
+                phase=liquid_glass.shimmer_phase(), widget=self)
 
         if not self._items:
             self._paint_empty_hint(p, rect)
@@ -844,7 +883,7 @@ class DockWindow(QWidget):
     def _shape_radius(self, rect) -> float:
         """条带圆角（设置 ▸ Dock 栏 ▸ 圆角形态 + 圆角大小）。
 
-        `round` 用 `dock_radius`（默认 12），并夹到厚度的一半——否则半径超过
+        `round` 用 `dock_radius`（默认 20），并夹到厚度的一半——否则半径超过
         半厚时 Qt 会自己截断，看起来与"胶囊"无异，滑块后半段等于白拖。
         """
         mode = normalize_radius_mode(
@@ -891,8 +930,12 @@ class DockWindow(QWidget):
         lx = x - self._bar[0]
         ly = y - self._bar[1]
         grow = 0.0
+        lift = 0.0
         if i == self._hover_index:
             grow = m.icon * (m.hover - 1.0) * self._hover_t
+            # v14 反馈 5：iOS 的放大是"抬起"——图标往上飘出 Shelf 一点，
+            # 不是原地胀大。抬升量取放大增量的一半（视觉上仍以放大为主）。
+            lift = grow * 0.5
         # 尺寸量化到 2px 步进：hover 动画每帧都会变，不量化会让
         # `appsource.icon_pixmap` 的 size 缓存键爆炸（每帧新建 pixmap）
         size = max(16, int(round((m.icon + grow) / 2.0)) * 2)
@@ -900,9 +943,9 @@ class DockWindow(QWidget):
         horizontal = self._position in ("bottom", "top")
         if horizontal:
             cx = lx + m.icon // 2 + shift
-            cy = ly + m.icon // 2
+            cy = ly + m.icon // 2 - lift
         else:
-            cx = lx + m.icon // 2
+            cx = lx + m.icon // 2 - lift
             cy = ly + m.icon // 2 + shift
         target = QRect(int(cx - size // 2), int(cy - size // 2), size, size)
 

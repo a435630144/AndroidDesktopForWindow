@@ -62,20 +62,26 @@ def main():
     # v7 §3.1 起档位是「图标在格子里的占比」（0.42 / 0.57 / 0.82）：
     # widget = icon_box + 2*CHROME_X，高度 = icon_box + 标签区。
     lo_l = gs.icon_layout(83, 102, "small")
-    check("small 49x53/35/7/18/9",
+    check("small 49x65/35/7/30/9（两行标签）",
           (lo_l.widget_w, lo_l.widget_h, lo_l.icon_box, lo_l.chrome_x,
-           lo_l.label_h, lo_l.font_px) == (49, 53, 35, 7, 18, 9),
+           lo_l.label_h, lo_l.font_px) == (49, 65, 35, 7, 30, 9),
           "got %s" % (lo_l,))
     mid = gs.icon_layout(83, 102, "medium")
-    check("medium 61x66/47/7/19/10",
+    check("medium 61x79/47/7/32/10（两行标签）",
           (mid.widget_w, mid.widget_h, mid.icon_box, mid.chrome_x,
-           mid.label_h, mid.font_px) == (61, 66, 47, 7, 19, 10),
+           mid.label_h, mid.font_px) == (61, 79, 47, 7, 32, 10),
           "got %s" % (mid,))
     big = gs.icon_layout(83, 102, "large")
-    check("large 82x93/68/7/25/14",
+    check("large 82x93/68/7/25/14（格子装不下第二行 → 退回单行）",
           (big.widget_w, big.widget_h, big.icon_box, big.chrome_x,
            big.label_h, big.font_px) == (82, 93, 68, 7, 25, 14),
           "got %s" % (big,))
+    # 反馈 12：标签两行；cell 尺寸（格距）一个像素都不动
+    check("两行标签不撑大格距（cell 仍由单行规格推导）",
+          gs.cell_from_native(48) == (84, 91)
+          and gs.label_height(47, 2) > gs.label_height(47, 1),
+          "got %s / %s" % (gs.cell_from_native(48),
+                           (gs.label_height(47, 1), gs.label_height(47, 2))))
 
     # ---------- G4: 档位语义（v7：占比，不再是 widget/cell） ----------
     # v7 B2（反馈 9）新增第四档 custom，所以这里锁**三档子集**而不是整表

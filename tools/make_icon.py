@@ -1,51 +1,50 @@
 # -*- coding: utf-8 -*-
-"""生成应用图标（PNG + ICO）：蓝紫渐变圆角方块 + 2x2 桌面网格意象。
-用法：python tools/make_icon.py [输出目录，默认项目 assets/]
+"""应用图标正式出口（v13a：新图标 UI）。
+
+源素材是设计稿导出的三件套（用户 2026-10-24 交付，**不要用代码画回去**）：
+  assets/app_icon_1024.png  1024 主稿
+  assets/app_icon_512.png   512 中间稿
+  assets/app_icon_new.ico   多尺寸 ICO（16/24/32/48/64/128/256）
+
+本脚本只做**归一化拷贝**，保证 `app_icon.png` / `app_icon.ico` 这两个
+下游固定文件名始终跟主稿一致（build_portable、installer、托盘、窗口
+图标都只认这两个名字）。改设计稿时替换三件套后重跑即可。
+
+用法：python tools/make_icon.py
 """
+import shutil
+import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image
+
+ROOT = Path(__file__).resolve().parent.parent
+ASSETS = ROOT / "assets"
+
+SRC_PNG = ASSETS / "app_icon_1024.png"
+SRC_ICO = ASSETS / "app_icon_new.ico"
+OUT_PNG = ASSETS / "app_icon.png"
+OUT_ICO = ASSETS / "app_icon.ico"
 
 
-def _lerp(a, b, t):
-    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+def main() -> int:
+    if not SRC_PNG.exists() or not SRC_ICO.exists():
+        print("缺少源素材：app_icon_1024.png / app_icon_new.ico（设计稿导出）")
+        return 1
 
+    # PNG：主稿直接落成下游文件名（1024 RGBA，Qt/托盘/向导图共用）
+    im = Image.open(SRC_PNG)
+    if im.mode != "RGBA":
+        im = im.convert("RGBA")
+    im.save(OUT_PNG)
+    print("written:", OUT_PNG, im.size)
 
-def _rounded_mask(size: int, radius: int) -> Image.Image:
-    m = Image.new("L", (size, size), 0)
-    ImageDraw.Draw(m).rounded_rectangle([0, 0, size - 1, size - 1], radius=radius, fill=255)
-    return m
-
-
-def make_icon(size: int = 1024) -> Image.Image:
-    top, bottom = (86, 160, 250), (62, 84, 220)  # 天蓝 -> 深蓝紫
-    grad = Image.new("RGBA", (1, size))
-    for y in range(size):
-        grad.putpixel((0, y), (*_lerp(top, bottom, y / (size - 1)), 255))
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    img.paste(grad.resize((size, size)), (0, 0), _rounded_mask(size, int(size * 0.22)))
-    d = ImageDraw.Draw(img)
-    pad = size * 0.22
-    gap = size * 0.06
-    cell = (size - pad * 2 - gap) / 2
-    r = int(size * 0.05)
-    for x, y in ((pad, pad), (pad + cell + gap, pad),
-                 (pad, pad + cell + gap), (pad + cell + gap, pad + cell + gap)):
-        d.rounded_rectangle([x, y, x + cell, y + cell], radius=r, fill=(255, 255, 255, 235))
-    return img
-
-
-def main():
-    import sys
-    out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent / "assets"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    icon = make_icon()
-    icon.save(out_dir / "app_icon.png")
-    icon.save(out_dir / "app_icon.ico",
-              sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
-    print("written:", out_dir / "app_icon.png")
-    print("written:", out_dir / "app_icon.ico")
+    # ICO：多尺寸稿直接落成下游文件名（exe / SetupIconFile 用）
+    shutil.copy2(SRC_ICO, OUT_ICO)
+    chk = Image.open(OUT_ICO)
+    print("written:", OUT_ICO, chk.info.get("sizes"))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

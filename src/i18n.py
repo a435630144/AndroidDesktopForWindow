@@ -80,7 +80,8 @@ def resolve(setting: Optional[str] = None, storage=None) -> str:
     """把设置值（auto/zh_CN/en）解析成生效语言。
 
     `auto` 的优先级：安装器写下的 `lang`（state.json 的 settings）→ 系统语言。
-    安装器那一份是用户在**装的时候**选的，比系统语言更贴近意图。
+    安装器那一份是**装的时候**按系统环境自动选的（v12c，见 installer.iss），
+    经 `Storage._merge_install_lang` 收进 settings，比裸系统语言更贴近意图。
     """
     value = setting
     if value is None and storage is not None:

@@ -38,6 +38,7 @@ from . import appsource
 from . import drag_merge
 from . import effects
 from . import interaction
+from . import label_style as _ls
 from .folder_tint import folder_tint
 from .stepper import Stepper
 from . import theme
@@ -78,6 +79,11 @@ DWELL_MERGE_MS = 350
 # 没有了"（0.15~0.30 被 defer 成死区）。阈值单点定义在 drag_merge，
 # 这里只做 re-export。
 MERGE_ARM_RATIO = drag_merge.MERGE_ARM_RATIO
+
+# v14 反馈 1：文件夹**悬停自动展开**的驻留时长（ms）。比合并提示
+# （DWELL_MERGE_MS 350）短一截：悬停展开要"瞄一眼就开"的轻快感，而合并
+# 提示慢一点才不会被误触。离开图标 / 按下 / 形成拖动都会撤表。
+FOLDER_HOVER_OPEN_MS = 260
 
 # v6 §5.1（反馈 6）：拖动浮影 = 当前图标的 render 快照，半透明 0.8——
 # 替换旧 QDrag 的白块占位，拖动中保留原始样式（图标 + 标签 + 状态）。
@@ -158,11 +164,14 @@ class AppIcon(QWidget):
     def __init__(self, entry: dict, icon_size: int, in_folder: bool = False,
                  parent=None, chrome_scale: float = 1.0, layout=None,
                  compact: bool = False, show_label: bool = True,
-                 pad_x: int = None):
+                 pad_x: int = None, label_style=None):
         super().__init__(parent)
         self.entry = entry
         self.in_folder = in_folder
         self.selected = False
+        # v14 反馈 3：标签文字样式（颜色/加粗/阴影/描边）。缺省 = Windows
+        # 原生白字 + 柔和黑阴影——不传的旧调用（探针 / 测试）观感不变。
+        self._label_style = label_style or _ls.default_label_style()
         # 外围 chrome 缩放（留白 / 标签字号 / 行高随**用户缩放**同比放大）。
         # v10 B2：不含 dpr——Qt 高 DPI 缩放已经把逻辑值渲染成物理值时乘过
         # 一次（125% 下 1536×864 逻辑视口就是证据），再乘就是 dpr²。
@@ -259,6 +268,12 @@ class AppIcon(QWidget):
         self._long_watch = QTimer(self)
         self._long_watch.setInterval(30)
         self._long_watch.timeout.connect(self._watch_long_slide)
+        # v14 反馈 1：文件夹悬停自动展开的驻留计时（只对文件夹起作用，
+        # 判据见 `_hover_expand_ok`——单测直接钉那些条件）
+        self._hover_open = QTimer(self)
+        self._hover_open.setSingleShot(True)
+        self._hover_open.setInterval(FOLDER_HOVER_OPEN_MS)
+        self._hover_open.timeout.connect(self._on_hover_open)
         # 多选态（手机模式菜单 ▸ 选择）：左上角画空心圆 / 选中画对钩
         self._selection_visible = False
         # 外围 chrome 缩放（留白 / 标签字号 / 行高随**用户缩放**同比放大）。
@@ -603,7 +618,8 @@ class AppIcon(QWidget):
         if self._compact:
             # 文件夹成员：图标正下方一行小字（居中 + 末尾省略），
             # 与图标同一列宽，长文件名不会溢出到邻格（反馈 7）
-            font = theme.ui_font(self._label_font_px)
+            font = theme.ui_font(self._label_font_px,
+                                 bold=self._label_style.bold)
             p.setFont(font)
             fm = QFontMetrics(font)
             rect = QRect(self._box_x, 2 + self.icon_size,
@@ -611,62 +627,91 @@ class AppIcon(QWidget):
                          max(1, self._label_h))
             line = fm.elidedText(name, Qt.ElideRight, rect.width())
             if line:
-                p.setPen(theme.LABEL_SHADOW)
-                p.drawText(rect.adjusted(1, 1, 0, 0),
-                           Qt.AlignHCenter | Qt.AlignVCenter, line)
-                p.setPen(theme.LABEL_COLOR)
-                p.drawText(rect, Qt.AlignHCenter | Qt.AlignVCenter, line)
+                _ls.draw_label_text(p, rect,
+                                    Qt.AlignHCenter | Qt.AlignVCenter, line,
+                                    self._label_style, self._label_font_px)
             return
         if self._layout is not None:
-            # v6 A2：单行小字 elide（手机 launcher 语言——密度加密后旧两行
-            # 标签 chrome 占比超 40%，必须瘦身）；字号由 layout.font_px
-            font = theme.ui_font(self._label_font_px)
+            # 反馈 12：默认两行折行（一行显示不下折到第二行，末行省略号）。
+            # 行数由 `grid_sizing.LABEL_LINES` 决定，标签区高度
+            # （`layout.label_h`）已按两行预留；格子装不下时 grid_sizing
+            # 自动退回单行，这里按实际预留高度算行数，两边不会不一致。
+            font = theme.ui_font(self._label_font_px,
+                                 bold=self._label_style.bold)
             p.setFont(font)
             rect = QRect(2, self.icon_size + 2,
                          self.width() - 4, self._label_h)
             fm = QFontMetrics(font)
-            line = fm.elidedText(name, Qt.ElideRight, rect.width())
-            if line:
-                # 阴影一层 + 白字，保证任意壁纸下可读
-                p.setPen(theme.LABEL_SHADOW)
-                p.drawText(rect.adjusted(1, 1, 0, 0), Qt.AlignCenter, line)
-                p.setPen(theme.LABEL_COLOR)
-                p.drawText(rect, Qt.AlignCenter, line)
+            max_lines = 2 if self._label_h >= fm.height() * 2 - 2 else 1
+            lines = self._wrap_elide(name, fm, rect.width(), max_lines)
+            lh = fm.height() + 1
+            for i, line in enumerate(lines):
+                r = QRect(rect.left(), rect.top() + i * lh, rect.width(), lh)
+                if not line:
+                    continue
+                _ls.draw_label_text(p, r, Qt.AlignCenter, line,
+                                    self._label_style, self._label_font_px)
             return
         # 旧路径（无 layout）：标签字号随 chrome 缩放（DPI×用户缩放）：
         # 100% 时 12px，125% 时 15px；最多两行折行 + 末行省略号
-        font = theme.ui_font(self._label_font_px)
+        font = theme.ui_font(self._label_font_px, bold=self._label_style.bold)
         p.setFont(font)
         rect = QRect(2, self.icon_size + int(round(6 * self._m)),
                      self.width() - 4, int(round(34 * self._m)))
         fm = QFontMetrics(font)
         lines = self._wrap_elide(name, fm, rect.width(), 2)
         lh = fm.height() + 1
-        # 阴影一层 + 白字，保证任意壁纸下可读
         for i, line in enumerate(lines):
             r = QRect(rect.left(), rect.top() + i * lh, rect.width(), lh)
-            p.setPen(theme.LABEL_SHADOW)
-            p.drawText(r.adjusted(1, 1, 0, 0), Qt.AlignCenter, line)
-            p.setPen(theme.LABEL_COLOR)
-            p.drawText(r, Qt.AlignCenter, line)
+            if line:
+                _ls.draw_label_text(p, r, Qt.AlignCenter, line,
+                                    self._label_style, self._label_font_px)
 
     @staticmethod
     def _wrap_elide(name: str, fm: QFontMetrics, width: int, max_lines: int) -> list:
-        """按像素宽度折行，超过 max_lines 时末行省略号。"""
-        words = name.split(" ")
+        """按像素宽度折行（西文按词、中文按字），超过 max_lines 时末行省略号。
+
+        反馈 12：旧实现只按空格切词，中文文件名（没有空格）一行放不下只能
+        整体省略——「显示不全」就是这么来的。这里在词内继续按字符断，
+        中英混排都能折两行。
+        """
+        text = str(name or "").strip()
+        if not text:
+            return []
+        tokens = []          # (文本, 与前一段之间要不要空格)
+        for w_ in text.split(" "):
+            if not w_:
+                continue
+            if fm.horizontalAdvance(w_) <= width:
+                tokens.append((w_, True))
+                continue
+            cur = ""
+            for ch in w_:
+                if cur and fm.horizontalAdvance(cur + ch) > width:
+                    tokens.append((cur, True))
+                    cur = ch
+                else:
+                    cur += ch
+            if cur:
+                tokens.append((cur, True))
         lines, cur = [], ""
-        for w_ in words:
-            trial = (cur + " " + w_).strip()
+        for tok, spaced in tokens:
+            trial = (cur + (" " if spaced else "") + tok) if cur else tok
             if fm.horizontalAdvance(trial) <= width or not cur:
                 cur = trial
             else:
                 lines.append(cur)
-                cur = w_
+                cur = tok
         if cur:
             lines.append(cur)
         if len(lines) > max_lines:
-            kept = lines[:max_lines]
-            kept[-1] = fm.elidedText(kept[-1], Qt.ElideRight, width)
+            # 超长名：把第 max_lines 行起的所有内容**并进去再省略**。旧实现
+            # 只对"最后保留行"做 elidedText——那一行本来就放得下时省略号不会
+            # 出现，后面的字被静默吃掉（反馈 12：文件名"显示不全"的另一种）。
+            sep = " " if " " in text else ""      # 中文直接拼，西文保留词间空格
+            kept = lines[:max_lines - 1]
+            kept.append(fm.elidedText(sep.join(lines[max_lines - 1:]),
+                                      Qt.ElideRight, width))
             return kept
         return [fm.elidedText(l, Qt.ElideRight, width) for l in lines]
 
@@ -794,6 +839,11 @@ class AppIcon(QWidget):
             self._selection_visible = on
             self.update()
 
+    def set_label_style(self, style):
+        """热更新标签文字样式（v14 反馈 3：设置里改完立刻重画，不重建图标）。"""
+        self._label_style = style
+        self.update()
+
     def _paint_select_badge(self, p):
         """左上角多选标记：空心圆 → 实心对钩。"""
         if not self._selection_visible:
@@ -830,6 +880,9 @@ class AppIcon(QWidget):
             self._press_global = e.globalPos()
             self._dragged = False
             self._long_fired = False
+            # 按下即撤悬停展开表：点击有点击自己的语义（打开/关闭开关），
+            # 悬停计时不该在按下后又补一刀
+            self._hover_open.stop()
             # 苹果 HIG 按压反馈：scale(0.97) 100ms ease-out，pointer-down
             # 即触发不等松手（按下即反馈，消灭延迟）
             self._animate(b"press_scale", self._press_scale, 0.97, 100,
@@ -1311,13 +1364,58 @@ class AppIcon(QWidget):
         # 悬停轻放大 1.04：临界阻尼弹簧，可打断（快速划过时从当前值起播）
         self._animate(b"hover_scale", self._hover_scale, 1.04, 140,
                       effects.spring_curve(1.0, 140))
+        # v14 反馈 1：文件夹悬停自动展开（手机文件夹的"瞄一眼"语义）
+        if self._hover_expand_ok():
+            self._hover_open.start()
         self.update()
 
     def leaveEvent(self, e):
         self._hover = False
+        self._hover_open.stop()
         self._animate(b"hover_scale", self._hover_scale, 1.0, 160,
                       effects.spring_curve(1.0, 160))
         self.update()
+
+    def _hover_expand_ok(self) -> bool:
+        """文件夹悬停自动展开的放行判据（v14 反馈 1）。
+
+        不放在 enterEvent 里就地判断，是为了让单测能直接钉这几条：
+          1. 只对**桌面上的文件夹**（文件夹内部成员不展开自己）；
+          2. 拖动中 / 已按下 / 长按菜单开着都不展开（手势优先）；
+          3. 多选态不展开（那会儿悬停是"勾选预备"）；
+          4. 这个文件夹已经开着就不触——`open_folder` 对同一 id 是**关**，
+             悬停再触发一次等于用户什么都没做就把它关了；
+          5. 设置 `folder_hover_expand` 可关（悬停展开不是所有人都习惯）。
+        """
+        if not self.is_folder or self.in_folder:
+            return False
+        if self._drag_loop or self._press_pos is not None:
+            return False
+        win = self.window()
+        if win is None:
+            return False
+        if getattr(win, "_selection_mode", False):
+            return False
+        popup = getattr(win, "_popup", None)
+        if popup is not None:
+            try:
+                if popup.entry.get("id") == self.entry.get("id"):
+                    return False
+            except Exception:      # noqa: BLE001
+                return False
+        st = getattr(win, "storage", None)
+        if st is None:
+            return False
+        try:
+            return bool(st.get_setting("folder_hover_expand"))
+        except Exception:      # noqa: BLE001
+            return False
+
+    def _on_hover_open(self):
+        """悬停计时到点：展开文件夹（与点击同一出口，iOS 语义的开关不变）。"""
+        if not self._hover_expand_ok():
+            return
+        self._open_folder()
 
     # ---------- 拖放接收 ----------
     def dragEnterEvent(self, e):

@@ -333,12 +333,14 @@ def main():
     w14.close()
     bar14.close()
 
-    # ---------- D15：默认样式收小（v10 A9 反馈 2） ----------
+    # ---------- D15：默认样式（v14 反馈 5：iOS Dock 观感） ----------
     m_def = dock.metrics(1.0, 0)
-    check("D15 默认图标 32px", m_def.icon == 32, "icon=%d" % m_def.icon)
+    check("D15 默认图标 44px", m_def.icon == dock.DOCK_ICON == 44,
+          "icon=%d" % m_def.icon)
     check("D15 空态 4 槽位（条带不缩成一点）", m_def.slots == dock.MIN_SLOTS == 4,
           "slots=%d" % m_def.slots)
-    check("D15 空态条带厚度变薄（< 56）", m_def.thickness < 56,
+    check("D15 空态厚度 = 内边距*2 + 图标*hover（给放大留空间，不出窗口）",
+          m_def.thickness == m_def.pad * 2 + int(round(m_def.icon * m_def.hover)),
           "thick=%d" % m_def.thickness)
     check("D15 空态长度 = pad*2 + 4*icon + 3*gap",
           m_def.length == m_def.pad * 2 + 4 * m_def.icon + 3 * m_def.gap,
@@ -374,7 +376,7 @@ def main():
           dock.normalize_radius_mode(
               st16_0.get_setting("dock_radius_mode")) == "round",
           "%s" % st16_0.get_setting("dock_radius_mode"))
-    check("D16 默认半径 12px", dock.radius_px(st16_0) == 12,
+    check("D16 默认半径 20px（v14 iOS Dock）", dock.radius_px(st16_0) == 20,
           "%s" % dock.radius_px(st16_0))
     st16_0.set_setting("dock_radius", -5)
     check("D16 半径下限 0", dock.radius_px(st16_0) == 0,
@@ -470,8 +472,8 @@ def main():
                    "cmb_dock_radius", "chk_dock_hover", "chk_dock_dot")),
               "missing")
         before = fw.calls
-        dlg.sp_dock_icon.setValue(44)
-        check("D19 图标大小写设置", st19.get_setting("dock_icon") == 44,
+        dlg.sp_dock_icon.setValue(48)
+        check("D19 图标大小写设置", st19.get_setting("dock_icon") == 48,
               "%s" % st19.get_setting("dock_icon"))
         check("D19 触发窗口重排（apply_dock_settings）", fw.calls > before,
               "calls=%d" % fw.calls)
@@ -512,7 +514,8 @@ def main():
     scale20 = dock._scale(st20.ui_scale())
     rect20 = QRectF(w20.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
     r_def = w20._shape_radius(rect20)
-    check("D20 默认半径 = 12 × ui_scale", abs(r_def - 12 * scale20) < 0.01,
+    check("D20 默认半径 = 20 × ui_scale（v14 iOS Dock）",
+          abs(r_def - 20 * scale20) < 0.01,
           "r=%.2f scale=%.2f" % (r_def, scale20))
     check("D20 默认半径明显小于半厚（不再是药丸）",
           r_def < thick20 / 2.0 - 4,
@@ -521,9 +524,19 @@ def main():
     check("D20 半径 0 = 直角", w20._shape_radius(rect20) == 0.0,
           "r=%.2f" % w20._shape_radius(rect20))
     st20.set_setting("dock_radius", 99)
+    # 默认条带已经很厚（82px，半厚 41 > 旋钮上限 26），旋钮顶格就够用；
+    # 把条带做薄（小内边距 + 小图标 + 不放大 -> 半厚 14 < 26）后，
+    # 旋钮上限超过半厚，这时必须夹到半厚，否则 Qt 自己截断 = 滑块后半段白拖。
+    st20.set_setting("dock_pad", 2)
+    st20.set_setting("dock_icon", 24)
+    st20.set_setting("dock_hover_pct", 100)
+    w20.apply_geometry((1920, 1080))
+    thick_thin = w20.current_metrics().thickness
+    rect_thin = QRectF(w20.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
     check("D20 半径超过半厚时夹到半厚（滑块后半段不虚设）",
-          abs(w20._shape_radius(rect20) - thick20 / 2.0) < 0.51,
-          "r=%.2f half=%.2f" % (w20._shape_radius(rect20), thick20 / 2.0))
+          abs(w20._shape_radius(rect_thin) - thick_thin / 2.0) < 0.51,
+          "r=%.2f half=%.2f" % (w20._shape_radius(rect_thin),
+                                thick_thin / 2.0))
     st20.set_setting("dock_radius_mode", "pill")
     check("D20 胶囊 = 半厚（保留给愿意要药丸的人）",
           abs(w20._shape_radius(rect20) - thick20 / 2.0) < 0.51,
@@ -545,7 +558,7 @@ def main():
     check("D21 旧 state 的 pill 迁移成 round",
           st21.get_setting("dock_radius_mode") == "round",
           "%s" % st21.get_setting("dock_radius_mode"))
-    check("D21 迁移同时补默认半径 12", st21.get_setting("dock_radius") == 12,
+    check("D21 迁移同时补默认半径 20", st21.get_setting("dock_radius") == 20,
           "%s" % st21.get_setting("dock_radius"))
     check("D21 迁移标记已落盘",
           json.loads(legacy.read_text(encoding="utf-8"))["settings"].get(
@@ -684,6 +697,37 @@ def main():
     check("D26h 宽度 0 时不画边框（无红像素）", n26b == 0, "red=%d" % n26b)
     d26.close()
     d26b.close()
+
+    # ---------- D27：iOS Shelf 观感（v14 反馈 5） ----------
+    # 竖向渐变：顶部叠白（alpha 26）+ 一道 specular 高光，底部叠黑（alpha 26）。
+    # 像素判据：条带同一段列，顶部亮带平均亮度 > 底部暗带（差 ~50，取 10 防抖）。
+    st27 = Storage(path=tmp / "dock27.json")
+    st27.set_setting("dock_items", [])
+    st27.set_setting("dock_border_width", 0)
+    d27 = dock.DockWindow(st27)
+    d27.resize(400, 82)
+    img27 = QImage(400, 82, QImage.Format_ARGB32)
+    img27.fill(0)
+    d27.render(img27)
+
+    def _band_luma(im, y0, y1):
+        tot, n = 0.0, 0
+        for yy in range(y0, y1):
+            for xx in range(40, im.width() - 40):
+                c = im.pixelColor(xx, yy)
+                tot += (c.red() + c.green() + c.blue()) / 3.0
+                n += 1
+        return tot / max(1, n)
+
+    top_l = _band_luma(img27, 3, 8)
+    bot_l = _band_luma(img27, img27.height() - 8, img27.height() - 3)
+    check("D27 顶部亮带 > 底部暗带（iOS 竖向渐变 Shelf）",
+          top_l > bot_l + 10, "top=%.1f bot=%.1f" % (top_l, bot_l))
+    # specular 高光线：顶边第 1~2 行比紧随其下的 3~8 行更亮
+    edge_l = _band_luma(img27, 1, 3)
+    check("D27 顶部一道 specular 高光", edge_l > top_l,
+          "edge=%.1f band=%.1f" % (edge_l, top_l))
+    d27.close()
     dlg25.deleteLater()
 
     # ---------- D22：分页点不被 Dock 遮挡（v10 反馈 25） ----------

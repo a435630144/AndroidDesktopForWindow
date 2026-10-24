@@ -54,6 +54,8 @@ from . import appsource
 from . import effects
 from . import folder_layout
 from . import grid_flow
+from . import label_style
+from . import liquid_glass
 from . import theme
 from . import win32_layer
 from .folder_tint import auto_tint, folder_tint
@@ -391,6 +393,9 @@ class FolderPopup(QWidget):
         super().__init__(parent)
         self.storage = storage
         self.entry = entry
+        # v14 反馈 3：成员标签样式（与桌面图标同一份 settings，热更新见
+        # `apply_label_style`）。构造时取一次——_build 里的成员图标用它。
+        self._label_style = label_style.label_style(storage)
         self._dragging = False
         self._closing = False
         self._backdrop = QPixmap()
@@ -659,7 +664,8 @@ class FolderPopup(QWidget):
             icon = AppIcon(entry, self._member_icon_size(), in_folder=True,
                            parent=self, chrome_scale=m, compact=True,
                            show_label=True,   # 反馈 7：成员必须有文件名
-                           pad_x=self._member_pad_x())   # v10 A9：横向加宽
+                           pad_x=self._member_pad_x(),   # v10 A9：横向加宽
+                           label_style=self._label_style)   # v14 反馈 3
             icon.drag_payload = member_payload
             icon.dragStarted.connect(self._on_drag_start)
             icon.dragFinished.connect(self._on_drag_finish)
@@ -824,6 +830,20 @@ class FolderPopup(QWidget):
         # （移动 + 重建成员）再抓背板，否则背板抓在旧位置（窗口已移走）。
         self._build(None, keep_backdrop=True)
         self._regrab_backdrop()
+
+    def apply_label_style(self, style):
+        """v14 反馈 3：设置里改了文字样式——已开着的弹窗热更新成员标签。
+
+        只换样式对象 + update()，不 _build（那会重放全部出场动画，
+        用户改个颜色不该看一遍"文件夹重新打开"）。
+        """
+        self._label_style = style
+        for icon in self.findChildren(AppIcon):
+            try:
+                icon.set_label_style(style)
+            except (RuntimeError, AttributeError):
+                pass
+        self.update()
 
     def _regrab_backdrop(self):
         """背板重抓：隐藏本窗 → 抓屏 → 同帧显示回（避免把自己抓进去）。
@@ -1174,6 +1194,13 @@ class FolderPopup(QWidget):
         p.setPen(Qt.NoPen)
         p.setBrush(overlay)
         p.drawRoundedRect(rect, theme.GLASS_RADIUS * z, theme.GLASS_RADIUS * z)
+        # v14 反馈 9：液态玻璃光学叠加层——在玻璃 + 色板层之上、文字之下。
+        # 弹窗是瞬态表面，扫光相位随开合动画一起走（关动画时 phase=None）。
+        if liquid_glass.surface_enabled(self.storage, "folder"):
+            liquid_glass.paint_overlay(
+                p, rect, theme.GLASS_RADIUS * z,
+                liquid_glass.liquid_style(self.storage),
+                phase=liquid_glass.shimmer_phase(), widget=self)
         # 标题：随玻璃浮现渐显；vibrancy 规范——材质上文字提高对比、
         # 稍加字重、微加字距（不用平灰）。iOS 文件夹标题居中。
         p.setOpacity(min(1.0, (z - 0.55) / 0.35))

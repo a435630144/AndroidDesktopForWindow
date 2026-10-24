@@ -77,3 +77,21 @@ def ensure_app_dirs() -> Path:
 
 def data_file(name: str) -> Path:
     return app_data_dir() / name
+
+
+def program_dir() -> Path:
+    """程序自身所在目录（安装目录 / 便携包解压目录）。
+
+    用户数据（state.json、设置）在 %APPDATA%，**用户内容**（导入的组件）
+    却也放 %APPDATA% 会让"卸载软件 = 组件还留在 C 盘"：用户反馈
+    「软件装在 D:\\...\\Programs\\PhoneDesktop，组件却装到
+    C:\\Users\\...\\Roaming\\PhoneDesktop\\widgets，两个位置毫无关系」。
+    打包后组件目录跟着 exe 走，卸载/换盘迁移时与主程序同进同退。
+
+    开发态（未打包）退回 %APPDATA%：仓库根目录是**代码**，把用户组件写
+    进去既污染 git 工作区，也让"目录即真相"的插件扫描撞上 examples/
+    与 Component/ 里的示例包。
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return app_data_dir()
