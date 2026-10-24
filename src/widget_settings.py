@@ -40,8 +40,23 @@ DLG_QSS = (
     "QLabel{color: %s; font-size: 13px; background: transparent;}"
     "QLabel#hint{color: %s; font-size: 11px;}"
     "QLabel#group{color: %s; font-size: 12px; font-weight: 600;}"
+    "QCheckBox{color: %s; font-family: %s; font-size: 13px;}"
+    "QSpinBox{color: %s; background: %s; border: 1px solid %s;"
+    " border-radius: 7px; padding: 4px 6px; font-size: 12px;}"
+    "QSpinBox::up-button, QSpinBox::down-button{width: 14px; border: none;"
+    " background: transparent;}"
+    "QLineEdit{color: %s; background: %s; border: 1px solid %s;"
+    " border-radius: 8px; padding: 6px 10px; font-size: 13px;}"
+    "QToolTip{background: rgb(38,38,44); color: rgb(230,232,236);"
+    " border: 1px solid rgba(255,255,255,30); border-radius: 6px;"
+    " padding: 4px 8px; font-size: 12px;}"
 ) % (theme.rgba(theme.SURFACE_POPUP), theme.rgba(theme.TEXT),
-     theme.rgba(theme.TEXT_FAINT), theme.rgba(theme.TEXT_DIM))
+     theme.rgba(theme.TEXT_FAINT), theme.rgba(theme.TEXT_DIM),
+     theme.rgba(theme.TEXT), ", ".join('"%s"' % f for f in theme.FONT_FAMILIES),
+     theme.rgba(theme.TEXT), theme.rgba(theme.SURFACE_RAISED),
+     theme.rgba(theme.BORDER),
+     theme.rgba(theme.TEXT), theme.rgba(theme.SURFACE_RAISED),
+     theme.rgba(theme.BORDER))
 
 
 def field_label(f) -> str:

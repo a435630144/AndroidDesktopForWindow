@@ -186,7 +186,8 @@ def _build_registry() -> Dict[str, WidgetSpec]:
             name_key="widget.monitor",
             summary_key="widget.monitor.summary",
             factory=MonitorWidget,
-            spans=((2, 2), (4, 2)),
+            # v12 反馈 36：2x1 紧凑横排（替代旧 2x2 圆环）+ 4x2 宽版三列
+            spans=((2, 1), (4, 2)),
             category="系统",
             default_anchored=True,
             preview=_preview_monitor,

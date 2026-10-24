@@ -295,7 +295,8 @@ class SettingsDialog(QDialog):
         self.stack.setCurrentIndex(index)
 
     # ---------- 行 / 卡片 ----------
-    def _card(self, parent, title=""):
+    def _card(self, parent, title="", reset_fn=None):
+        """一张设置卡片。`reset_fn` 非 None 时标题右侧加「重置」小按钮。"""
         card = QFrame(parent)
         card.setObjectName("settingsCard")
         card.setProperty("groupTitle", title)
@@ -303,9 +304,19 @@ class SettingsDialog(QDialog):
         lay.setContentsMargins(18, 14, 18, 14)
         lay.setSpacing(2)
         if title:
+            hdr = QHBoxLayout()
+            hdr.setSpacing(8)
             lb = QLabel(title, card)
             lb.setObjectName("cardTitle")
-            lay.addWidget(lb)
+            hdr.addWidget(lb)
+            hdr.addStretch(1)
+            if reset_fn is not None:
+                btn = QPushButton(i18n.T("button.reset_defaults"), card)
+                btn.setObjectName("resetBtn")
+                btn.setCursor(Qt.PointingHandCursor)
+                btn.clicked.connect(reset_fn)
+                hdr.addWidget(btn)
+            lay.addLayout(hdr)
             lay.addSpacing(6)
         return card, lay
 
@@ -595,8 +606,8 @@ class SettingsDialog(QDialog):
         self._dock_save_timer.start(250)
 
     def _apply_dock_metrics(self, *_):
-        """Dock 尺寸与间距（v11 反馈 29）：图标大小见 `_apply_dock`（要重建
-        图标），这里管间隔 / 内边距 / 悬停倍数。
+        """Dock 尺寸与间距：图标大小见 `_apply_dock`（要重建图标），这里管
+        间隔 / 四向内边距 / 悬停倍数 / 位置偏移。
 
         三步：写设置 -> 立刻让条带按新厚度重排（cheap：只 setGeometry +
         update）-> 网格重建走统一防抖（`refresh_grid` 会销毁重建全部图标，
@@ -605,16 +616,76 @@ class SettingsDialog(QDialog):
         ctl = lambda name: getattr(self, name, None)  # noqa: E731
         if ctl("sp_dock_gap") is not None:
             self.storage.set_setting("dock_gap", int(self.sp_dock_gap.value()))
-        if ctl("sp_dock_pad") is not None:
+        # v12：四向内边距
+        if getattr(self, "_dock_pad_steppers", None):
+            for side, sp in self._dock_pad_steppers.items():
+                self.storage.set_setting("dock_pad_" + side, int(sp.value()))
+        elif ctl("sp_dock_pad") is not None:
             self.storage.set_setting("dock_pad", int(self.sp_dock_pad.value()))
         if ctl("sp_dock_hover") is not None:
             self.storage.set_setting("dock_hover_pct",
                                      int(self.sp_dock_hover.value()))
+        # v12：屏幕位置偏移与居中
+        if ctl("sp_dock_offx") is not None:
+            self.storage.set_setting("dock_offset_x",
+                                     int(self.sp_dock_offx.value()))
+        if ctl("sp_dock_offy") is not None:
+            self.storage.set_setting("dock_offset_y",
+                                     int(self.sp_dock_offy.value()))
+        if ctl("chk_dock_center") is not None:
+            self.storage.set_setting("dock_center",
+                                     bool(self.chk_dock_center.isChecked()))
         hook = getattr(self.window, "apply_dock_metrics", None)
         if callable(hook):
             hook(False)          # 只重排条带，不重建网格
         self._schedule_grid_refresh()
         self._dock_save_timer.start(250)
+
+    def _reset_dock_size(self):
+        """重置尺寸与间距到出厂值（v12 反馈 35）。"""
+        ctl = lambda name: getattr(self, name, None)  # noqa: E731
+        if ctl("sp_dock_icon") is not None:
+            self.sp_dock_icon.setValue(dock.DOCK_ICON)
+        if ctl("sp_dock_gap") is not None:
+            self.sp_dock_gap.setValue(dock.DOCK_GAP)
+        if getattr(self, "_dock_pad_steppers", None):
+            for sp in self._dock_pad_steppers.values():
+                sp.setValue(dock.DOCK_PAD)
+        if ctl("sp_dock_hover") is not None:
+            self.sp_dock_hover.setValue(122)   # 默认 122%
+        self._apply_dock()
+
+    def _reset_dock_style(self):
+        """重置外观到出厂值。"""
+        ctl = lambda name: getattr(self, name, None)  # noqa: E731
+        if ctl("sld_dock_alpha") is not None:
+            self.sld_dock_alpha.setValue(86)   # DEFAULT_ALPHA
+        if ctl("cmb_dock_radius") is not None:
+            idx = self.cmb_dock_radius.findData(dock.DEFAULT_RADIUS_MODE)
+            if idx >= 0:
+                self.cmb_dock_radius.setCurrentIndex(idx)
+        if ctl("sld_dock_radius") is not None:
+            self.sld_dock_radius.setValue(dock.DEFAULT_RADIUS)
+        if ctl("sld_dock_border") is not None:
+            self.sld_dock_border.setValue(dock.DEFAULT_BORDER_WIDTH)
+        if ctl("chk_dock_border_auto") is not None:
+            self.chk_dock_border_auto.setChecked(True)
+        if ctl("chk_dock_hover") is not None:
+            self.chk_dock_hover.setChecked(True)
+        if ctl("chk_dock_dot") is not None:
+            self.chk_dock_dot.setChecked(True)
+        self._apply_dock()
+
+    def _reset_dock_position(self):
+        """重置屏幕位置到出厂值。"""
+        ctl = lambda name: getattr(self, name, None)  # noqa: E731
+        if ctl("chk_dock_center") is not None:
+            self.chk_dock_center.setChecked(True)
+        if ctl("sp_dock_offx") is not None:
+            self.sp_dock_offx.setValue(0)
+        if ctl("sp_dock_offy") is not None:
+            self.sp_dock_offy.setValue(0)
+        self._apply_dock_metrics()
 
     def _sync_dock_border_btn(self):
         """颜色按钮：色块显示当前边框色；跟随主题时禁用并写「跟随主题」。"""
@@ -711,12 +782,17 @@ class SettingsDialog(QDialog):
         self.storage.save()
         # 关掉 Dock 时，子控件一并禁用（不留"能点但无效"的旋钮）
         for name in ("cmb_dock_pos", "sp_dock_icon", "sp_dock_gap",
-                     "sp_dock_pad", "sld_dock_alpha",
+                     "sld_dock_alpha",
                      "cmb_dock_radius", "chk_dock_hover", "chk_dock_dot",
-                     "sld_dock_border", "chk_dock_border_auto"):
+                     "sld_dock_border", "chk_dock_border_auto",
+                     "chk_dock_center", "sp_dock_offx", "sp_dock_offy"):
             w = ctl(name)
             if w is not None:
                 w.setEnabled(on)
+        # v12：四向内边距也一并禁用
+        if getattr(self, "_dock_pad_steppers", None):
+            for sp in self._dock_pad_steppers.values():
+                sp.setEnabled(on)
         if ctl("sp_dock_hover") is not None:
             self.sp_dock_hover.setEnabled(
                 on and bool(self.chk_dock_hover.isChecked()))
@@ -809,7 +885,8 @@ class SettingsDialog(QDialog):
         # 图标间隔、大小比例都能自己调"——这四项各管一件事，不能合并：
         # 图标大小 = 图标本体；间隔 = 图标之间；内边距 = 条带厚度；
         # 悬停倍数 = 指到图标时放多大。
-        card, c = self._card(body, i18n.T("settings.dock.card_size"))
+        card, c = self._card(body, i18n.T("settings.dock.card_size"),
+                              reset_fn=self._reset_dock_size)
 
         self.sp_dock_icon = Stepper()
         self.sp_dock_icon.setRange(dock.DOCK_ICON_MIN, dock.DOCK_ICON_MAX)
@@ -833,16 +910,23 @@ class SettingsDialog(QDialog):
         self._row(c, card, i18n.T("settings.dock.gap.title"),
                   self.sp_dock_gap, i18n.T("settings.dock.gap.hint"))
 
-        self.sp_dock_pad = Stepper()
-        self.sp_dock_pad.setRange(dock.DOCK_PAD_MIN, dock.DOCK_PAD_MAX)
-        self.sp_dock_pad.setSingleStep(1)
-        self.sp_dock_pad.setSuffix(i18n.T("settings.dock.unit_px"))
-        self.sp_dock_pad.setFixedWidth(96)
-        self.sp_dock_pad.setValue(dock.pad_px(self.storage))
-        self.sp_dock_pad.setEnabled(on)
-        self.sp_dock_pad.valueChanged.connect(self._apply_dock_metrics)
-        self._row(c, card, i18n.T("settings.dock.pad.title"),
-                  self.sp_dock_pad, i18n.T("settings.dock.pad.hint"))
+        # v12 反馈 35：四向内边距（替代旧的单一 dock_pad）
+        self._dock_pad_steppers = {}
+        for side in ("top", "bottom", "left", "right"):
+            sp = Stepper()
+            sp.setRange(dock.DOCK_PAD_MIN, dock.DOCK_PAD_MAX)
+            sp.setSingleStep(1)
+            sp.setSuffix(i18n.T("settings.dock.unit_px"))
+            sp.setFixedWidth(96)
+            sp.setValue(dock.pad_side(self.storage, side))
+            sp.setEnabled(on)
+            sp.valueChanged.connect(self._apply_dock_metrics)
+            self._dock_pad_steppers[side] = sp
+            setattr(self, "sp_dock_pad_" + side, sp)
+            self._row(c, card,
+                      i18n.T("settings.dock.pad_%s.title" % side),
+                      sp,
+                      i18n.T("settings.dock.pad_%s.hint" % side))
 
         self.sp_dock_hover = Stepper()
         self.sp_dock_hover.setRange(dock.DOCK_HOVER_MIN, dock.DOCK_HOVER_MAX)
@@ -857,7 +941,45 @@ class SettingsDialog(QDialog):
                   i18n.T("settings.dock.hover_scale.hint"))
         lay.addWidget(card)
 
-        card2, c2 = self._card(body, i18n.T("settings.dock.card_style"))
+        # v12 反馈 35：屏幕位置（偏移 + 居中）
+        card_pos, cp = self._card(body, i18n.T("settings.dock.card_position"),
+                                   reset_fn=self._reset_dock_position)
+
+        self.chk_dock_center = Switch()
+        self.chk_dock_center.setChecked(dock.center_along_edge(self.storage))
+        self.chk_dock_center.setEnabled(on)
+        self.chk_dock_center.toggled.connect(self._apply_dock_metrics)
+        self._row(cp, card_pos, i18n.T("settings.dock.pos_center.title"),
+                  self.chk_dock_center,
+                  i18n.T("settings.dock.pos_center.hint"))
+
+        self.sp_dock_offx = Stepper()
+        self.sp_dock_offx.setRange(dock.OFFSET_MIN, dock.OFFSET_MAX)
+        self.sp_dock_offx.setSingleStep(4)
+        self.sp_dock_offx.setSuffix(i18n.T("settings.dock.unit_px"))
+        self.sp_dock_offx.setFixedWidth(96)
+        self.sp_dock_offx.setValue(dock.offset_x(self.storage))
+        self.sp_dock_offx.setEnabled(on)
+        self.sp_dock_offx.valueChanged.connect(self._apply_dock_metrics)
+        self._row(cp, card_pos, i18n.T("settings.dock.offset_x.title"),
+                  self.sp_dock_offx,
+                  i18n.T("settings.dock.offset_x.hint"))
+
+        self.sp_dock_offy = Stepper()
+        self.sp_dock_offy.setRange(dock.OFFSET_MIN, dock.OFFSET_MAX)
+        self.sp_dock_offy.setSingleStep(4)
+        self.sp_dock_offy.setSuffix(i18n.T("settings.dock.unit_px"))
+        self.sp_dock_offy.setFixedWidth(96)
+        self.sp_dock_offy.setValue(dock.offset_y(self.storage))
+        self.sp_dock_offy.setEnabled(on)
+        self.sp_dock_offy.valueChanged.connect(self._apply_dock_metrics)
+        self._row(cp, card_pos, i18n.T("settings.dock.offset_y.title"),
+                  self.sp_dock_offy,
+                  i18n.T("settings.dock.offset_y.hint"))
+        lay.addWidget(card_pos)
+
+        card2, c2 = self._card(body, i18n.T("settings.dock.card_style"),
+                                reset_fn=self._reset_dock_style)
 
         self.sld_dock_alpha = QSlider(Qt.Horizontal)
         self.sld_dock_alpha.setRange(30, 100)

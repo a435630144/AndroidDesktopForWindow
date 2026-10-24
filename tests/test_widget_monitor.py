@@ -13,7 +13,7 @@
   M9  进度值被 clamp 到 0..100（>100 / <0 都不越界、不画反）
   M10 极小矩形（120×80）不抛，环半径 >= 2
   M11 MonitorWidget 是 GlassWidget 子类，采样间隔 1000ms
-  M12 注册表已登记：spans 第一项 (2,2)、category 系统、默认锚定
+  M12 注册表已登记：spans 第一项 (2,1)（v12 改紧凑横排）、category 系统、默认锚定
 
 运行：python tests/test_widget_monitor.py   （offscreen）
 """
@@ -166,9 +166,14 @@ def main(app):
     except Exception:             # noqa: BLE001
         ok4 = False
     Lt = wm.layout(QRectF(0, 0, 120, 80))
-    check("M10 极小矩形不抛且环半径 >= 2",
-          ok4 and all(r["rect"].width() / 2 >= 2 for r in Lt["rings"]),
-          str([round(r["rect"].width() / 2, 1) for r in Lt["rings"]]))
+    # v12：极小矩形走 compact 模式（120×80 是矮横排），检查行高/条宽足够
+    if Lt["mode"] == "compact":
+        ok_geom = all(r["bar"].width() >= 4 and r["bar"].height() >= 2
+                      for r in Lt["rows"])
+    else:
+        ok_geom = all(r["rect"].width() / 2 >= 2 for r in Lt["rings"])
+    check("M10 极小矩形不抛且几何元素尺寸 >= 2", ok4 and ok_geom,
+          str(Lt["mode"]))
 
     # ---------- M8：分档配色 ----------
     low = wm.progress_color(30)
@@ -208,8 +213,8 @@ def main(app):
     spec = reg.get("monitor")
     check("M12 注册表已登记 monitor", spec is not None)
     if spec is not None:
-        check("M12b spans 第一项 (2,2) / 分类系统 / 默认锚定",
-              spec.spans[0] == (2, 2) and spec.category == "系统"
+        check("M12b spans 第一项 (2,1) / 分类系统 / 默认锚定",
+              spec.spans[0] == (2, 1) and spec.category == "系统"
               and spec.default_anchored is True and spec.multi_instance is False,
               "%s %s %s" % (spec.spans, spec.category, spec.default_anchored))
 

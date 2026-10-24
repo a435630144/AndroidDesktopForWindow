@@ -139,17 +139,20 @@ def main(app):
     st.set_setting("dock_hover_pct", 130)
     st.set_setting("dock_enabled", True)
     dlg = SettingsDialog(win, st, None, page="dock")
-    check("G6 四个步进器都在",
+    check("G6 步进器都在（含四向内边距）",
           all(hasattr(dlg, n) for n in
-              ("sp_dock_icon", "sp_dock_gap", "sp_dock_pad", "sp_dock_hover")))
+              ("sp_dock_icon", "sp_dock_gap", "sp_dock_hover",
+               "sp_dock_pad_top", "sp_dock_pad_bottom",
+               "sp_dock_pad_left", "sp_dock_pad_right")))
     check("G6b 初值来自 storage",
-          (dlg.sp_dock_gap.value(), dlg.sp_dock_pad.value(),
+          (dlg.sp_dock_gap.value(), dlg.sp_dock_pad_top.value(),
            dlg.sp_dock_hover.value()) == (8, 9, 130),
-          "%s" % ((dlg.sp_dock_gap.value(), dlg.sp_dock_pad.value(),
+          "%s" % ((dlg.sp_dock_gap.value(), dlg.sp_dock_pad_top.value(),
                    dlg.sp_dock_hover.value()),))
     check("G6c 步进器值域正确",
           dlg.sp_dock_gap.minimum() == 0 and dlg.sp_dock_gap.maximum() == 24
-          and dlg.sp_dock_pad.minimum() == 2 and dlg.sp_dock_pad.maximum() == 20
+          and dlg.sp_dock_pad_top.minimum() == 2
+          and dlg.sp_dock_pad_top.maximum() == 20
           and dlg.sp_dock_hover.minimum() == 100
           and dlg.sp_dock_hover.maximum() == 150)
 
@@ -161,10 +164,11 @@ def main(app):
     check("G7b 改间隔走轻量重排（reflow=False，不重建图标）",
           ("metrics", False) in win.calls, str(win.calls))
     win.calls.clear()
-    dlg.sp_dock_pad.setValue(14)
+    dlg.sp_dock_pad_top.setValue(14)
     app.processEvents()
-    check("G7c 改内边距写 dock_pad", st.get_setting("dock_pad") == 14,
-          repr(st.get_setting("dock_pad")))
+    check("G7c 改上内边距写 dock_pad_top",
+          st.get_setting("dock_pad_top") == 14,
+          repr(st.get_setting("dock_pad_top")))
     win.calls.clear()
     dlg.sp_dock_hover.setValue(150)
     app.processEvents()
@@ -193,7 +197,8 @@ def main(app):
     dlg2.chk_dock.setChecked(False)
     app.processEvents()
     check("G9 关掉 Dock -> 尺寸组禁用",
-          not dlg2.sp_dock_gap.isEnabled() and not dlg2.sp_dock_pad.isEnabled()
+          not dlg2.sp_dock_gap.isEnabled()
+          and not dlg2.sp_dock_pad_top.isEnabled()
           and not dlg2.sp_dock_hover.isEnabled())
     dlg2.close()
 

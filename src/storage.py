@@ -129,6 +129,15 @@ DEFAULT_SETTINGS = {
     "dock_icon": 32,            # 图标逻辑边长 24~56（100% 缩放下的基准）
     "dock_gap": 6,              # v11：图标间距 0~24（逻辑 px，100% 基准）
     "dock_pad": 6,              # v11：条带内边距 2~20——决定"条带有多厚"
+    # v12 反馈 35：四向内边距（未设时回退 dock_pad）
+    "dock_pad_top": None,
+    "dock_pad_bottom": None,
+    "dock_pad_left": None,
+    "dock_pad_right": None,
+    # v12 反馈 35：屏幕位置偏移与居中
+    "dock_offset_x": 0,
+    "dock_offset_y": 0,
+    "dock_center": True,
     "dock_hover_pct": 122,      # v11：hover 放大百分比 100~150（100 = 不放大）
     "dock_alpha": 0.86,         # 条带背景不透明度 0.30~1.0
     "dock_radius_mode": "round",  # round（指定半径，默认）| pill（胶囊）| square（直角）

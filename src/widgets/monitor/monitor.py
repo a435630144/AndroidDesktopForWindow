@@ -219,18 +219,27 @@ def _wide_slots(inner: QRectF) -> Dict:
 
 
 def layout(rect) -> Dict:
-    """算出三列的槽位（宽版）或三个环的位置（2×2）。
+    """算出三种布局之一（v12 反馈 36）。
 
-    纯算术，任意 rect 都不许抛。
+    - **compact**（2x1 宽扁）：三行横排，每行「标签 / 进度条 / 百分比」，
+      内容一眼扫完，不需要圆环。
+    - **wide**（4x2 宽版）：三列等分，每列「标签 / 大数值 / 进度条 / 明细」。
+    - **row**（2x2 近方形）：三环横排，环下标签（保留给老布局）。
 
-    row（近方形，2×2）：三环横排，环下标签，环心偏上留出标签区；
-    wide（4×2 宽版）：三列等分，每列「标签 / 大数值 / 进度条 / 明细」。
+    判定：高度 < 宽度×0.42 → compact（2x1 的 h/w ≈ 0.35~0.50）；
+    否则 w >= h×WIDE_RATIO → wide；否则 row。
     """
     rect = QRectF(rect)
     w = max(1.0, rect.width())
     h = max(1.0, rect.height())
     inner = rect.adjusted(min(PAD, w * 0.12), min(PAD, h * 0.10),
                           -min(PAD, w * 0.12), -min(PAD, h * 0.10))
+    # 2x1 是"矮"的（绝对高度小），先于 wide 判定。
+    # 2x1 和 4x2 的宽高比接近（都是 ~2:1），只能靠绝对尺寸区分：
+    # 2x1 高度 ≈ 1 格（100~180px），4x2 高度 ≈ 2 格（220~360px）。
+    if h < 200.0 and w < 500.0:
+        rows = _compact_rows(inner)
+        return {"mode": "compact", "rows": rows, "inner": inner}
     wide = w >= h * WIDE_RATIO
     rings = []
     if wide:
@@ -247,6 +256,31 @@ def layout(rect) -> Dict:
     return {"mode": "row", "rings": rings, "inner": inner,
             "label_y": cy + diameter / 2.0 + 4.0,
             "label_h": max(10.0, inner.bottom() - (cy + diameter / 2.0) - 4.0)}
+
+
+def _compact_rows(inner: QRectF) -> list:
+    """2x1 紧凑横排：三行「标签 / 进度条 / 百分比」（v12 反馈 36）。
+
+    三行等高，每行高度均分 inner；行内：标签（左固定宽）→ 进度条（中）→ 百分比（右固定宽）。
+    """
+    rows = []
+    gap = max(2.0, inner.height() * 0.06)
+    row_h = max(8.0, (inner.height() - gap * 2) / 3.0)
+    label_w = max(28.0, inner.width() * 0.18)
+    pct_w = max(32.0, inner.width() * 0.14)
+    bar_h = max(4.0, row_h * 0.42)
+    for i, key in enumerate(RING_KEYS):
+        y = inner.top() + i * (row_h + gap)
+        cy = y + row_h / 2.0
+        label = QRectF(inner.left(), y, label_w, row_h)
+        bar = QRectF(inner.left() + label_w + 4.0,
+                     cy - bar_h / 2.0,
+                     inner.width() - label_w - pct_w - 8.0, bar_h)
+        pct = QRectF(bar.right() + 4.0, y, pct_w, row_h)
+        rows.append({"key": key, "rect": QRectF(inner.left(), y,
+                                                inner.width(), row_h),
+                     "label": label, "bar": bar, "pct": pct})
+    return rows
 
 
 def _fmt(value: Optional[float]) -> str:
@@ -346,6 +380,39 @@ def draw(p: QPainter, rect, snap: Snapshot, smooth: Optional[Dict] = None, style
             p.setPen(QColor(theme.TEXT))
             txt = _fmt(val if raw is not None else None)
             p.drawText(box, Qt.AlignCenter, txt)
+
+    if L["mode"] == "compact":
+        # v12 反馈 36：2x1 紧凑横排——三行「标签 / 进度条 / 百分比」
+        for row in L.get("rows") or []:
+            key = row["key"]
+            raw = getattr(snap, key)
+            val = raw if raw is None else _clamp(sm.get(key, raw))
+            color = QColor(st.text) if val is None else progress_color(val, st)
+
+            p.setFont(theme.ui_font(max(9, int(row["label"].height() * 0.70))))
+            p.setPen(QColor(theme.TEXT_DIM))
+            p.drawText(row["label"], Qt.AlignLeft | Qt.AlignVCenter,
+                       RING_LABELS[key])
+
+            bar = row["bar"]
+            radius = bar.height() / 2.0
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 255, 255, 26))
+            p.drawRoundedRect(bar, radius, radius)
+            if val is not None and val > 0.0:
+                p.setBrush(color)
+                p.drawRoundedRect(
+                    QRectF(bar.x(), bar.y(),
+                           max(bar.height(), bar.width() * val / 100.0),
+                           bar.height()), radius, radius)
+
+            p.setFont(theme.ui_font(max(9, int(row["pct"].height() * 0.60)),
+                                    bold=True))
+            p.setPen(color)
+            p.drawText(row["pct"], Qt.AlignRight | Qt.AlignVCenter,
+                       _fmt(None if raw is None else val))
+        p.restore()
+        return
 
     if L["mode"] == "row":
         fs = max(7, int(round(min(L["rings"][0]["rect"].height() * 0.20, 13))))

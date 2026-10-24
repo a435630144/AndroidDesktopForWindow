@@ -267,7 +267,14 @@ SETTINGS_QSS = (
     " font-family: %(fam)s;}"
     "QLabel#rowHint{color: rgba(150,156,166,235); font-size: 11px;"
     " font-family: %(fam)s;}"
-    "QLabel{background: transparent; font-family: %(fam)s;}"
+    "QLabel{color: rgb(238,240,244); background: transparent; font-family: %(fam)s;}"
+    # 裸 QCheckBox（非 Switch）：跟随主题亮字，不走系统默认黑字
+    "QCheckBox{color: rgb(238,240,244); font-family: %(fam)s; font-size: 13px;}"
+    "QCheckBox::indicator{width: 16px; height: 16px; border-radius: 4px;"
+    " border: 1px solid rgba(255,255,255,40); background: rgba(255,255,255,14);}"
+    "QCheckBox::indicator:checked{background: rgb(46,120,246);"
+    " border: 1px solid rgb(46,120,246);}"
+    "QCheckBox:disabled{color: rgba(150,156,166,140);}"
     "QPushButton{background: rgba(255,255,255,16); color: rgb(240,242,246);"
     " border: 1px solid rgba(255,255,255,26); border-radius: 8px;"
     " padding: 6px 14px; font-size: 12px; font-family: %(fam)s;}"
@@ -286,6 +293,13 @@ SETTINGS_QSS = (
     "QPushButton#primaryButton{background: rgb(46,120,246); border: none;"
     " color: white; font-weight: 600; padding: 7px 22px;}"
     "QPushButton#primaryButton:hover{background: rgb(64,138,255);}"
+    # 卡片标题右侧的「重置」小按钮（v12 反馈 35）
+    "QPushButton#resetBtn{background: rgba(255,255,255,10);"
+    " color: rgba(150,214,255,220); border: 1px solid rgba(255,255,255,18);"
+    " border-radius: 6px; padding: 2px 10px; font-size: 11px;"
+    " font-family: %(fam)s;}"
+    "QPushButton#resetBtn:hover{background: rgba(76,194,255,30);"
+    " border-color: rgba(76,194,255,80); color: rgb(180,225,255);}"
     "QComboBox{background: rgba(255,255,255,13); color: rgb(240,242,246);"
     " border: 1px solid rgba(255,255,255,26); border-radius: 7px;"
     " padding: 4px 10px; min-height: 22px; font-size: 12px;"
@@ -324,6 +338,9 @@ SETTINGS_QSS = (
     "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical{height: 0;}"
     "QMessageBox{background: rgb(30,30,35);}"
     "QMessageBox QLabel{color: rgb(240,242,246); font-size: 13px;}"
+    "QToolTip{background: rgb(38,38,44); color: rgb(230,232,236);"
+    " border: 1px solid rgba(255,255,255,30); border-radius: 6px;"
+    " padding: 4px 8px; font-size: 12px; font-family: %(fam)s;}"
 ) % {"fam": ", ".join('"%s"' % f for f in FONT_FAMILIES)}
 
 # QSS 画三角（width:0 + 三边 border）在 Qt 的 subcontrol 上会被强制成实心

@@ -154,9 +154,35 @@ def gap_px(storage) -> int:
 
 
 def pad_px(storage) -> int:
-    """条带内边距（逻辑 px，2~20）——决定"条带有多厚"。"""
+    """条带内边距（逻辑 px，2~20）——兼容旧接口，返回四向平均值。"""
     return _clamped_int(storage, "dock_pad", DOCK_PAD,
                         DOCK_PAD_MIN, DOCK_PAD_MAX)
+
+
+# ---- 四向内边距（v12 反馈 35）----
+def pad_side(storage, side: str) -> int:
+    """单侧内边距：side ∈ {"top","bottom","left","right"}，2~20。
+
+    优先读 `dock_pad_<side>`；未设置（新用户 / 旧 state）时回退到 `dock_pad`。
+    """
+    key = "dock_pad_" + side
+    try:
+        v = storage.get_setting(key)
+    except Exception:      # noqa: BLE001
+        v = None
+    if v is None:
+        return pad_px(storage)
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return pad_px(storage)
+    return max(DOCK_PAD_MIN, min(DOCK_PAD_MAX, v))
+
+
+def pad_4(storage) -> tuple:
+    """返回 (top, bottom, left, right) 四向内边距。"""
+    return (pad_side(storage, "top"), pad_side(storage, "bottom"),
+            pad_side(storage, "left"), pad_side(storage, "right"))
 
 
 def hover_pct(storage) -> int:
@@ -204,16 +230,43 @@ def dot_enabled(storage) -> bool:
     return bool(setting(storage, "dock_dot", True))
 
 
+# ---- 屏幕位置偏移（v12 反馈 35）----
+OFFSET_MIN, OFFSET_MAX = -200, 200
+DEFAULT_OFFSET = 0
+
+
+def offset_x(storage) -> int:
+    """水平偏移（px，-200~200）：正值向右。"""
+    return _clamped_int(storage, "dock_offset_x", DEFAULT_OFFSET,
+                        OFFSET_MIN, OFFSET_MAX)
+
+
+def offset_y(storage) -> int:
+    """垂直偏移（px，-200~200）：正值向下。"""
+    return _clamped_int(storage, "dock_offset_y", DEFAULT_OFFSET,
+                        OFFSET_MIN, OFFSET_MAX)
+
+
+def center_along_edge(storage) -> bool:
+    """是否沿所在边居中（默认 True）。关闭后贴边起点。"""
+    return bool(setting(storage, "dock_center", True))
+
+
 class DockMetrics(NamedTuple):
     """一次 Dock 几何快照（逻辑像素）。"""
 
     icon: int
     gap: int
-    pad: int
+    pad: int           # 主轴起点内边距（兼容旧代码的 `m.pad`）
     thickness: int      # 条带厚度（副轴）
     length: int         # 条带长度（主轴）
     slots: int = 0      # 参与长度计算的槽位数（含空态撑开的）
     hover: float = DOCK_HOVER   # hover 放大倍数（v11：设置可调）
+    # v12 反馈 35：四向内边距（逻辑 px，已乘 ui_scale）
+    pad_t: int = 0
+    pad_b: int = 0
+    pad_l: int = 0
+    pad_r: int = 0
 
 
 # ---------------------------------------------------------------- 纯函数
@@ -229,27 +282,38 @@ def _scale(ui_scale) -> float:
 
 def metrics(ui_scale, count: int, base: int = DOCK_ICON,
             gap: int = DOCK_GAP, pad: int = DOCK_PAD,
-            hover: float = DOCK_HOVER) -> DockMetrics:
+            hover: float = DOCK_HOVER,
+            pad_t: int = None, pad_b: int = None,
+            pad_l: int = None, pad_r: int = None) -> DockMetrics:
     """Dock 几何：图标/间距/内边距只随 `ui_scale` 线性放大。
 
-    条带厚度 = pad×2 + hover 后的图标边长——**预留放大空间**是有意的：
+    条带厚度 = 副轴两向内边距 + hover 后的图标边长——**预留放大空间**是有意的：
     hover 时图标在条带内长大，永远不出窗口（见模块 docstring）。
 
-    `base` / `gap` / `pad` / `hover` 是"100% 缩放下的基准值"（v10 A9 起
-    可配置：设置 ▸ Dock 栏；v11 补上 gap/pad/hover 三项）。
+    `pad_t/b/l/r` 缺省时四向都用 `pad`（兼容旧单值调用）。
     """
     s = _scale(ui_scale)
     icon = max(16, int(round(int(base) * s)))
     g = max(0, int(round(int(gap) * s)))
     p = max(1, int(round(int(pad) * s)))
+    pt = max(1, int(round(int(pad_t if pad_t is not None else pad) * s)))
+    pb = max(1, int(round(int(pad_b if pad_b is not None else pad) * s)))
+    pl = max(1, int(round(int(pad_l if pad_l is not None else pad) * s)))
+    pr = max(1, int(round(int(pad_r if pad_r is not None else pad) * s)))
     try:
         h = max(1.0, min(1.5, float(hover)))
     except (TypeError, ValueError):
         h = DOCK_HOVER
-    thickness = p * 2 + int(round(icon * h))
+    # 厚度取副轴两向之和；长度取主轴两向之和。
+    # 水平 dock（bottom/top）：thickness 用 pt+pb，length 用 pl+pr
+    # 垂直 dock（left/right）：thickness 用 pl+pr，length 用 pt+pb
+    # 这里保守取 max——两种方向下都不会画出比实际小的窗口。
+    cross = max(pt + pb, pl + pr)
+    main = min(pt + pb, pl + pr)
+    thickness = cross + int(round(icon * h))
     slots = max(MIN_SLOTS, min(DOCK_MAX_ITEMS, max(0, int(count))))
-    length = p * 2 + slots * icon + (slots - 1) * g
-    return DockMetrics(icon, g, p, thickness, length, slots, h)
+    length = main + slots * icon + (slots - 1) * g
+    return DockMetrics(icon, g, p, thickness, length, slots, h, pt, pb, pl, pr)
 
 
 def metrics_for(storage, count: int = 0) -> DockMetrics:
@@ -259,8 +323,10 @@ def metrics_for(storage, count: int = 0) -> DockMetrics:
             count = len(load_items(storage))
         except Exception:      # noqa: BLE001
             count = 0
+    pt, pb, pl, pr = pad_4(storage)
     return metrics(storage.ui_scale(), count, icon_base(storage),
-                   gap_px(storage), pad_px(storage), hover_ratio(storage))
+                   gap_px(storage), pad_px(storage), hover_ratio(storage),
+                   pad_t=pt, pad_b=pb, pad_l=pl, pad_r=pr)
 
 
 def normalize_position(position) -> str:
@@ -297,18 +363,39 @@ def usable_size(size, ins) -> tuple:
     return (w, h)
 
 
-def bar_rect(size, position, m: DockMetrics) -> tuple:
-    """条带矩形 (x, y, w, h)：贴对应边 + 沿副轴居中。"""
+def bar_rect(size, position, m: DockMetrics,
+             off_x: int = 0, off_y: int = 0,
+             center: bool = True) -> tuple:
+    """条带矩形 (x, y, w, h)：贴对应边 + 沿副轴居中 + 偏移。
+
+    `off_x` / `off_y` 是屏幕坐标偏移（v12 反馈 35）：
+    - 水平 dock：off_x 沿边平移，off_y 向屏幕内/外推
+    - 垂直 dock：off_y 沿边平移，off_x 向屏幕内/外推
+    `center=False` 时贴起点（左/上），不再沿边居中。
+    """
     W, H = int(size[0]), int(size[1])
     pos = normalize_position(position)
+    ox, oy = int(off_x), int(off_y)
     if pos in ("bottom", "top"):
         w, h = min(m.length, W), m.thickness
-        x = max(0, (W - w) // 2)
+        x = max(0, (W - w) // 2) if center else 0
+        x = max(0, min(W - w, x + ox))
         y = H - h if pos == "bottom" else 0
+        # 正偏移 = 向屏幕内侧（底部 dock 往上，顶部 dock 往下）
+        if pos == "bottom":
+            y = max(0, min(H - h, y - oy))
+        else:
+            y = max(0, min(H - h, y + oy))
         return (x, y, w, h)
     w, h = m.thickness, min(m.length, H)
-    y = max(0, (H - h) // 2)
+    y = max(0, (H - h) // 2) if center else 0
+    y = max(0, min(H - h, y + oy))
     x = W - w if pos == "right" else 0
+    # 正偏移 = 向屏幕内侧（右侧 dock 往左，左侧 dock 往右）
+    if pos == "right":
+        x = max(0, min(W - w, x - ox))
+    else:
+        x = max(0, min(W - w, x + ox))
     return (x, y, w, h)
 
 
@@ -561,7 +648,10 @@ class DockWindow(QWidget):
             self.hide()
             self._bar = (0, 0, 0, 0)
             return self._bar
-        self._bar = bar_rect(self._avail, self._position, self._m)
+        self._bar = bar_rect(
+            self._avail, self._position, self._m,
+            off_x=offset_x(self.storage), off_y=offset_y(self.storage),
+            center=center_along_edge(self.storage))
         # 2026-10-23 反馈 6：位置切换必须**真的动**。旧实现只在"不可见时
         # show"，可见时依赖 setGeometry——几何是对的，但分层窗口在桌面带里
         # 被 SetWindowPos 重排过 z-order 后，Windows 偶尔会把窗口位置回退到

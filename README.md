@@ -199,6 +199,8 @@ pwsh -File scripts/build_portable.ps1
 
 > 按**安装包版本号**倒序；括号内是内部迭代标签（见 `src/version.py`，界面右键菜单底部可看构建时刻）。更多细节见 [`docs/release_notes/`](docs/release_notes/)。
 
+### 7.0.0（v12a）· 设置面板修复 · Dock 四向内边距与位置 · 监控组件 2x1 → [发布说明](docs/release_notes/7.0.0.md)
+
 ### 6.2.0（v11c）· 音乐组件抓封面 · 没进度就不画进度条 → [发布说明](docs/release_notes/6.2.0.md)
 
 - **音乐组件显示专辑封面**：读 SMTC 的 `MediaProperties.Thumbnail`，按内容哈希缓存到 `%APPDATA%/PhoneDesktop/media_cover_*.img`，圆角居中裁切绘制；换歌才重新读盘，缓存只留最近 6 张
