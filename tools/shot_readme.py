@@ -945,10 +945,13 @@ def shot_dock():
     两个真实 `DockWindow`：底部横向（7 个应用，第 4 个停在悬停放大态）
     + 左侧竖向（4 个应用）——位置四向可调用"左右各一个"演示，比空口说
     四向更直观。液态玻璃默认开着（v14 反馈 9），色散/透镜边直接入镜。
+
+    **必须走 `apply_geometry()`**：图标位置由 `item_rect(bar, …)` 算，
+    `bar` 是 `apply_geometry` 里才求出来的。只 `resize()` 的话 `_bar`
+    还是 (0,0,0,0)，`(h - icon)//2` 变成 `(0 - 44)//2 = -22`——图标全部
+    顶到条带上沿并截掉一半（2026-10-24 用户指出"图标没有居中"的真因）。
     """
-    from PySide6.QtCore import QPoint
     from PySide6.QtGui import QPainter
-    from PySide6.QtWidgets import QWidget
 
     from src import dock as dockmod
 
@@ -957,7 +960,12 @@ def shot_dock():
 
     d = dockmod.DockWindow(st)
     d.setAttribute(Qt.WA_DontShowOnScreen, True)
-    d.resize(400, 82)
+    orig_show = dockmod.DockWindow.show
+    dockmod.DockWindow.show = lambda self: None      # 别在用户屏幕上闪一下
+    try:
+        d.apply_geometry((W, H))                    # 真实几何：算出 _bar + setGeometry
+    finally:
+        dockmod.DockWindow.show = orig_show
     d._hover_index = 3               # 第 4 个图标：停在"被悬停"的稳态
     d._set_hover_t(1.0)
     QApplication.processEvents()
@@ -967,8 +975,16 @@ def shot_dock():
                     dock_items=demo_apps.entries(demo_apps.DESKTOP[:4]))
     dv = dockmod.DockWindow(st_v)
     dv.setAttribute(Qt.WA_DontShowOnScreen, True)
-    dv.resize(82, 4 * 44 + 3 * 12 + 20)
+    dockmod.DockWindow.show = lambda self: None
+    try:
+        dv.apply_geometry((W, H))
+    finally:
+        dockmod.DockWindow.show = orig_show
     QApplication.processEvents()
+
+    # 渲染成 pixmap 再贴到画布：窗口自身尺寸 == 条带尺寸，图标才与背板对齐
+    pm = _snap(d)
+    pm_v = _snap(dv)
 
     img = _blank()
     p = QPainter(img)
@@ -978,18 +994,22 @@ def shot_dock():
               "邻居让位；液态玻璃的光学层默认叠在上面", 52, 78, 14, "#9DAABF",
            w=1240)
 
-    # 底部横向主 Dock（壁纸上居中偏下；与右侧要点列表错开，不叠字）
-    dx, dy = (W - 400) // 2, 430
-    d.render(p, QPoint(dx, dy), d.rect(), QWidget.DrawChildren)
-    # 悬停标注：箭头 + 文案指向被放大的那个图标（第 4 个的中心 x）
-    hx = dx + 10 + 3 * (44 + 12) + 22
-    _label(p, "悬停抬起 · 邻居让位", hx - 110, dy + 100, 14, "#D7DEEA",
+    # 底部横向主 Dock（与右侧要点列表错开，不叠字）
+    bw = int(d.size().width())
+    bh = int(d.size().height())
+    dx, dy = (W - bw) // 2, 430
+    p.drawPixmap(int(dx), int(dy), pm)
+    # 悬停标注：从真实 item_rect 反推第 4 个图标的中心（drawPixmap 偏移后）
+    ix, _iy, iw, _ih = dockmod.item_rect(d._bar, d._position, d._m, 3)
+    hx = dx + (ix - d._bar[0]) + iw // 2
+    _label(p, "悬停抬起 · 邻居让位", hx - 110, dy + bh + 18, 14, "#D7DEEA",
            w=240, shadow=True)
 
     # 左侧竖向小 Dock
+    vw, vh = int(dv.size().width()), int(dv.size().height())
     vx, vy = 96, 200
-    dv.render(p, QPoint(vx, vy), dv.rect(), QWidget.DrawChildren)
-    _label(p, "同一根条带，四向摆放", vx - 26, vy + 4 * 44 + 3 * 12 + 34, 13,
+    p.drawPixmap(int(vx), int(vy), pm_v)
+    _label(p, "同一根条带，四向摆放", vx - 26, vy + vh + 22, 13,
            "#CBD5E6", w=220, shadow=True)
 
     # 右侧：这个栏能做什么（按"用户会怎么用它"组织，不按代码结构）
