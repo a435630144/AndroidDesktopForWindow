@@ -6,6 +6,7 @@ v8 C1 起组件的"静态事实"全部来自 `widget_registry`——本模块只
 新增组件请改 `src/widget_registry.py` 的 `REGISTRY`，这里一行都不用动。
 """
 import uuid
+import weakref
 
 from PySide6.QtCore import QObject, QPoint, Signal
 from PySide6.QtWidgets import QApplication
@@ -41,6 +42,12 @@ class WidgetLayer(QObject):
         self.storage = storage
         self.widgets = {}  # entry_id -> FloatingWidget
         self._band_guard = BandGuard()
+        # 上次落位用的布局模式（grid / free）：apply_layout_mode 靠它判断
+        # "要不要重建"——模式没变只重排，避免无谓地关窗重建
+        self._applied_mode = grid_flow.layout_mode(storage)
+        # 本层创建过的所有窗口（弱引用）：重建/关闭出岔子时用来清扫"孤儿"
+        # 窗口——它们看不见但仍是 HTCLIENT，会吞掉组件上的点击（v10 反馈 28）
+        self._spawned = []
         for entry in self.storage.widgets:
             self._place_default(entry)
             self._spawn(entry)
@@ -83,6 +90,12 @@ class WidgetLayer(QObject):
     def _spawn(self, entry):
         if entry.get("hidden"):
             return
+        # 同一 entry 已有窗口（重建竞态 / 重复 spawn）：先销毁旧的，
+        # 否则旧窗口会以透明度 0 留在原地吃点击（v10 反馈 28）
+        old = self.widgets.get(entry.get("id"))
+        if old is not None:
+            self._destroy_now(old)
+            self.widgets.pop(entry.get("id"), None)
         # v9 V3：工厂走注册表而不是模块级字典快照——外部插件是运行时
         # 注册的，`WIDGET_TYPES` 在 import 时就定死了，拿不到新组件。
         spec = widget_registry.get(entry.get("type"))
@@ -140,6 +153,7 @@ class WidgetLayer(QObject):
         w.anchorHover.connect(self.anchorHover.emit)
         w.anchorDrop.connect(self.anchorDrop.emit)
         self.widgets[entry["id"]] = w
+        self._spawned.append(weakref.ref(w))
         w.show()
         # v6 §4：不在当前页的锚定组件隐藏——组件是**顶层窗口**（不像
         # 图标是桌面窗口子控件会被裁剪），静止态露在屏顶/屏底就是半截
@@ -167,20 +181,117 @@ class WidgetLayer(QObject):
                 pass
 
     def apply_layout_mode(self):
-        """v6 §1.3 模式切换后重排组件：关闭全部再按新模式 spawn。
+        """网格几何 / 模式变化后重排组件。
 
-        锚定组件的位置来源（cell_pos ↔ fx/fy）与尺寸来源（span 派生 ↔
-        用户像素）都随模式变，逐个 set_anchored 式的原地切换表达不了
-        「整体刷新」——3 个组件全量重建成本可忽略，语义最干净。
+        v10 反馈 28（组件左侧"看不见的盲区"）：旧实现**无条件**关掉全部
+        组件再重建，而关闭走的是 140ms 淡出；淡出一旦被打断（松手回弹 /
+        再次 show / 新的淡入），旧窗口就永远留在原地——透明度 0、看不见、
+        却仍然是 HTCLIENT，把点击吃掉。组件一移动，露出来的那条就是
+        用户报的"左侧 1 格宽、N 格高"的盲区。
+
+        现在分两条路：
+        - **模式没变**（改图标尺寸 / Dock inset / 网格原点 / 分辨率）：
+          只按新几何重新落位 + 改尺寸，**不重建窗口**——重建没有视觉
+          收益，反而是命中壳的唯一来源；
+        - **模式变了**（网格 ↔ 无界）：位置与尺寸来源都换，立即销毁重建
+          （`destroy_now`，不播淡出）。
         """
+        mode = grid_flow.layout_mode(self.storage)
+        if mode == self._applied_mode:
+            self._reflow_existing()
+            self.sweep_orphans()
+            return
         for w in list(self.widgets.values()):
-            self._band_guard.untrack(w)
-            w.close()
+            self._destroy_now(w)
         self.widgets.clear()
+        self._applied_mode = mode
         for entry in self.storage.widgets:
             if entry.get("hidden"):
                 continue
             self._spawn(entry)
+        self.sweep_orphans()
+
+    def _destroy_now(self, w):
+        """立即销毁组件窗口（重建路径）：不播淡出，不留命中壳。"""
+        self._band_guard.untrack(w)
+        try:
+            w.destroy_now()
+        except (RuntimeError, AttributeError):
+            pass
+
+    def orphan_count(self) -> int:
+        """不在 widgets 表里、**仍然可见**的组件窗口数（正常必须为 0）。
+
+        判据必须带"可见"：重建路径里旧对象可能还在 `deleteLater` 队列中
+        （已隐藏、已关窗），它不可能吃点击，不算孤儿——否则每次模式切换
+        都会误报一个。
+        """
+        alive = {id(w) for w in self.widgets.values()}
+        n = 0
+        for ref in self._spawned:
+            w = ref()
+            if w is None or id(w) in alive:
+                continue
+            try:
+                if w.isVisible():
+                    n += 1
+            except RuntimeError:
+                continue
+        return n
+
+    def sweep_orphans(self) -> int:
+        """清扫孤儿组件窗口：重建竞态留下的透明命中壳。
+
+        判据是"本层创建过 + 已不在 widgets 表"，与外部窗口无关；销毁走
+        `destroy_now`（不播淡出），所以不会有二次动画窗口。
+        """
+        alive = {id(w) for w in self.widgets.values()}
+        keep, killed = [], 0
+        for ref in self._spawned:
+            w = ref()
+            if w is None:
+                continue
+            keep.append(ref)
+            if id(w) in alive:
+                continue
+            try:
+                w.destroy_now()
+                killed += 1
+            except RuntimeError:
+                pass
+        self._spawned = keep
+        return killed
+
+    def _reflow_existing(self):
+        """按当前几何重新摆放**已有**窗口（不重建）。
+
+        单一真相源：位置 = 格位重算的 card_pos，尺寸 = span × cell × fill，
+        与 `_spawn` / 吸附落定走同一对函数——三处不得各算一份。
+        """
+        from . import widget_geom
+
+        free = grid_flow.free_mode(self.storage)
+        for entry in self.storage.widgets:
+            if entry.get("hidden"):
+                continue
+            w = self.widgets.get(entry.get("id"))
+            if w is None:
+                self._spawn(entry)
+                continue
+            if free or not w.anchored:
+                # 无界：几何就是 entry 里的用户像素值（窗口已在位，仅同步）
+                w.move(int(entry.get("x", w.x())), int(entry.get("y", w.y())))
+                continue
+            span = grid_flow.widget_span(self.storage, entry)
+            entry["colspan"], entry["rowspan"] = span
+            col = int(entry.get("col", 0))
+            row = int(entry.get("row", 0))
+            entry["x"], entry["y"] = widget_geom.card_pos(
+                self.storage, col, row, span)
+            entry["w"], entry["h"] = widget_geom.card_size(self.storage, span)
+            w._place_card(col, row, span)
+            w.update()
+        self.storage.save()
 
     def _on_closed(self, widget_id):
         w = self.widgets.pop(widget_id, None)
@@ -275,8 +386,8 @@ class WidgetLayer(QObject):
         self.storage.save()
         w = self.widgets.pop(entry_id, None)
         if w is not None:
-            self._band_guard.untrack(w)
-            w.close()
+            # 形态切换是重建（新窗口立刻出现在同一位置）：立即销毁，不播淡出
+            self._destroy_now(w)
         self._spawn(entry)
 
     def set_visible(self, on: bool):

@@ -17,6 +17,15 @@ from PySide6.QtCore import QTimer
 from .storage import entry_app
 
 
+def _orphans(layer) -> int:
+    """孤儿组件窗口数；layer 桩/旧实现没有这个计数时返回 0。"""
+    fn = getattr(layer, "orphan_count", None)
+    try:
+        return int(fn()) if callable(fn) else 0
+    except (TypeError, ValueError, RuntimeError):
+        return 0
+
+
 def collect_info(window, layer) -> dict:
     """采集自测诊断信息。纯读取，不抛异常（脏条目走 entry_app 兜底）。"""
     from . import i18n, win32_layer
@@ -35,6 +44,10 @@ def collect_info(window, layer) -> dict:
         "desktop_file_entries": sum(
             1 for e in layout if entry_app(e).get("kind") == "file"),
         "widgets": len(layer.widgets),
+        # 孤儿组件窗口数（正常必须 0）：重建竞态留下的窗口看不见却吃点击，
+        # 是"组件上有一块点不动"的直接来源（v10 反馈 28）。
+        # 用 getattr 兜底：单测里的 layer 桩不一定实现这个计数。
+        "widget_orphans": (_orphans(layer)),
         "widgets_attached": {wid: getattr(w, "attached", None)
                              for wid, w in layer.widgets.items()},
         "entries": len(layout),

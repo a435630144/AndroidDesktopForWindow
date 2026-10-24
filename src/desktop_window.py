@@ -311,6 +311,13 @@ class DesktopWindow(QWidget):
         # 重新显示后 Windows 可能改变 z-order，重新插回桌面带
         attach_to_desktop(self, layer=win32_layer.BAND_LAYER_DESKTOP)
         win32_layer.enforce_band_order()
+        # 每次重新出场顺手清一遍孤儿组件窗口：它们看不见却是 HTCLIENT，
+        # 会把组件上的点击吃掉（v10 反馈 28 的"盲区"）
+        if self._widget_layer is not None:
+            try:
+                self._widget_layer.sweep_orphans()
+            except (RuntimeError, AttributeError):
+                pass
         self.visibilityChanged.emit(True)
 
     def hide_desktop(self):
@@ -704,8 +711,27 @@ class DesktopWindow(QWidget):
                 return True, HTTRANSPARENT
         return super().nativeEvent(eventType, message)
 
+    def _logical_point(self, pt):
+        """WM_NCHITTEST 的 lParam 是**物理像素**，Qt 几何是**逻辑坐标**。
+
+        v10 反馈 28：125% 缩放下两者差 25%，`_hit_widget` 直接拿物理点
+        比逻辑矩形，兜底放行区只盖住组件左上角的一小块——其余部分被本
+        窗口 `HTCLIENT` 吞掉，表现就是"组件上有一块怎么点都没反应"。
+        """
+        try:
+            dpr = float(self.devicePixelRatioF()) or 1.0
+        except (RuntimeError, AttributeError):
+            dpr = 1.0
+        if abs(dpr - 1.0) < 1e-6:
+            return pt
+        return QPoint(int(round(pt.x() / dpr)), int(round(pt.y() / dpr)))
+
     def _hit_widget(self, global_pos) -> bool:
-        """命中点是否落在某个可见小组件窗口内（nativeEvent 兜底放行用）。"""
+        """命中点是否落在某个可见小组件领地内（nativeEvent 兜底放行用）。
+
+        判据两级：窗口矩形（视觉真相）+ span 盒（领地）——卡片按填充比例
+        比盒子小一圈，那圈缝也不该由全屏整理窗口吞掉。
+        """
         layer = self._widget_layer
         if layer is None:
             return False
@@ -713,14 +739,25 @@ class DesktopWindow(QWidget):
             items = list(layer.widgets.values())
         except Exception:
             return False
+        pt = self._logical_point(global_pos)
+        from . import widget_geom
         for w in items:
             try:
                 if not w.isVisible():
                     continue
                 r = QRect(w.mapToGlobal(QPoint(0, 0)), w.size())
-                if r.contains(global_pos):
+                if r.contains(pt):
                     return True
-            except RuntimeError:
+                e = getattr(w, "entry", None) or {}
+                if not (e.get("anchored") and "col" in e and "row" in e):
+                    continue
+                span = grid_flow.widget_span(self.storage, e)
+                bw, bh = widget_geom.span_box(self.storage, span)
+                bx, by = grid_flow.cell_pos(self.storage, int(e["col"]),
+                                            int(e["row"]))
+                if QRect(bx, by, bw, bh).contains(pt):
+                    return True
+            except (RuntimeError, TypeError, ValueError):
                 continue
         return False
 

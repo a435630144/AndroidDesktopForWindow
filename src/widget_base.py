@@ -20,7 +20,7 @@
   - 锚定吸附：松手后弹簧滑到网格格点（grid_flow.snap_point）
 """
 from PySide6.QtCore import (QEasingCurve, QPoint, QPointF, QPropertyAnimation,
-                            QRect, QRectF, Qt, Signal)
+                            QRect, QRectF, Qt, QTimer, Signal)
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
@@ -244,6 +244,11 @@ class FloatingWidget(QWidget):
 
     def showEvent(self, e):
         super().showEvent(e)
+        if self._closing:
+            # 已在关闭流程里的窗口被 show() 拉回：拒绝复活，否则退场动画被
+            # 打断 → 留下透明度 0 的命中壳（v10 反馈 28）
+            self.hide()
+            return
         # 挂载到桌面带（Progman 正上方）：失败则保持普通无边框窗口（不置顶）。
         # 每次重新显示都重新插入：隐藏再显示后 Windows 可能已改变 z-order。
         # 层号 = WIDGET：组件必须**压在整理窗口之上**，否则接管模式下全屏
@@ -260,6 +265,10 @@ class FloatingWidget(QWidget):
     # ---------- 透明度动画（进场 / 退场 / 拖动提拉共用） ----------
     def _fade(self, start: float, end: float, ms: int,
               easing=None, done=None):
+        # 关闭中禁止任何淡入：否则会 stop() 掉退场动画，窗口以透明度 0
+        # 留在屏幕上（看不见但照吃点击，见 `close()` 注释）
+        if self._closing:
+            return
         for a in list(self._anims):
             a.stop()
         anim = QPropertyAnimation(self, b"windowOpacity", self)
@@ -277,15 +286,62 @@ class FloatingWidget(QWidget):
         return anim
 
     def close(self):
-        """淡出后才真正关闭（进出场同路径）；动画期间防重入。"""
+        """淡出后才真正关闭（进出场同路径）；动画期间防重入。
+
+        v10 反馈 28（组件左侧"看不见的盲区"）：淡出是**异步**的，任何一次
+        后续 `_fade`（松手回弹 / 再次 show / 模式切换的淡入）都会先
+        `stop()` 掉这条动画，`_really_close` 于是永远不到 —— 窗口以
+        `windowOpacity()==0` 留在屏幕上：肉眼看不见，但它的窗口仍然
+        HTCLIENT，照样把点击吃掉。修两道防线：
+        1) 关闭中拒绝一切新淡入（见 `_fade` / `showEvent`）；
+        2) 定时兜底强制销毁 —— 动画被打断也必须收尾。
+        """
         if self._closing:
             return
-        self._closing = True
         self._fade(float(self.windowOpacity()), 0.0, 140,
                    QEasingCurve.InCubic, done=self._really_close)
+        self._closing = True
+        QTimer.singleShot(400, self._really_close)
 
     def _really_close(self):
-        super().close()
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+        self._closing = True
+        for a in list(getattr(self, "_anims", [])):
+            try:
+                a.stop()
+            except RuntimeError:
+                pass
+        self._anims.clear()
+        try:
+            super().close()
+        except RuntimeError:
+            pass
+
+    def destroy_now(self):
+        """立即销毁窗口（组件重建 / 模式切换路径）：不播淡出。
+
+        重建路径没有"退场"的视觉需求（新窗口马上出现在同一位置），却
+        承担了淡出被打断留下命中壳的全部风险 —— 直接关。
+        """
+        self._closing = True
+        self._closed = True
+        for a in list(getattr(self, "_anims", [])):
+            try:
+                a.stop()
+            except RuntimeError:
+                pass
+        self._anims.clear()
+        try:
+            self.hide()
+        except RuntimeError:
+            pass
+        try:
+            super().close()
+        except RuntimeError:
+            pass
+        self.deleteLater()
 
     # ---------- 几何持久化 ----------
     def _save_geom(self):

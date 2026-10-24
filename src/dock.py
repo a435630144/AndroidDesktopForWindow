@@ -34,7 +34,7 @@ from __future__ import annotations
 import os
 from typing import NamedTuple
 
-from PySide6.QtCore import (QEasingCurve, QPoint, QPropertyAnimation, QRect,
+from PySide6.QtCore import (QEasingCurve, QPoint, QPointF, QPropertyAnimation, QRect,
                             QRectF, Qt, QTimer, Property, Signal)
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
