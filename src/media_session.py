@@ -38,6 +38,18 @@ v11 改成**PowerShell 侧车**：PowerShell 5.1 能直接用
 `歌名 - 歌手`，所以还能拿到曲名——只是拿不到时长/进度，界面必须明示
 「仅曲名」。这一档用 `EnumWindows` + `QueryFullProcessImageNameW` 认进程，
 **只认白名单里的播放器**（浏览器标签页标题太杂，不收）。
+
+## 封面（v11c）
+
+SMTC 的 `MediaProperties.Thumbnail` 是 `IRandomAccessStreamReference`，但
+PowerShell 5.1 **读不了它的结果**：`OpenReadAsync()` 回来的是裸
+`__ComObject`，`.Size` 静默为 0，转 `IInputStream` 直接抛。绕法是
+`RandomAccessStream.CopyAsync` 反射 + `InMemoryRandomAccessStream`（PS 能
+投影这个*类*）→ `DataReader` 读字节，见 `src/media_cover.ps1`（内部有实测
+记录）。侧车把图片写进 `%APPDATA%/PhoneDesktop/media_cover_<hash>.img`，
+只回传路径 + 内容哈希；组件按哈希缓存 QPixmap，换歌时才重新读盘。
+**播放器不发布缩略图时没有封面可抓**——这时退回音符占位，不是 bug。
+
 """
 from __future__ import annotations
 
@@ -113,6 +125,10 @@ class MediaInfo:
     partial: bool = False
     stamp: float = 0.0             # time.monotonic() 抓取时刻
     seekable: bool = False         # 能否拖动进度条
+    # v11c：SMTC `MediaProperties.Thumbnail` 落到本地缓存的封面图路径。
+    # 空串 = 播放器没发布缩略图（或当前是窗口标题档 / 演示态）。
+    cover: str = ""
+    cover_id: str = ""             # 封面内容哈希（换图才重绘 + 缓存键）
 
     def position_at(self, now: Optional[float] = None) -> float:
         """当前播放位置（带插值）。`now` 缺省/异常一律回原始 position。"""
@@ -268,6 +284,54 @@ CREATE_NO_WINDOW = 0x08000000
 # 所以侧车不需要跟得那么紧——1.2s 一次足够，省 CPU（WinRT 每次都要过一遍
 # 属性异步读 + 三条会话查询）。
 SIDECAR_INTERVAL_MS = 1200
+# 封面缓存：侧车把播放器给的缩略图写成 `media_cover_<hash>.img`，
+# 放在应用数据目录；只保留最近几张（换歌会持续产生新文件）。
+COVER_PREFIX = "media_cover_"
+COVER_KEEP = 6
+
+
+def cover_dir() -> str:
+    """封面缓存目录（`%APPDATA%/PhoneDesktop`）。路径不可用时返回空串。"""
+    try:
+        from .paths import ensure_app_dirs
+        return str(ensure_app_dirs())
+    except Exception:      # noqa: BLE001
+        return ""
+
+
+def prune_covers(keep: str = "", keep_count: int = COVER_KEEP) -> int:
+    """删掉旧封面缓存（保留 `keep` 与最新的几张），返回删除数。
+
+    只碰自己的 `media_cover_*.img`——数据目录里还有 state.json /
+    用户导入的组件，绝不能按目录整体清理。
+    """
+    d = cover_dir()
+    if not d:
+        return 0
+    try:
+        names = [n for n in os.listdir(d)
+                 if n.startswith(COVER_PREFIX) and n.endswith(".img")]
+    except OSError:
+        return 0
+    keep_name = os.path.basename(keep) if keep else ""
+    files = []
+    for n in names:
+        p = os.path.join(d, n)
+        try:
+            files.append((os.path.getmtime(p), p, n))
+        except OSError:
+            continue
+    files.sort(reverse=True)
+    removed = 0
+    for _mtime, path, name in files[keep_count:]:
+        if name == keep_name:
+            continue
+        try:
+            os.remove(path)
+            removed += 1
+        except OSError:
+            pass
+    return removed
 
 
 def _powershell_exe() -> str:
@@ -341,6 +405,9 @@ class SmtcSource(MediaSessionSource):
         exe = _powershell_exe()
         args = [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                 "-File", self._script, self._cmd_path, str(self._interval_ms)]
+        cover = cover_dir()
+        if cover:
+            args.append(cover)
         try:
             kw = {}
             if os.name == "nt":
@@ -391,8 +458,12 @@ class SmtcSource(MediaSessionSource):
                 if info is None:
                     continue
                 with self._lock:
+                    changed = info.cover != self._info.cover
                     self._info = info
                     self._ok_at = time.monotonic()
+                if changed and info.cover:
+                    # 换歌才扫目录（最多 6 个文件，开销可忽略）
+                    prune_covers(info.cover)
         except Exception:      # noqa: BLE001
             pass
         # 进程退出：保留最后一次快照不再更新，`fresh()` 会判过期
@@ -481,6 +552,8 @@ def parse_sidecar_line(raw) -> Optional[MediaInfo]:
         partial=False,
         stamp=time.monotonic(),
         seekable=dur > 0,
+        cover=str(data.get("cover") or ""),
+        cover_id=str(data.get("cover_id") or ""),
     )
 
 

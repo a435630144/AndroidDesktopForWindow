@@ -1,11 +1,17 @@
 # PhoneDesktop media sidecar (SMTC reader).
 #
 # Usage:
-#   powershell -NoProfile -ExecutionPolicy Bypass -File media_smtc.ps1 <cmd.json> <interval_ms>
+#   powershell -NoProfile -ExecutionPolicy Bypass -File media_smtc.ps1 <cmd.json> <interval_ms> [cover_dir]
 #
 # Protocol (one line per sample, ASCII safe):
 #   B64:<base64 of UTF-8 JSON>
-# JSON keys: ok, has, title, artist, album, playing, pos, dur, app
+# JSON keys: ok, has, title, artist, album, playing, pos, dur, app, cover, cover_id
+#
+# `cover` is an absolute path to a cached album-art image (empty when the
+# player publishes no thumbnail); `cover_id` is a short content hash so the
+# UI can cache the decoded pixmap. Stream decoding lives in `media_cover.ps1`
+# (PowerShell 5.1 cannot read the WinRT interface result directly; see the
+# comment block in that file).
 #
 # This file is intentionally ASCII-only: Windows PowerShell 5.1 reads .ps1
 # files using the ANSI code page unless they carry a UTF-8 BOM, so any
@@ -17,8 +23,10 @@ $ErrorActionPreference = 'Continue'
 
 $cmdPath = $null
 $interval = 1200
+$coverDir = $null
 if ($args.Count -ge 1) { $cmdPath = [string]$args[0] }
 if ($args.Count -ge 2) { $interval = [int]$args[1] }
+if ($args.Count -ge 3) { $coverDir = [string]$args[2] }
 if ($interval -lt 300) { $interval = 300 }
 
 function Emit([hashtable]$obj) {
@@ -71,8 +79,17 @@ if ($null -eq $script:manager) {
 }
 
 $propsType = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties]
+
+# Cover decoding helper (same folder). Missing file just means "no artwork".
+$coverLib = Join-Path $PSScriptRoot 'media_cover.ps1'
+if (Test-Path -LiteralPath $coverLib) { . $coverLib }
+
 $script:lastSeq = -1
 $script:lastCmdWrite = [DateTime]::MinValue
+$script:coverKey = ''
+$script:coverPath = ''
+$script:coverId = ''
+$script:coverMissAt = [DateTime]::MinValue
 
 function Pick-Session {
     $s = $null
@@ -80,6 +97,9 @@ function Pick-Session {
     if ($null -ne $s) { return $s }
     try {
         $all = $script:manager.GetSessions()
+        # PowerShell 5.1 does not project WinRT IVectorView (Size/GetAt come
+        # back empty). Enumerating it with ForEach-Object still works because
+        # PowerShell falls back to COM enumeration, so keep this form.
         foreach ($cand in $all) {
             try {
                 $info = $cand.GetPlaybackInfo()
@@ -95,6 +115,34 @@ function Pick-Session {
     return $null
 }
 
+# Copy the player-provided thumbnail into the cover cache.
+# Returns @{ path = '...'; id = '...' } or $null.
+function Save-Cover($props, $key) {
+    if (-not $coverDir) { return $null }
+    if ($null -eq $props -or $null -eq $props.Thumbnail) { return $null }
+    try {
+        if (-not (Get-Command Get-CoverBytes -ErrorAction SilentlyContinue)) { return $null }
+        $bytes = Get-CoverBytes $props.Thumbnail
+        if ($null -eq $bytes -or $bytes.Length -lt 64) { return $null }
+        $sha = [System.Security.Cryptography.SHA1]::Create()
+        $hash = [BitConverter]::ToString($sha.ComputeHash($bytes))
+        $hash = $hash.Replace('-', '').Substring(0, 16).ToLower()
+        if (-not (Test-Path -LiteralPath $coverDir)) {
+            New-Item -ItemType Directory -Path $coverDir -Force | Out-Null
+        }
+        $path = Join-Path $coverDir ('media_cover_' + $hash + '.img')
+        if (-not (Test-Path -LiteralPath $path)) {
+            # temp + move: a reader must never see a half-written image
+            $tmp = $path + '.tmp'
+            [System.IO.File]::WriteAllBytes($tmp, $bytes)
+            Move-Item -LiteralPath $tmp -Destination $path -Force
+        }
+        return @{ path = $path; id = $hash }
+    } catch {
+        return $null
+    }
+}
+
 while ($true) {
     $session = $null
     try { $session = Pick-Session } catch { $session = $null }
@@ -106,12 +154,13 @@ while ($true) {
             $title = ''
             $artist = ''
             $album = ''
+            $props = $null
             try {
-                $p = Await ($session.TryGetMediaPropertiesAsync()) $propsType
-                if ($null -ne $p) {
-                    if ($null -ne $p.Title) { $title = [string]$p.Title }
-                    if ($null -ne $p.Artist) { $artist = [string]$p.Artist }
-                    if ($null -ne $p.AlbumTitle) { $album = [string]$p.AlbumTitle }
+                $props = Await ($session.TryGetMediaPropertiesAsync()) $propsType
+                if ($null -ne $props) {
+                    if ($null -ne $props.Title) { $title = [string]$props.Title }
+                    if ($null -ne $props.Artist) { $artist = [string]$props.Artist }
+                    if ($null -ne $props.AlbumTitle) { $album = [string]$props.AlbumTitle }
                 }
             } catch { }
             $pos = 0.0
@@ -132,6 +181,34 @@ while ($true) {
             } catch { }
             $app = ''
             try { $app = [string]$session.SourceAppUserModelId } catch { }
+
+            # Cover: fetch only when the track changes (reading the WinRT
+            # stream every tick would be wasteful). Retry every 5s if the
+            # player had no thumbnail yet (some players fill it in late).
+            $key = $title + '|' + $artist
+            if ($key -ne $script:coverKey) {
+                $script:coverKey = $key
+                $script:coverPath = ''
+                $script:coverId = ''
+                $script:coverMissAt = [DateTime]::MinValue
+                $got = Save-Cover $props $key
+                if ($null -ne $got) {
+                    $script:coverPath = [string]$got.path
+                    $script:coverId = [string]$got.id
+                }
+            } elseif (-not $script:coverPath -and $title) {
+                $now = [DateTime]::UtcNow
+                if ($script:coverMissAt -eq [DateTime]::MinValue -or
+                    ($now - $script:coverMissAt).TotalSeconds -ge 5) {
+                    $script:coverMissAt = $now
+                    $got = Save-Cover $props $key
+                    if ($null -ne $got) {
+                        $script:coverPath = [string]$got.path
+                        $script:coverId = [string]$got.id
+                    }
+                }
+            }
+
             if ([string]::IsNullOrWhiteSpace($title)) {
                 Emit @{ ok = $true; has = $false }
             } else {
@@ -139,6 +216,7 @@ while ($true) {
                     ok = $true; has = $true; title = $title; artist = $artist
                     album = $album; playing = $playing
                     pos = $pos; dur = $dur; app = $app
+                    cover = $script:coverPath; cover_id = $script:coverId
                 }
             }
         } catch {

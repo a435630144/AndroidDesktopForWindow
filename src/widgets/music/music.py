@@ -10,24 +10,29 @@
 **它不是播放器**：控制的是本机正在放的应用（媒体键），数据源见
 `media_session` 模块头部——SMTC 侧车（真实曲名/进度/可 seek）> 窗口标题
 （只有曲名）> 演示态。三种档位都必须在界面上可区分：
-  真会话      → 正常曲名 + 进度 + 剩余时间
-  仅标题档    → 曲名 + 「仅曲名 · 播放器未提供进度」（`partial`）
-  演示态      → 「未检测到播放器信息」（`demo`）
+  真会话      → 封面（播放器给了缩略图时）+ 正常曲名 + 进度 + 剩余时间
+  仅标题档    → 曲名 + 「仅曲名 · 无进度」，**整条进度条都不画**（v11c）
+  演示态      → 「未检测到播放器信息」
 
 v11（反馈 30）追加：**进度条可拖**。按住进度条左右拖 = 预览位置，松手
 才落 seek（拖动过程中不打断播放器）；拖动时右侧读数变成目标时间。
+
+v11c（用户反馈）：① 有 SMTC 缩略图就画真封面（圆角裁切 + 缓存）；
+② **拿不到时长就不画进度条**——空底轨既占地方又像"卡在 0"。
 
 按钮图形走 `QPainterPath` 自绘（三角/双竖条），不用字体图标：
 ⏮⏯⏭ 这类码位在 Windows 某些字体里会画成豆腐块，自绘零风险。
 """
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from typing import Dict, Optional
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
+from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QPainter, QPainterPath,
+                           QPen, QPixmap)
 
 from ... import theme
 from ...media_session import (MediaInfo, MediaSessionSource, create_source,
@@ -82,13 +87,22 @@ def layout(rect, info: Optional[MediaInfo] = None) -> Dict:
     # 竖直预算：文字块 → 间距 → 进度条 → 5px → 时间行 → 按键行 → 底边
     reserve = row_h + 5.0 + 2.0 * 2.0 + 2.0 * btn_r + 4.0
     text_bottom = max(cover.bottom(), artist_rect.bottom())
-    bar_y = text_bottom + max(4.0, inner.height() * 0.10)
-    bottom_limit = inner.bottom() - BAR_H - 1.0
-    if inner.height() > reserve + BAR_H + 8.0:      # 空间够才给按键行留位置
-        bottom_limit = min(bottom_limit, inner.bottom() - reserve - BAR_H)
-    bar_y = max(inner.top(), min(bar_y, bottom_limit))
-    bar = QRectF(inner.left(), bar_y, inner.width(), BAR_H)
-    row = QRectF(inner.left(), bar.bottom() + 5.0, inner.width(), row_h)
+    # v11c：拿不到时长（窗口标题档 / 播放器不报 timeline）就**不画进度条**，
+    # 连它的位置也不留——留一条空底轨既占地方又像"卡住了"。
+    # info=None 是"信息未知"的旧调用（布局单测），保持有进度条的旧行为。
+    has_bar = info is None or info.duration > 0
+    if has_bar:
+        bar_y = text_bottom + max(4.0, inner.height() * 0.10)
+        bottom_limit = inner.bottom() - BAR_H - 1.0
+        if inner.height() > reserve + BAR_H + 8.0:  # 空间够才给按键行留位置
+            bottom_limit = min(bottom_limit, inner.bottom() - reserve - BAR_H)
+        bar_y = max(inner.top(), min(bar_y, bottom_limit))
+        bar = QRectF(inner.left(), bar_y, inner.width(), BAR_H)
+        row = QRectF(inner.left(), bar.bottom() + 5.0, inner.width(), row_h)
+    else:
+        bar = QRectF()
+        row = QRectF(inner.left(), text_bottom + max(3.0, inner.height() * 0.05),
+                     inner.width(), row_h)
 
     # 按键在"时间行之下、底边之上"这段里居中：上下留白对称，不压文字
     avail_top = row.bottom() + 2.0
@@ -110,8 +124,15 @@ def layout(rect, info: Optional[MediaInfo] = None) -> Dict:
 
 
 def bar_hit_rect(bar) -> QRectF:
-    """进度条命中区：上下各外扩 `BAR_HIT_PAD`（4px 的条抓不住）。"""
-    return QRectF(bar).adjusted(-2, -BAR_HIT_PAD, 2, BAR_HIT_PAD)
+    """进度条命中区：上下各外扩 `BAR_HIT_PAD`（4px 的条抓不住）。
+
+    进度条不存在时返回空矩形——否则 `QRectF()` 外扩后会在卡片左上角留下
+    一个 4×16 的隐形热区，点封面就被当成"抓进度条"。
+    """
+    r = QRectF(bar)
+    if r.isEmpty():
+        return QRectF()
+    return r.adjusted(-2, -BAR_HIT_PAD, 2, BAR_HIT_PAD)
 
 
 def frac_at(bar, x: float) -> float:
@@ -163,6 +184,48 @@ def _round_bar(p: QPainter, box: QRectF, frac: float, style: Style,
         p.setBrush(QColor(255, 255, 255, 240))
         p.drawEllipse(QPointF(box.left() + w, box.center().y()),
                       SEEK_HANDLE, SEEK_HANDLE)
+
+
+_COVER_CACHE: Dict[str, QPixmap] = {}
+
+
+def cover_pixmap(info: Optional[MediaInfo]) -> Optional[QPixmap]:
+    """封面图（按 `cover_id` 缓存）；没有/读不到返回 None。
+
+    读文件失败一律返回 None 而不是抛——封面只是装饰，不许拖垮 500ms 的
+    重绘节拍。缓存上限 8 张：一个屏上不会有更多不同的歌。
+    """
+    path = str(getattr(info, "cover", "") or "") if info is not None else ""
+    if not path:
+        return None
+    key = str(getattr(info, "cover_id", "") or "") or path
+    cached = _COVER_CACHE.get(key)
+    if cached is not None and not cached.isNull():
+        return cached
+    if not os.path.isfile(path):
+        return None
+    pm = QPixmap(path)
+    if pm.isNull():
+        return None
+    if len(_COVER_CACHE) >= 8:
+        _COVER_CACHE.clear()
+    _COVER_CACHE[key] = pm
+    return pm
+
+
+def _draw_cover(p: QPainter, box: QRectF, radius: float, pm: QPixmap) -> None:
+    """把封面按"填满 + 居中裁切"画进圆角方框（不变形、不露底色）。"""
+    if pm.isNull() or box.width() <= 1 or box.height() <= 1:
+        return
+    side = min(pm.width(), pm.height())
+    sx = (pm.width() - side) / 2.0
+    sy = (pm.height() - side) / 2.0
+    clip = QPainterPath()
+    clip.addRoundedRect(box, radius, radius)
+    p.save()
+    p.setClipPath(clip)
+    p.drawPixmap(box, pm, QRectF(sx, sy, side, side))
+    p.restore()
 
 
 def _note_glyph(p: QPainter, box: QRectF, color: QColor) -> None:
@@ -232,15 +295,19 @@ def draw(p: QPainter, rect, info: Optional[MediaInfo] = None,
     p.save()
     p.setRenderHint(QPainter.Antialiasing, True)
 
-    # 封面：圆角底 + 音符占位（真封面要 SMTC 缩略图流，见 media_session）
+    # 封面：真封面（SMTC 缩略图缓存）优先，否则强调色底 + 音符占位
     cover = L["cover"]
     cr = max(6.0, cover.width() * 0.18)
-    p.setPen(Qt.NoPen)
-    base = QColor(st.accent)
-    base.setAlpha(DIM_ALPHA if not (info.demo or info.partial) else 90)
-    p.setBrush(base)
-    p.drawRoundedRect(cover, cr, cr)
-    _note_glyph(p, cover, QColor(255, 255, 255, 210))
+    pm = cover_pixmap(info)
+    if pm is not None:
+        _draw_cover(p, cover, cr, pm)
+    else:
+        p.setPen(Qt.NoPen)
+        base = QColor(st.accent)
+        base.setAlpha(DIM_ALPHA if not (info.demo or info.partial) else 90)
+        p.setBrush(base)
+        p.drawRoundedRect(cover, cr, cr)
+        _note_glyph(p, cover, QColor(255, 255, 255, 210))
 
     # 曲名（长标题滚动）+ 艺人
     title = info.title or "没有在播放"
@@ -275,9 +342,9 @@ def draw(p: QPainter, rect, info: Optional[MediaInfo] = None,
     frac = info.progress(now)
     if seek_frac is not None:
         frac = max(0.0, min(1.0, float(seek_frac)))
-    # 「仅曲名」档没有时长：不画进度（画了就是撒谎），底轨压暗表示不可用
-    _round_bar(p, L["bar"], 0.0 if info.partial else frac, st,
-               dim=bool(info.partial), handle=seek_frac is not None)
+    # v11c：没有时长就整条不画（用户要求）——空底轨会让人以为进度卡在 0
+    if not L["bar"].isEmpty():
+        _round_bar(p, L["bar"], frac, st, handle=seek_frac is not None)
 
     row = L["row"]
     p.setFont(L["font_time"])
@@ -388,7 +455,8 @@ class MusicWidget(GlassWidget):
 
     def _bar_at(self, pos) -> bool:
         L = layout(QRectF(self.card_rect()), self._info)
-        return bar_hit_rect(L["bar"]).contains(QPointF(pos))
+        hit = bar_hit_rect(L["bar"])
+        return (not hit.isEmpty()) and hit.contains(QPointF(pos))
 
     def _seek_enabled(self) -> bool:
         return bool(self._info.duration > 0) and not self._info.partial

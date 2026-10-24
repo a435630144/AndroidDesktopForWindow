@@ -19,6 +19,11 @@
   M15 窗口标题解析：`歌名 - 歌手` / `•` / 品牌后缀
   M16 进度条拖动：按下不移动组件、松手一次 seek 且只发一次
   M17 仅曲名档：进度条不可拖、不画假进度
+  M18 侧车协议带封面路径 / id
+  M19 有封面就画真图（像素级）；读不到/没文件退回占位，不抛
+  M20 拿不到时长就不画进度条（不留底轨、按钮行上移）
+  M21 空进度条没有命中区（不抢封面点击）
+  M22 封面缓存只清自己的文件、保留最新 N 张
 
 运行：python tests/test_widget_music.py   （offscreen）
 """
@@ -466,6 +471,101 @@ def main(app):
         p.end()
         check("M11d 预览能画（不跑定时器、不发媒体键）",
               ok and alpha_nonempty(img_prev) > 300, str(alpha_nonempty(img_prev)))
+
+    # ---------- M18：封面字段 ----------
+    info_cover = ms.parse_sidecar_line(b64line({
+        "ok": True, "has": True, "title": "封面歌", "artist": "A",
+        "playing": True, "pos": 1.0, "dur": 200.0,
+        "cover": r"C://tmp//media_cover_abc.img", "cover_id": "abc123"}))
+    check("M18 侧车行解出封面路径与 id",
+          info_cover.cover.endswith("media_cover_abc.img")
+          and info_cover.cover_id == "abc123", str(info_cover))
+
+    # ---------- M19：真封面像素 ----------
+    from PySide6.QtGui import QColor
+    png = Path(tempfile.gettempdir()) / "test_cover_solid.png"
+    src_img = QImage(64, 64, QImage.Format_ARGB32)
+    src_img.fill(QColor(220, 40, 60))
+    src_img.save(str(png))
+    info_px = MediaInfo(title="有封面", artist="A", playing=True, duration=120.0,
+                        position=10.0, cover=str(png), cover_id="solid")
+    one = render(wm.draw, 336, 182, info_px)
+    Lpx = wm.layout(QRectF(0, 0, 336, 182), info_px)
+    c = Lpx["cover"].center()
+    px = one.pixelColor(int(c.x()), int(c.y()))
+    check("M19 有封面时画的是真图（封面中心是图色）",
+          px.red() > 170 and px.green() < 90, str(px.getRgb()))
+    check("M19b 同一 cover_id 命中缓存（返回同一个 QPixmap）",
+          wm.cover_pixmap(info_px) is wm.cover_pixmap(info_px))
+    missing = MediaInfo(title="x", cover=str(png) + ".nope", cover_id="none")
+    check("M19c 封面文件不存在 -> None（不抛）", wm.cover_pixmap(missing) is None)
+    check("M19d 空封面 -> None", wm.cover_pixmap(MediaInfo(title="x")) is None)
+
+    # ---------- M20：没有时长就不画进度条 ----------
+    no_prog = MediaInfo(title="只有标题", artist="X", playing=True,
+                        duration=0.0, partial=True)
+    L0 = wm.layout(QRectF(0, 0, 336, 182), no_prog)
+    L1 = wm.layout(QRectF(0, 0, 336, 182),
+                   MediaInfo(title="T", artist="A", playing=True,
+                             duration=100.0, position=50.0))
+    check("M20 无时长 -> 布局里没有进度条", L0["bar"].isEmpty(), str(L0["bar"]))
+    check("M20b 有时长 -> 有进度条", not L1["bar"].isEmpty(), str(L1["bar"]))
+    check("M20c 无时长时按键整体上移（不把空位留在中间）",
+          L0["buttons"][0].top() < L1["buttons"][0].top(),
+          "%.1f vs %.1f" % (L0["buttons"][0].top(), L1["buttons"][0].top()))
+
+    with_bar = render(wm.draw, 336, 182,
+                      MediaInfo(title="T", artist="A", playing=True,
+                                duration=100.0, position=50.0))
+    without = render(wm.draw, 336, 182, no_prog)
+    strip = L1["bar"].toRect()
+
+    def _mean(img, rect):
+        n = 0
+        total = 0
+        for y in range(rect.top(), rect.bottom() + 1):
+            for x in range(rect.left(), rect.right() + 1):
+                col = img.pixelColor(x, y)
+                total += col.red() + col.green() + col.blue()
+                n += 1
+        return total / float(max(1, n)) / 3.0
+
+    check("M20d 无时长那张在进度条位置更暗（没有底轨）",
+          _mean(without, strip) + 4 < _mean(with_bar, strip),
+          "%.1f vs %.1f" % (_mean(without, strip), _mean(with_bar, strip)))
+    check("M21 空进度条没有命中区（不会抢封面点击）",
+          wm.bar_hit_rect(QRectF()).isEmpty())
+
+    # ---------- M22：封面缓存清理 ----------
+    import time as _time
+    cdir = Path(tempfile.gettempdir()) / "test_cover_cache"
+    if cdir.exists():
+        for f in cdir.iterdir():
+            f.unlink()
+    else:
+        cdir.mkdir(parents=True)
+    for i in range(5):
+        f = cdir / ("media_cover_%d.img" % i)
+        f.write_bytes(b"x")
+        os.utime(str(f), (1000 + i, 1000 + i))
+    foreign = cdir / "state.json"
+    foreign.write_text("{}", encoding="utf-8")
+    old_dir = ms.cover_dir
+    ms.cover_dir = lambda: str(cdir)
+    try:
+        removed = ms.prune_covers(str(cdir / "media_cover_4.img"), keep_count=2)
+    finally:
+        ms.cover_dir = old_dir
+    left = sorted(f.name for f in cdir.iterdir())
+    check("M22 只保留最新 N 张 + 当前在用的那张",
+          removed == 3 and "media_cover_4.img" in left
+          and "media_cover_3.img" in left and "media_cover_0.img" not in left,
+          str(left))
+    check("M22b 不碰目录里的其它文件（state.json 还在）",
+          foreign.exists(), str(left))
+    for f in cdir.iterdir():
+        f.unlink()
+    cdir.rmdir()
 
     if STATE.exists():
         STATE.unlink()

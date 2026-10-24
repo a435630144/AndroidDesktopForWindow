@@ -12,4 +12,5 @@ span/分类/settings 声明仍在 src/widget_registry.py。
 """
 from .draw import draw_preview                                    # noqa: F401
 from .music import (BAR_H, DIM_ALPHA, MARQUEE_PX_S, MusicWidget,  # noqa: F401
-                    TICK_MS, draw, layout, marquee_offset)
+                    TICK_MS, bar_hit_rect, cover_pixmap, draw, layout,
+                    marquee_offset)

@@ -199,6 +199,12 @@ pwsh -File scripts/build_portable.ps1
 
 > 按**安装包版本号**倒序；括号内是内部迭代标签（见 `src/version.py`，界面右键菜单底部可看构建时刻）。更多细节见 [`docs/release_notes/`](docs/release_notes/)。
 
+### 6.2.0（v11c）· 音乐组件抓封面 · 没进度就不画进度条 → [发布说明](docs/release_notes/6.2.0.md)
+
+- **音乐组件显示专辑封面**：读 SMTC 的 `MediaProperties.Thumbnail`，按内容哈希缓存到 `%APPDATA%/PhoneDesktop/media_cover_*.img`，圆角居中裁切绘制；换歌才重新读盘，缓存只留最近 6 张
+- **拿不到时长就整条进度条不画**：窗口标题档 / 播放器不报 timeline 时，不再留一条空底轨（以前那条压暗的底轨看起来像"卡在 0"）；按键行随之上移
+- 实测说明：PowerShell 5.1 读不了 WinRT 图片流（`OpenReadAsync` 返回裸 `__ComObject`），改用 `RandomAccessStream.CopyAsync` + `InMemoryRandomAccessStream` 绕行，**字节级校验一致**（`src/media_cover.ps1`）
+
 ### 6.1.0（v11b）· 首次启动新手操作指引 → [发布说明](docs/release_notes/6.1.0.md)
 
 - **首次安装启动自动进入 7 步引导**：欢迎 → 图标（双击 / 拖动 / 多选）→ 拖成文件夹 → 分页 → Dock → 小组件 → 收尾，聚光灯高亮真实界面元素，不是示意图
