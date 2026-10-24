@@ -256,6 +256,16 @@ class DesktopWindow(QWidget):
         self._attach_retries = 2
         self._try_attach_once()
 
+    def start_onboarding(self, replay: bool = False):
+        """打开新手操作指引（首次启动自动调用；设置 ▸ 通用可重看）。
+
+        入口放在桌面窗口上而不是 main.py：指引要高亮图标 / Dock / 组件，
+        这些东西的归属者就是这里（`_dock` / `_widget_layer` 都是窗口注入的）。
+        """
+        from . import onboarding
+        return onboarding.show_guide(self, self.storage, self._widget_layer,
+                                     self._dock, replay=replay)
+
     def _try_attach_once(self):
         if self.attached:
             return

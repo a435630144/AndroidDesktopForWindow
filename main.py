@@ -64,11 +64,12 @@ def _install_crash_logger():
 # crash.log 一片空白」的最可能真凶，就是这种"死在日志钩子之前"的启动失败。
 _install_crash_logger()
 
-from PySide6.QtCore import Qt                      # noqa: E402
+from PySide6.QtCore import Qt, QTimer            # noqa: E402
 from PySide6.QtGui import QIcon                    # noqa: E402
 from PySide6.QtWidgets import QApplication         # noqa: E402
 
 from src import autostart                          # noqa: E402
+from src import onboarding                         # noqa: E402
 from src import win32_layer                        # noqa: E402
 from src.add_apps_dialog import AddAppsDialog      # noqa: E402
 from src.desktop_window import DesktopWindow       # noqa: E402
@@ -174,16 +175,18 @@ def main() -> int:
     window.set_auto_sync(bool(storage.get_setting("auto_sync_desktop")))
     app.aboutToQuit.connect(lambda: window.set_auto_sync(False))
 
-    # 首次运行：弹一条托盘气泡说明基本用法
+    # 首次启动：跑一遍新手操作指引（v11b）。
+    # 旧版这里弹一条托盘气泡，文案是"系统桌面保持原生…"——路线A 之后默认
+    # 就是桌面整理模式，那段话已经和实际行为相反；而且气泡不能高亮、不能
+    # 逐步讲，用户点掉就再也找不回来。现在换成可重看的聚光灯指引（入口在
+    # 设置 ▸ 通用）。`first_run` 只保留作旧 state 的迁移标记。
     if storage.get_setting("first_run"):
         storage.set_setting("first_run", False)
         window.rebuild()
-        tray.notify(
-            "PhoneDesktop",
-            "已就绪：系统桌面保持原生，可右键托盘「添加应用」把常用入口放到整理桌面；"
-            "在「设置」里可开启桌面整理模式（隐藏原生图标、框选、自动克隆桌面文件）。"
-            "拖一个图标到另一个上可建文件夹，从资源管理器拖文件进来即可添加。",
-        )
+    if "--selftest" not in sys.argv[1:] and onboarding.should_show(storage):
+        # 等首帧落定再弹：小组件还要 spawn、Dock 要按 inset 重排一次，
+        # 太早取目标矩形会拿到空窗（高亮框画在错误位置）。
+        QTimer.singleShot(1200, window.start_onboarding)
 
     if "--selftest" in sys.argv[1:]:
         from src.selftest import run_selftest

@@ -511,6 +511,29 @@ class SettingsDialog(QDialog):
         # 塞在通用页的一张卡里既放不下也不好找。
         lay.addWidget(card)
 
+        # v11b：帮助入口。指引在首次启动时自动弹一次，之后只能从这里重看
+        # （没有入口的引导 = 用户手滑跳过后永远找不回来）。
+        card, c = self._card(body, i18n.T("settings.general.card.help"))
+        self.btn_guide = QPushButton(i18n.T("settings.general.guide.button"))
+        self.btn_guide.setStyleSheet(theme.BUTTON_QSS)
+        self.btn_guide.clicked.connect(self._show_onboarding)
+        self._row(c, card, i18n.T("settings.general.guide.title"),
+                  self.btn_guide, i18n.T("settings.general.guide.hint"))
+
+        # 快捷键只是"告知"，没有可交互项——用静态文字，别做假按钮
+        lbl_keys = QLabel(i18n.T("settings.general.shortcuts.value"))
+        lbl_keys.setObjectName("rowHint")
+        lbl_keys.setWordWrap(True)
+        self._row(c, card, i18n.T("settings.general.shortcuts.title"), lbl_keys)
+        lay.addWidget(card)
+
+    def _show_onboarding(self):
+        """关掉设置窗再放指引：遮罩是全屏置顶的，设置窗留在下面反而穿帮。"""
+        fn = getattr(self.window, "start_onboarding", None)
+        self.close()
+        if fn is not None:
+            QTimer.singleShot(120, lambda: fn(replay=True))
+
     def _flush_storage(self):
         """去抖落盘：设置层 save 失败不该弹窗/炸面板。"""
         try:

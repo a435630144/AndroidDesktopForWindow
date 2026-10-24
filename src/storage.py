@@ -55,7 +55,10 @@ def _as_positive_int(raw):
 DEFAULT_SETTINGS = {
     "schema_version": 2,     # 状态结构版本：2 = 路线A（全量接管）。旧版(1)state
                             # 首次加载时一次性升级，见 Storage._migrate
-    "first_run": True,         # 是否首次运行（用于一次性气泡提示）
+    "first_run": True,         # 是否首次运行（旧键；v11b 起一次性气泡换成新手引导）
+    # v11b：已完成的新手指引版本。0 = 从未看完；小于 onboarding.ONBOARDING_VERSION
+    # 就再弹一次（加步骤时版本 +1，老用户只补看新增内容，不会每次启动都打扰）。
+    "onboarding_version": 0,
     # v10 D3（反馈 15-a）：界面语言。"auto" = 安装器选的语言 -> 系统语言；
     # 也可显式写 "zh_CN" / "en"。解析唯一入口 `i18n.resolve()`。
     "language": "auto",

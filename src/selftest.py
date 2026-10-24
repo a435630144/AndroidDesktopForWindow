@@ -28,7 +28,7 @@ def _orphans(layer) -> int:
 
 def collect_info(window, layer) -> dict:
     """采集自测诊断信息。纯读取，不抛异常（脏条目走 entry_app 兜底）。"""
-    from . import i18n, win32_layer
+    from . import i18n, onboarding, win32_layer
     from .win32_layer import diagnose_desktop_layer
 
     layout = window.storage.layout
@@ -55,6 +55,13 @@ def collect_info(window, layer) -> dict:
         "i18n_sample": {
             "settings.title": i18n.T("settings.title"),
             "button.done": i18n.T("button.done"),
+        },
+        # v11b：新手引导的步骤数与缺词。冻结包里词表没打包时 missing 会
+        # 直接等于步骤数——比肉眼看界面更快发现打包事故。
+        "onboarding": {
+            "steps": len(onboarding.build_steps(window)),
+            "missing_i18n": len(onboarding.missing_i18n_keys()),
+            "pending": onboarding.should_show(window.storage),
         },
         "desktop_layer": diagnose_desktop_layer(),
     }
